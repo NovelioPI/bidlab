@@ -1,6 +1,6 @@
 import numpy as np
 
-from auction_sim.world import World, WorldConfig
+from bidlab.world import World, WorldConfig
 
 
 def test_value_equals_w_times_sigmoid():

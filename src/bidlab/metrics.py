@@ -3,8 +3,9 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
-from auction_sim.rewards import cpa_score_of
-from auction_sim.simulator import RunLog
+from bidlab.auctions import FirstPrice
+from bidlab.rewards import cpa_score_of
+from bidlab.simulator import RunLog
 
 REGRET_MULTIPLIERS = np.round(np.arange(0.0, 3.0001, 0.05), 2)
 
@@ -18,7 +19,7 @@ class BidderEpisodeMetrics:
     conversions: int
     value: float
     surplus: float
-    budget_util: float
+    budget_used: float
     cpa: float
     cpa_violation: float
     cpa_score: float
@@ -69,7 +70,7 @@ def bidder_metrics(log: RunLog) -> list[BidderEpisodeMetrics]:
                     conversions=conversions,
                     value=value,
                     surplus=value - spend,
-                    budget_util=spend / spec.budget,
+                    budget_used=spend / spec.budget,
                     cpa=spend / conversions if conversions else np.nan,
                     cpa_violation=_cpa_violation(spend, conversions, target),
                     cpa_score=(
@@ -113,7 +114,7 @@ def regret(
     for step, value in enumerate(values):
         bids = np.minimum(multipliers * value, budget_left)
         wins = (bids >= auction.reserve) & (bids > highest_other[step])
-        if auction.kind == "first":
+        if isinstance(auction, FirstPrice):
             prices = bids
         else:
             prices = np.full(

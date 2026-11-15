@@ -1,10 +1,12 @@
+from abc import ABC, abstractmethod
+
 import numpy as np
 
-from auction_sim.types import EpisodeStats, Feedback, Observation
+from bidlab.types import EpisodeStats, Feedback, Observation
 
 
-class Bidder:
-    """Base class: override `bid`, and any hook a method needs."""
+class Bidder(ABC):
+    """Base class: implement `bid`; override any hook a method needs."""
 
     def __init__(self, params: dict[str, float], rng: np.random.Generator):
         self.params = params
@@ -13,8 +15,8 @@ class Bidder:
     def on_episode_start(self, budget: float, steps: int) -> None:
         pass
 
-    def bid(self, obs: Observation) -> float:
-        raise NotImplementedError
+    @abstractmethod
+    def bid(self, observation: Observation) -> float: ...
 
     def update(self, feedback: Feedback) -> None:
         pass

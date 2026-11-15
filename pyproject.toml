@@ -1,24 +1,50 @@
 [project]
-name = "auction-sim"
+name = "bidlab"
 version = "0.1.0"
 description = "Bidder-side ad auction simulator for research on bidding methods"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "cloudpickle>=3.0",
     "numpy>=2.0",
-    "pyyaml>=6.0",
+    "scipy>=1.13",
 ]
 
-[project.scripts]
-auction-sim = "auction_sim.cli:main"
+[project.optional-dependencies]
+pandas = [
+    "pandas>=2.0",
+]
 
 [dependency-groups]
 dev = [
     "hypothesis>=6.170.15",
+    "mutmut>=3.8.1",
     "pytest>=8.0",
     "ruff>=0.17.5",
+    "scipy-stubs>=1.18.1.1",
 ]
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]
 build-backend = "uv_build"
+
+[tool.mutmut]
+source_paths = ["src/bidlab/"]
+# Mutate only the core modules for this feature; the rest is copied so imports work.
+do_not_mutate = [
+    "src/bidlab/__init__.py",
+    "src/bidlab/config.py",
+    "src/bidlab/results.py",
+    "src/bidlab/rewards.py",
+    "src/bidlab/runner.py",
+    "src/bidlab/simulator.py",
+    "src/bidlab/types.py",
+    "src/bidlab/world.py",
+    "src/bidlab/bidders/*",
+]
+pytest_add_cli_args_test_selection = ["tests/"]
+# Example tests run the installed package in a subprocess, so they cannot see mutants.
+pytest_add_cli_args = ["--ignore=tests/test_examples.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

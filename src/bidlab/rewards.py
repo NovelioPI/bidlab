@@ -1,14 +1,13 @@
 from typing import Protocol
 
-from auction_sim.plugins import resolve
-from auction_sim.types import EpisodeStats, Feedback, Observation
+from bidlab.types import EpisodeStats, Feedback, Observation
 
 CPA_PENALTY_EXPONENT = 3
 
 
 class StepReward(Protocol):
     def __call__(
-        self, obs: Observation, feedback: Feedback, params: dict[str, float]
+        self, observation: Observation, feedback: Feedback, params: dict[str, float]
     ) -> float: ...
 
 
@@ -16,18 +15,22 @@ class EpisodeReward(Protocol):
     def __call__(self, stats: EpisodeStats, params: dict[str, float]) -> float: ...
 
 
-def surplus(obs: Observation, feedback: Feedback, params: dict[str, float]) -> float:
-    return feedback.converted * obs.value_per_conversion - feedback.price
+def surplus(
+    observation: Observation, feedback: Feedback, params: dict[str, float]
+) -> float:
+    return feedback.converted * observation.value_per_conversion - feedback.price
 
 
 def conversions(
-    obs: Observation, feedback: Feedback, params: dict[str, float]
+    observation: Observation, feedback: Feedback, params: dict[str, float]
 ) -> float:
     return float(feedback.converted)
 
 
-def value(obs: Observation, feedback: Feedback, params: dict[str, float]) -> float:
-    return feedback.converted * obs.value_per_conversion
+def value(
+    observation: Observation, feedback: Feedback, params: dict[str, float]
+) -> float:
+    return feedback.converted * observation.value_per_conversion
 
 
 def cpa_score_of(
@@ -52,23 +55,3 @@ def cpa_score(stats: EpisodeStats, params: dict[str, float]) -> float:
 
 def total_surplus(stats: EpisodeStats, params: dict[str, float]) -> float:
     return stats.value - stats.spend
-
-
-STEP_REWARDS: dict[str, StepReward] = {
-    "surplus": surplus,
-    "conversions": conversions,
-    "value": value,
-}
-
-EPISODE_REWARDS: dict[str, EpisodeReward] = {
-    "cpa_score": cpa_score,
-    "total_surplus": total_surplus,
-}
-
-
-def resolve_step_reward(name: str) -> StepReward:
-    return resolve(name, STEP_REWARDS, "step reward")
-
-
-def resolve_episode_reward(name: str) -> EpisodeReward:
-    return resolve(name, EPISODE_REWARDS, "episode reward")

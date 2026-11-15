@@ -2,7 +2,7 @@
 
 This file defines every metric the simulator reports, so results from different methods mean the same thing.
 
-The code is in `src/auction_sim/metrics.py`. Each metric is computed per episode, then averaged over episodes per seed.
+The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, then averaged over episodes per seed.
 
 ## Symbols
 
@@ -26,7 +26,7 @@ The code is in `src/auction_sim/metrics.py`. Each metric is computed per episode
 | conversions | Realized conversions over Wᵢ | |
 | value | conversions × wᵢ | Realized, so it includes luck |
 | surplus | value − spend | |
-| budget_util | spend / Bᵢ | Never above 1 |
+| budget_used | spend / Bᵢ | Never above 1 |
 | cpa | spend / conversions | NaN when conversions = 0 |
 | cpa_violation | max(0, cpa / targetᵢ − 1) | 0 when spend = 0. +inf when spend > 0 and conversions = 0. NaN with no target |
 | cpa_score | value × min((targetᵢ / cpa)³, 1) | AuctionNet score. Equals value when spend = 0. 0 when spend > 0 and conversions = 0. NaN with no target |

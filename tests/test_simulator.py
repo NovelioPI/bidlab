@@ -3,10 +3,12 @@ from typing import ClassVar
 
 import numpy as np
 
-from auction_sim.bidders import Bidder
-from auction_sim.config import AuctionConfig, BidderSpec, SimConfig
-from auction_sim.simulator import run
-from auction_sim.types import EpisodeStats, Feedback, Observation
+from bidlab import rewards
+from bidlab.auctions import FirstPrice
+from bidlab.bidders import Bidder
+from bidlab.config import BidderSpec, SimConfig
+from bidlab.simulator import run
+from bidlab.types import EpisodeStats, Feedback, Observation
 
 
 class Spy(Bidder):
@@ -25,9 +27,9 @@ class Spy(Bidder):
     def on_episode_start(self, budget, steps):
         self.starts.append((budget, steps))
 
-    def bid(self, obs):
-        self.observations.append(obs)
-        return self.params.get("multiplier", 1.0) * obs.value
+    def bid(self, observation):
+        self.observations.append(observation)
+        return self.params.get("multiplier", 1.0) * observation.value
 
     def update(self, feedback):
         self.feedback.append(feedback)
@@ -36,10 +38,18 @@ class Spy(Bidder):
         self.ends.append((stats, episode_reward))
 
 
+def double_price(observation, feedback, params):
+    return 2 * feedback.price
+
+
+def total_spend(stats, params):
+    return stats.spend
+
+
 def spec(name, multiplier=1.0, budget=100.0, **kwargs):
     return BidderSpec(
         name=name,
-        type="test_simulator:Spy",
+        bidder=Spy,
         budget=budget,
         value_per_conversion=kwargs.pop("value_per_conversion", 5.0),
         params={"multiplier": multiplier},
@@ -108,8 +118,10 @@ def test_budget_resets_each_episode():
     _, spies = run_spies(config(spec("greedy", multiplier=1e9, budget=2.0), spec("b")))
     greedy = spies[0]
     assert greedy.starts == [(2.0, 200)] * 3
-    first_steps = [obs for obs in greedy.observations if obs.step == 0]
-    assert [obs.budget_left for obs in first_steps] == [2.0] * 3
+    first_steps = [
+        observation for observation in greedy.observations if observation.step == 0
+    ]
+    assert [observation.budget_left for observation in first_steps] == [2.0] * 3
 
 
 def test_same_bidder_object_and_hook_per_episode():
@@ -136,9 +148,7 @@ def test_adding_bidder_keeps_world_draws():
 
 
 def test_feedback_reward_equals_function_output():
-    log, spies = run_spies(
-        config(spec("a", reward="sample_plugins:double_price"), spec("b"))
-    )
+    log, spies = run_spies(config(spec("a", reward=double_price), spec("b")))
     rewards = [fb.reward for fb in spies[0].feedback]
     expected = [2 * fb.price for fb in spies[0].feedback]
     assert rewards == expected
@@ -146,9 +156,7 @@ def test_feedback_reward_equals_function_output():
 
 
 def test_episode_reward_called_once_per_episode():
-    log, spies = run_spies(
-        config(spec("a", episode_reward="sample_plugins:total_spend"), spec("b"))
-    )
+    log, spies = run_spies(config(spec("a", episode_reward=total_spend), spec("b")))
     ends = spies[0].ends
     assert len(ends) == 3
     assert all(reward == stats.spend for stats, reward in ends)
@@ -163,12 +171,12 @@ def test_no_episode_reward_passes_none():
 
 def test_cpa_target_reaches_reward_params():
     _, spies = run_spies(
-        config(spec("a", cpa_target=0.5, episode_reward="cpa_score"), spec("b"))
+        config(spec("a", cpa_target=0.5, episode_reward=rewards.cpa_score), spec("b"))
     )
     assert all(reward is not None for _, reward in spies[0].ends)
 
 
 def test_reserve_above_all_bids_gives_no_sales():
-    log = run(config(spec("a"), auction=AuctionConfig(kind="first", reserve=1e6)))
+    log = run(config(spec("a"), auction=FirstPrice(reserve=1e6)))
     assert np.all(log.winner == -1)
     assert np.all(log.price == 0)
