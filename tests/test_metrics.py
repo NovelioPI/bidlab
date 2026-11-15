@@ -95,3 +95,16 @@ def test_regret_nonnegative_for_fixed_multipliers():
         log = run(SimConfig(bidders=bidders, episodes=2, steps=300, seed=3))
         for episode in range(2):
             assert regret(log, episode, 0) >= -1e-9
+
+
+def test_regret_accepts_integer_budget():
+    def config(budget):
+        bidders = (
+            BidderSpec("me", "truthful", budget, 5.0),
+            BidderSpec("x", "truthful", 50.0, 4.0),
+        )
+        return SimConfig(bidders=bidders, episodes=1, steps=200, seed=4)
+
+    integer_log = run(config(3))
+    float_log = run(config(3.0))
+    assert regret(integer_log, 0, 0) == regret(float_log, 0, 0)
