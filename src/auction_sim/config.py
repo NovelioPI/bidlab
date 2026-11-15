@@ -25,6 +25,15 @@ class BidderSpec:
     episode_reward: str | None = None
     reward_params: dict[str, float] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        # An int budget makes integer numpy arrays that reject float prices.
+        object.__setattr__(self, "budget", float(self.budget))
+        object.__setattr__(
+            self, "value_per_conversion", float(self.value_per_conversion)
+        )
+        if self.cpa_target is not None:
+            object.__setattr__(self, "cpa_target", float(self.cpa_target))
+
     def merged_reward_params(self) -> dict[str, float]:
         if self.cpa_target is None:
             return dict(self.reward_params)
