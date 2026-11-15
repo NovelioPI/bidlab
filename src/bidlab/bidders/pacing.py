@@ -1,7 +1,7 @@
 import numpy as np
 
-from auction_sim.bidders.base import Bidder
-from auction_sim.types import Feedback, Observation
+from bidlab.bidders.base import Bidder
+from bidlab.types import Feedback, Observation
 
 
 class PidPacing(Bidder):
@@ -25,16 +25,16 @@ class PidPacing(Bidder):
         self.previous_error = 0.0
         self.multiplier = self.initial_multiplier
 
-    def bid(self, obs: Observation) -> float:
-        return self.multiplier * obs.value
+    def bid(self, observation: Observation) -> float:
+        return self.multiplier * observation.value
 
     def update(self, feedback: Feedback) -> None:
         self.steps_done += 1
         self.spent += feedback.price
         planned = self.budget * self.steps_done / self.steps
-        # Reason: dividing by budget makes the gains independent of budget size.
+        # Dividing by budget makes the gains independent of budget size.
         error = (planned - self.spent) / self.budget
-        # Reason: a per-step sum winds up over long episodes; the mean does not.
+        # A per-step sum winds up over long episodes; the mean does not.
         self.integral += (error - self.integral) / self.steps_done
         derivative = error - self.previous_error
         self.previous_error = error

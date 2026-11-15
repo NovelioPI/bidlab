@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-# Reason: bidders receive only these objects, so each holds one bidder's own data.
+# Bidders receive only these objects, so each holds one bidder's own data.
 
 
 @dataclass(frozen=True)

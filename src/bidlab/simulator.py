@@ -3,19 +3,12 @@ from dataclasses import dataclass, replace
 import numpy as np
 import numpy.typing as npt
 
-from auction_sim.auctions import run_auction
-from auction_sim.bidders import Bidder, resolve_bidder
-from auction_sim.config import SimConfig
-from auction_sim.rewards import (
-    EpisodeReward,
-    StepReward,
-    resolve_episode_reward,
-    resolve_step_reward,
-)
-from auction_sim.types import EpisodeStats, Feedback, Observation
-from auction_sim.world import World
-
-NO_WINNER = -1
+from bidlab.auctions import NO_WINNER
+from bidlab.bidders import Bidder
+from bidlab.config import BidderSpec, SimConfig
+from bidlab.rewards import EpisodeReward, StepReward
+from bidlab.types import EpisodeStats, Feedback, Observation
+from bidlab.world import World
 
 
 @dataclass(frozen=True)
@@ -43,13 +36,25 @@ class _Participant:
 
 
 def run(config: SimConfig) -> RunLog:
-    return _Simulation(config).run()
+    simulation = _Simulation(config)
+    simulation.run_all()
+    return simulation.log
+
+
+def _build_bidder(spec: BidderSpec, rng: np.random.Generator) -> Bidder:
+    bidder = spec.bidder(dict(spec.params), rng)
+    if not isinstance(bidder, Bidder):
+        raise TypeError(
+            f"bidder {spec.name!r}: the factory returned "
+            f"{type(bidder).__name__}, not a Bidder"
+        )
+    return bidder
 
 
 class _Simulation:
     def __init__(self, config: SimConfig):
         count = len(config.bidders)
-        # Reason: one stream per role, so adding a bidder keeps world draws equal.
+        # One stream per role, so adding a bidder keeps the world's draws equal.
         world_seed, tie_seed, conversion_seed, *bidder_seeds = np.random.SeedSequence(
             config.seed
         ).spawn(3 + count)
@@ -62,17 +67,11 @@ class _Simulation:
         self.conversion_rng = np.random.default_rng(conversion_seed)
         self.participants = [
             _Participant(
-                bidder=resolve_bidder(spec.type)(
-                    dict(spec.params), np.random.default_rng(seed)
-                ),
+                bidder=_build_bidder(spec, np.random.default_rng(seed)),
                 budget=spec.budget,
                 value_per_conversion=spec.value_per_conversion,
-                step_reward=resolve_step_reward(spec.reward),
-                episode_reward=(
-                    resolve_episode_reward(spec.episode_reward)
-                    if spec.episode_reward
-                    else None
-                ),
+                step_reward=spec.reward,
+                episode_reward=spec.episode_reward,
                 reward_params=spec.merged_reward_params(),
             )
             for spec, seed in zip(config.bidders, bidder_seeds, strict=True)
@@ -89,10 +88,20 @@ class _Simulation:
             episode_rewards=np.full((config.episodes, count), np.nan),
         )
 
-    def run(self) -> RunLog:
+    def run_all(self) -> None:
         for episode in range(self.config.episodes):
             self._run_episode(episode)
-        return self.log
+        # Callers must not change the log, or later metrics silently disagree.
+        for array in (
+            self.log.bids,
+            self.log.values,
+            self.log.winner,
+            self.log.price,
+            self.log.converted,
+            self.log.rewards,
+            self.log.episode_rewards,
+        ):
+            array.flags.writeable = False
 
     def _run_episode(self, episode: int) -> None:
         steps = self.config.steps
@@ -119,8 +128,8 @@ class _Simulation:
         ]
         bids = np.array(
             [
-                p.bidder.bid(obs)
-                for p, obs in zip(self.participants, observations, strict=True)
+                p.bidder.bid(observation)
+                for p, observation in zip(self.participants, observations, strict=True)
             ],
             dtype=float,
         )
@@ -128,15 +137,14 @@ class _Simulation:
         bids = np.clip(
             np.nan_to_num(bids, nan=0.0, posinf=0.0, neginf=0.0), 0.0, budget_left
         )
-        auction = self.config.auction
-        winner, price = run_auction(bids, auction.kind, auction.reserve, self.tie_rng)
-        # Reason: one draw every step keeps the conversion stream aligned across runs.
+        winner, price = self.config.auction.run(bids, self.tie_rng)
+        # One draw every step keeps the conversion stream aligned across runs.
         draw = self.conversion_rng.random()
         converted = winner != NO_WINNER and draw < probabilities[winner]
         if winner != NO_WINNER:
             budget_left[winner] -= price
 
-        for i, (participant, obs) in enumerate(
+        for i, (participant, observation) in enumerate(
             zip(self.participants, observations, strict=True)
         ):
             won = i == winner
@@ -146,7 +154,9 @@ class _Simulation:
                 price=price if won else 0.0,
                 converted=converted and won,
             )
-            reward = participant.step_reward(obs, feedback, participant.reward_params)
+            reward = participant.step_reward(
+                observation, feedback, participant.reward_params
+            )
             participant.bidder.update(replace(feedback, reward=reward))
             self.log.rewards[episode, step, i] = reward
 

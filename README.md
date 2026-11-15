@@ -1,24 +1,46 @@
-# auction-sim
+# bidlab
 
-A small simulator of online ad auctions, for testing bidding methods such as pacing, bid shading, and learning bidders.
+A Python library for testing ad bidding methods, such as pacing, bid shading, and learning bidders, in simulated auctions.
 
-You write one bidder class and one YAML file. The simulator runs the auctions, hides what a real bidder could not see, and reports the same metrics for every method.
+You write a bidder class and a short Python script. bidlab runs the auctions, hides what a real bidder could not see, and reports the same metrics for every method.
 
-## Quick start
+## Install
+
+bidlab is not on PyPI yet. From a clone of this repo:
 
 ```bash
-uv sync
-uv run auction-sim run examples/basic.yaml --seeds 0-4 --out results.csv
+uv sync                      # core: numpy, scipy, cloudpickle
+uv sync --extra pandas       # adds Results.to_pandas()
 ```
 
-The command prints a mean per bidder and writes one CSV row per seed and bidder.
+## Quickstart
+
+```python
+import bidlab as bl
+
+config = bl.SimConfig(
+    bidders=[
+        bl.BidderSpec("truthful", bl.Truthful, budget=50, value_per_conversion=5),
+        bl.BidderSpec("pid", bl.PidPacing, budget=15, value_per_conversion=5),
+        bl.BidderSpec("bandit", bl.UcbMultiplier, budget=50, value_per_conversion=5),
+    ],
+    auction=bl.SecondPrice(reserve=0.01),
+    episodes=5,
+    steps=500,
+)
+
+results = bl.run_many(config, seeds=range(3))
+print(results.summary())
+```
+
+`summary()` shows, for each bidder, the mean across seeds and a 95% Student-t interval.
 
 ## How one step works
 
 1. Each bidder i gets a conversion probability pᵢ = σ(x · φᵢ + βᵢ) for a random context x.
 2. Each bidder sees its own `Observation`: step, steps left, value vᵢ = wᵢ × pᵢ, value per conversion wᵢ, and budget left.
 3. Each bid is capped at the bidder's remaining budget.
-4. The auction picks a winner: first price or second price, with an optional reserve.
+4. The auction picks a winner: `FirstPrice` or `SecondPrice`, with an optional reserve price.
 5. The winner converts with probability p of the winner.
 6. Each bidder gets its own `Feedback`: its bid, whether it won, the price it paid, whether it converted, and its reward. A loser never sees the winning price.
 
@@ -26,48 +48,88 @@ Budgets reset at the start of each episode. Bidder objects persist for the whole
 
 ## Write a bidder
 
+Subclass `bl.Bidder` and override `bid`. The optional hooks are `on_episode_start(budget, steps)`, `update(feedback)`, and `on_episode_end(stats, episode_reward)`.
+
 ```python
-# my_bidders.py
-from auction_sim.bidders import Bidder
+class HalfValue(bl.Bidder):
+    def bid(self, observation):
+        return self.params.get("fraction", 0.5) * observation.value
 
 
-class HalfValue(Bidder):
-    def bid(self, obs):
-        return self.params.get("fraction", 0.5) * obs.value
+mine = bl.SimConfig(
+    bidders=[
+        bl.BidderSpec("half", HalfValue, budget=50, value_per_conversion=5),
+        bl.BidderSpec("pid", bl.PidPacing, budget=50, value_per_conversion=5),
+    ],
+    episodes=5,
+    steps=500,
+)
+print(bl.run_many(mine, seeds=range(3)).summary())
 ```
 
-Then name it in the config as `type: "my_bidders:HalfValue"`. The module must be importable, so run from its folder with `PYTHONPATH=. uv run auction-sim run config.yaml`. Optional hooks are `on_episode_start(budget, steps)`, `update(feedback)`, and `on_episode_end(stats, episode_reward)`.
+To pass an object the bidder needs, such as a trained model, give a factory in place of the class. The simulator calls it once per run with the spec's `params` and the bidder's own random generator.
+
+```python
+def make_half(params, rng):
+    return HalfValue({"fraction": 0.4}, rng)
+
+
+factory_spec = bl.BidderSpec("half", make_half, budget=50, value_per_conversion=5)
+```
 
 ## Built-in bidders
 
-| Type | Behavior | Params |
-|---|---|---|
-| `truthful` | Bids `multiplier` × value | `multiplier` (1.0) |
-| `pid_pacing` | A PID loop moves a bid multiplier so spend tracks the budget evenly | `initial_multiplier` (1.0), `kp` (20), `ki` (2), `kd` (0), `min_multiplier` (0), `max_multiplier` (10) |
-| `ucb_multiplier` | UCB1 over a grid of multipliers; one arm per episode | `min_multiplier` (0.2), `max_multiplier` (2.0), `multiplier_step` (0.2), `exploration` (1.0) |
+| Class | Family | Behavior | Params |
+|---|---|---|---|
+| `Truthful` | `bl.bidders.baselines` | Bids `multiplier` × value | `multiplier` (1.0) |
+| `PidPacing` | `bl.bidders.pacing` | A PID loop moves a bid multiplier so spend tracks the budget evenly | `initial_multiplier` (1.0), `kp` (20), `ki` (2), `kd` (0), `min_multiplier` (0), `max_multiplier` (10) |
+| `UcbMultiplier` | `bl.bidders.bandits` | UCB1 over a grid of multipliers; one arm per episode | `min_multiplier` (0.2), `max_multiplier` (2.0), `multiplier_step` (0.2), `exploration` (1.0) |
 
 ## Rewards
 
-Each bidder has a `reward`, called every step, and an optional `episode_reward`, called once per episode.
+Each bidder has a `reward`, called every step, and an optional `episode_reward`, called once per episode. Both are plain functions.
 
-| Kind | Built-in names | Custom function |
+| Kind | Built-in functions | Your own |
 |---|---|---|
-| Step | `surplus` (default), `conversions`, `value` | `f(obs, feedback, params) -> float` |
-| Episode | `cpa_score`, `total_surplus` | `g(stats, params) -> float` |
+| Step | `bl.rewards.surplus` (default), `conversions`, `value` | `f(observation, feedback, params) -> float` |
+| Episode | `bl.rewards.cpa_score`, `total_surplus` | `g(stats, params) -> float` |
 
-Name a custom function as `"module:function"`. The `params` dict holds the bidder's `reward_params`, plus `cpa_target` when the bidder has one.
+The `params` dict holds the bidder's `reward_params`, plus `cpa_target` when the bidder has one.
 
-## Config
+```python
+cpa_spec = bl.BidderSpec(
+    "pid",
+    bl.PidPacing,
+    budget=15,
+    value_per_conversion=5,
+    cpa_target=3,
+    episode_reward=bl.rewards.cpa_score,
+)
+```
 
-See `examples/basic.yaml`. An unknown key is an error, so a typo does not pass silently.
+## Results
 
-| Key | Meaning |
+`run_many` returns a `Results` object with one row per seed and bidder. Each row holds every metric, averaged over episodes.
+
+| Method | Gives |
 |---|---|
-| `episodes`, `steps`, `seed` | Run length and the default seed |
-| `auction.kind`, `auction.reserve` | `first` or `second`, and the reserve price |
-| `world.context_dim`, `world.bias_mean`, `world.bias_std` | Context size and the spread of conversion rates |
-| `bidders[].name`, `type`, `budget`, `value_per_conversion` | Required for each bidder |
-| `bidders[].cpa_target`, `params`, `reward`, `episode_reward`, `reward_params` | Optional |
+| `results.summary()` | A text table of means and 95% intervals |
+| `results.save_csv(path)` | A CSV file with one row per seed and bidder |
+| `results.to_pandas()` | A DataFrame; needs `pip install bidlab[pandas]` |
+| `results.rows`, `results.columns` | The raw rows as dicts |
+| `results.equals(other)` | `True` when two runs gave the same rows. Use it, not `==`: some metrics are NaN by definition, and NaN never equals NaN |
+
+## Parallel runs
+
+`run_many(config, seeds, workers=4)` runs seeds in 4 processes and gives the same rows as `workers=1`. Lambdas and closures work. Workers start with `spawn`, which re-imports your script, so put the call under a main guard:
+
+```python
+if __name__ == "__main__":
+    parallel = bl.run_many(mine, seeds=range(4), workers=2)
+    print(parallel.summary())
+```
+
+A factory that holds a large object, such as a model, is copied to each worker.
 
 ## Metrics
 

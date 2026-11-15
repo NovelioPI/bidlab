@@ -21,12 +21,12 @@ class World:
         rng: np.random.Generator,
     ):
         bidders = value_per_conversion.size
-        dim = config.context_dim
-        # Reason: separate streams keep bidder i's draws equal when bidders are added.
+        dimensions = config.context_dim
+        # Separate streams keep bidder i's draws equal when bidders are added.
         vector_rng, bias_rng, self._rng = rng.spawn(3)
         self._value_per_conversion = value_per_conversion
         self._ad_vectors = vector_rng.normal(
-            0.0, 1.0 / np.sqrt(dim), size=(bidders, dim)
+            0.0, 1.0 / np.sqrt(dimensions), size=(bidders, dimensions)
         )
         self._biases = bias_rng.normal(config.bias_mean, config.bias_std, size=bidders)
 
