@@ -10,15 +10,18 @@ from bidlab import rewards
 from bidlab.auctions import FirstPrice, SecondPrice
 from bidlab.bidders import PidPacing, Truthful, UcbMultiplier
 from bidlab.config import BidderSpec, SimConfig
+from bidlab.runner import run_many
 from bidlab.simulator import run
 
 ROOT = Path(__file__).parent.parent
 
-# Hashes recorded at 7c747f0 (before the Python API change) with numpy 2.5.4; HEAD matched.
+# Recorded with numpy 2.5.4 after logits became a per-row sum; winners and conversions match c4e510f.
 RUN_LOG_HASHES = {
-    "first": "0e5d6efc0b7ae42f673b54dc58d0644b44b44c36ca9fb8af0fd0c1b26c6f3227",
-    "second": "816a0cce5097ed03cd9326051670f57915dcfb0a3a86ea5626d2b9aca1c6aa3d",
+    "first": "d7d3c1922d2a874932b7807b55812a371c3f2d7ae0af375498a79a24e57f25f6",
+    "second": "eea773aa17fca4d9a72fc669f20c0ec0fc8a96ddceb6f6ad268305117a25189d",
 }
+# Main results table CSV for seeds 0 and 1, recorded with the run-log hashes above.
+RESULTS_HASH = "b1b2fbb506bad681c00d35dcf2bd5b851bc0b515ece996bc434559ccd4294d85"
 
 
 def fingerprint_config(kind):
@@ -63,10 +66,16 @@ def test_run_log_fingerprint(kind):
     assert digest.hexdigest() == RUN_LOG_HASHES[kind]
 
 
+def test_results_fingerprint(tmp_path):
+    path = tmp_path / "results.csv"
+    run_many(fingerprint_config("second"), seeds=[0, 1]).save_csv(path)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == RESULTS_HASH
+
+
 PUBLIC_NAMES = {
     "SimConfig",
     "BidderSpec",
-    "WorldConfig",
+    "markets",
     "FirstPrice",
     "SecondPrice",
     "Bidder",
@@ -85,6 +94,7 @@ PUBLIC_NAMES = {
     "regret",
     "rewards",
     "bidders",
+    "segment_metrics",
 }
 
 
@@ -98,6 +108,29 @@ def test_public_names():
     bl = importlib.import_module("bidlab")
     assert set(bl.__all__) == PUBLIC_NAMES
     assert all(getattr(bl, name) is not None for name in bl.__all__)
+
+
+def test_markets_module_exports():
+    import bidlab as bl
+
+    for name in (
+        "Market",
+        "MarketDraw",
+        "LogisticContext",
+        "Segment",
+        "Segmented",
+        "IndependentValues",
+    ):
+        assert getattr(bl.markets, name) is not None
+
+
+def test_metrics_doc_defines_segment_columns():
+    from bidlab.runner import SEGMENT_COLUMNS
+
+    doc = (ROOT / "docs" / "metrics.md").read_text()
+    section = doc.split("## Segment metrics", 1)[1].split("\n## ", 1)[0]
+    for column in SEGMENT_COLUMNS[2:]:
+        assert f"| {column} |" in section
 
 
 def test_bidder_families_are_same_objects():
@@ -129,6 +162,9 @@ def test_removed_interfaces():
     import bidlab.config
 
     assert not hasattr(bidlab.config, "load_config")
+    assert importlib.util.find_spec("bidlab.world") is None
+    with pytest.raises(AttributeError):
+        _ = importlib.import_module("bidlab").WorldConfig
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     dependencies = " ".join(pyproject["project"]["dependencies"]).lower()
     assert "yaml" not in dependencies

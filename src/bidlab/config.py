@@ -6,8 +6,8 @@ import numpy as np
 from bidlab import rewards
 from bidlab.auctions import Auction, FirstPrice, SecondPrice
 from bidlab.bidders.base import Bidder
+from bidlab.markets import LogisticContext, Market
 from bidlab.rewards import EpisodeReward, StepReward
-from bidlab.world import WorldConfig
 
 BidderFactory = Callable[[dict[str, float], np.random.Generator], Bidder]
 
@@ -23,8 +23,10 @@ class BidderSpec:
     reward: StepReward = rewards.surplus
     episode_reward: EpisodeReward | None = None
     reward_params: dict[str, float] = field(default_factory=dict[str, float])
+    segments: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
+        self._check_segments()
         if isinstance(self.bidder, str):
             raise TypeError(
                 f"bidder {self.name!r}: got the string {self.bidder!r}; "
@@ -53,6 +55,23 @@ class BidderSpec:
 
             object.__setattr__(self, field_name, float(number))
 
+    def _check_segments(self) -> None:
+        if self.segments is None:
+            return
+
+        if isinstance(self.segments, str):
+            raise TypeError(
+                f"bidder {self.name!r}: segments must be a tuple of names, "
+                f"got the string {self.segments!r}"
+            )
+
+        object.__setattr__(self, "segments", tuple(self.segments))
+        if not self.segments:
+            raise ValueError(
+                f"bidder {self.name!r}: segments must list at least one segment; "
+                "use None to bid everywhere"
+            )
+
     def merged_reward_params(self) -> dict[str, float]:
         if self.cpa_target is None:
             return dict(self.reward_params)
@@ -67,7 +86,7 @@ class SimConfig:
     steps: int = 1000
     seed: int = 0
     auction: Auction = field(default_factory=SecondPrice)
-    world: WorldConfig = field(default_factory=WorldConfig)
+    market: Market = field(default_factory=LogisticContext)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "bidders", tuple(self.bidders))
@@ -86,3 +105,18 @@ class SimConfig:
         auction: object = self.auction
         if not isinstance(auction, FirstPrice | SecondPrice):
             raise TypeError("auction must be FirstPrice or SecondPrice")
+
+        market: object = self.market
+        if not isinstance(market, Market):
+            raise TypeError(
+                f"market must be a bidlab.markets.Market, got {type(market).__name__}"
+            )
+
+        known = set(self.market.segment_names)
+        for spec in self.bidders:
+            unknown = sorted(set(spec.segments or ()) - known)
+            if unknown:
+                raise ValueError(
+                    f"bidder {spec.name!r}: segments {unknown} are not in the "
+                    f"market's segment_names {self.market.segment_names}"
+                )

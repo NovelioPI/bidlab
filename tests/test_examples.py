@@ -3,12 +3,37 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parent.parent
 
 
-def test_basic_example_runs():
+EXAMPLE_LABELS = {
+    "getting_started/basic.py": [("truthful",), ("shaded",), ("pid",), ("bandit",)],
+    "markets/segments.py": [
+        (bidder, segment)
+        for bidder in ("everywhere", "sports_only", "pid")
+        for segment in ("news", "sports", "games")
+    ],
+    "markets/custom_market.py": [
+        (bidder, segment)
+        for bidder in ("truthful", "night_only", "bandit")
+        for segment in ("day", "night")
+    ],
+    "markets/independent_values.py": [("truthful",), ("equilibrium",), ("low",)],
+}
+
+
+def test_every_example_is_listed():
+    examples = ROOT / "examples"
+    scripts = {path.relative_to(examples).as_posix() for path in examples.rglob("*.py")}
+    assert scripts == set(EXAMPLE_LABELS)
+
+
+@pytest.mark.parametrize("name", sorted(EXAMPLE_LABELS))
+def test_example_runs(name):
     result = subprocess.run(
-        [sys.executable, str(ROOT / "examples" / "basic.py")],
+        [sys.executable, str(ROOT / "examples" / name)],
         check=False,
         capture_output=True,
         text=True,
@@ -17,12 +42,8 @@ def test_basic_example_runs():
     assert result.returncode == 0, result.stderr
     lines = result.stdout.strip().splitlines()
     assert lines[0].split()[0] == "bidder"
-    assert [line.split()[0] for line in lines[1:]] == [
-        "truthful",
-        "shaded",
-        "pid",
-        "bandit",
-    ]
+    width = len(EXAMPLE_LABELS[name][0])
+    assert [tuple(line.split()[:width]) for line in lines[1:]] == EXAMPLE_LABELS[name]
 
 
 def test_readme_code_runs(tmp_path):
@@ -40,3 +61,11 @@ def test_readme_code_runs(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.count("bidder") >= 3
+
+
+def test_readme_shows_segmented_market_with_targeted_bidder():
+    readme = (ROOT / "README.md").read_text()
+    blocks = "\n".join(re.findall(r"```python\n(.*?)```", readme, flags=re.DOTALL))
+    assert "bl.markets.Segmented(" in blocks
+    assert "segments=(" in blocks
+    assert "segment_names" in readme

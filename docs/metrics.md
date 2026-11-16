@@ -41,6 +41,20 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | revenue | Σ priceₜ over all steps |
 | welfare | Σ vᵢₜ of the winner, over steps with a sale |
 
+## Segment metrics
+
+`results.segments` holds these columns, one row per seed, bidder, and market segment. Each value is a per-episode sum over the segment's steps, averaged over episodes.
+
+| Metric | Definition | Notes |
+|---|---|---|
+| segment | The segment name from `market.segment_names` | `"all"` for a market without segments |
+| spend | Σ priceₜ over Wᵢ in the segment | |
+| wins | \|Wᵢ\| in the segment | |
+| conversions | Realized conversions over Wᵢ in the segment | |
+| surplus | conversions × wᵢ − spend | |
+
+For one seed and bidder, each metric summed over segments equals the main table's value.
+
 ## Regret
 
 Regret compares the bidder with the best fixed multiplier in hindsight.
@@ -48,7 +62,7 @@ Regret compares the bidder with the best fixed multiplier in hindsight.
 1. Hold every other bidder's logged bids fixed.
 2. For each multiplier m in 0, 0.05, …, 3, replay the episode with bidder i bidding m × vᵢₜ.
 3. Cap each replayed bid at the replayed remaining budget.
-4. A replayed bid wins when it meets the reserve and is strictly above the highest other bid.
+4. A replayed bid wins when it meets the reserve and is strictly above the highest other bid. A bidder with `segments` cannot win outside them in the replay either.
 5. The replayed price follows the auction rule: the bid in first price, max(highest other bid, reserve) in second price.
 6. Replay surplus(m) = Σ (vᵢₜ − priceₜ) over the replayed wins.
 7. Own surplus = Σ (vᵢₜ − priceₜ) over the logged wins.

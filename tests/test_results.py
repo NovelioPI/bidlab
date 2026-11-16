@@ -1,4 +1,5 @@
 import csv
+import dataclasses
 import sys
 import threading
 
@@ -8,8 +9,9 @@ from scipy import stats
 
 from bidlab.bidders import PidPacing, Truthful
 from bidlab.config import BidderSpec, SimConfig
+from bidlab.markets import Market, MarketDraw, Segment, Segmented
 from bidlab.results import Results
-from bidlab.runner import COLUMNS, run_many
+from bidlab.runner import COLUMNS, SEGMENT_COLUMNS, run_many
 from bidlab.simulator import run
 
 
@@ -167,3 +169,137 @@ def test_run_log_arrays_are_read_only():
     for array in (log.bids, log.values, log.winner, log.price, log.converted):
         with pytest.raises(ValueError, match="read-only"):
             array[0, 0] = 0
+
+
+def test_custom_market_same_rows_in_parallel():
+    class LowRates(Market):
+        def draws(self, bidders, rng):
+            while True:
+                yield MarketDraw({}, rng.uniform(0.0, 0.2, size=bidders))
+
+    cfg = dataclasses.replace(config(), market=LowRates())
+    serial = run_many(cfg, seeds=range(3))
+    parallel = run_many(cfg, seeds=range(3), workers=2)
+    assert parallel.equals(serial)
+    assert parallel.segments.equals(serial.segments)
+
+
+def segmented_config():
+    market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)))
+    targeted = BidderSpec("n", Truthful, 20.0, 5.0, segments=("news",))
+    return SimConfig(
+        bidders=[*config().bidders, targeted], episodes=2, steps=100, market=market
+    )
+
+
+def test_segments_table_columns():
+    results = run_many(segmented_config(), seeds=range(2))
+    assert results.columns == COLUMNS
+    assert isinstance(results.segments, Results)
+    assert results.segments.columns == SEGMENT_COLUMNS
+    assert SEGMENT_COLUMNS == (
+        "seed",
+        "bidder",
+        "segment",
+        "spend",
+        "wins",
+        "conversions",
+        "surplus",
+    )
+    assert len(results.segments) == 2 * 3 * 2
+
+
+def test_segment_sums_match_main_table():
+    results = run_many(segmented_config(), seeds=range(3))
+    for row in results.rows:
+        own = [
+            segment
+            for segment in results.segments.rows
+            if segment["seed"] == row["seed"] and segment["bidder"] == row["bidder"]
+        ]
+        for column in ("spend", "wins", "conversions", "surplus"):
+            total = sum(segment[column] for segment in own)
+            assert total == pytest.approx(row[column], abs=1e-9)
+
+
+def test_targeted_bidder_has_nothing_in_other_segments():
+    results = run_many(segmented_config(), seeds=range(2))
+    sports = [
+        row
+        for row in results.segments.rows
+        if row["bidder"] == "n" and row["segment"] == "sports"
+    ]
+    assert sports and all(row["wins"] == 0 and row["spend"] == 0 for row in sports)
+
+
+def test_unsegmented_market_has_all_segment():
+    results = run_many(config(), seeds=range(2))
+    assert [
+        (row["seed"], row["bidder"], row["segment"]) for row in results.segments.rows
+    ] == [
+        (0, "t", "all"),
+        (0, "p", "all"),
+        (1, "t", "all"),
+        (1, "p", "all"),
+    ]
+
+
+def test_segments_summary_and_csv(tmp_path):
+    segments = run_many(segmented_config(), seeds=range(3)).segments
+    lines = segments.summary().splitlines()
+    assert lines[0].split() == [
+        "bidder",
+        "segment",
+        "spend",
+        "wins",
+        "conversions",
+        "surplus",
+    ]
+    labels = [tuple(line.split()[:2]) for line in lines[1:]]
+    assert labels == [
+        ("t", "news"),
+        ("t", "sports"),
+        ("p", "news"),
+        ("p", "sports"),
+        ("n", "news"),
+        ("n", "sports"),
+    ]
+    path = tmp_path / "segments.csv"
+    segments.save_csv(path)
+    with path.open() as file:
+        reader = csv.DictReader(file)
+        rows = list(reader)
+    assert tuple(reader.fieldnames) == SEGMENT_COLUMNS
+    assert len(rows) == len(segments)
+
+
+def test_segments_to_pandas():
+    pytest.importorskip("pandas")
+    segments = run_many(segmented_config(), seeds=range(2)).segments
+    frame = segments.to_pandas()
+    assert tuple(frame.columns) == SEGMENT_COLUMNS
+    round_trip = Results(columns=SEGMENT_COLUMNS, rows=tuple(frame.to_dict("records")))
+    assert round_trip.equals(segments)
+
+
+def test_custom_market_segments_reach_segments_table():
+    class DayAndNight(Market):
+        @property
+        def segment_names(self):
+            return ("day", "night")
+
+        def draws(self, bidders, rng):
+            while True:
+                name = "day" if rng.random() < 0.6 else "night"
+                yield MarketDraw({}, rng.uniform(0.0, 0.2, size=bidders), name)
+
+    night = BidderSpec("n", Truthful, 20.0, 5.0, segments=("night",))
+    cfg = SimConfig(
+        bidders=[*config().bidders, night], episodes=2, steps=100, market=DayAndNight()
+    )
+    segments = run_many(cfg, seeds=range(2)).segments
+    assert {row["segment"] for row in segments.rows} == {"day", "night"}
+    day_rows = [
+        r for r in segments.rows if r["bidder"] == "n" and r["segment"] == "day"
+    ]
+    assert day_rows and all(row["wins"] == 0 for row in day_rows)

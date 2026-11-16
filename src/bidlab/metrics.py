@@ -29,6 +29,17 @@ class BidderEpisodeMetrics:
 
 
 @dataclass(frozen=True)
+class BidderSegmentMetrics:
+    episode: int
+    bidder: str
+    segment: str
+    spend: float
+    wins: int
+    conversions: int
+    surplus: float
+
+
+@dataclass(frozen=True)
 class PlatformEpisodeMetrics:
     episode: int
     revenue: float
@@ -86,6 +97,31 @@ def bidder_metrics(log: RunLog) -> list[BidderEpisodeMetrics]:
     return rows
 
 
+def segment_metrics(log: RunLog) -> list[BidderSegmentMetrics]:
+    """One row per episode, bidder and market segment."""
+    rows = []
+    names = log.config.market.segment_names
+    for episode in range(log.winner.shape[0]):
+        for i, spec in enumerate(log.config.bidders):
+            won = log.winner[episode] == i
+            for index, name in enumerate(names):
+                won_here = won & (log.segment[episode] == index)
+                spend = float(log.price[episode][won_here].sum())
+                conversions = int((log.converted[episode] & won_here).sum())
+                rows.append(
+                    BidderSegmentMetrics(
+                        episode=episode,
+                        bidder=spec.name,
+                        segment=name,
+                        spend=spend,
+                        wins=int(won_here.sum()),
+                        conversions=conversions,
+                        surplus=conversions * spec.value_per_conversion - spend,
+                    )
+                )
+    return rows
+
+
 def _cpa_violation(spend: float, conversions: int, target: float | None) -> float:
     if target is None:
         return np.nan
@@ -108,12 +144,18 @@ def regret(
     values = log.values[episode, :, bidder]
     others = np.delete(log.bids[episode], bidder, axis=1)
     highest_other = others.max(axis=1) if others.shape[1] else np.zeros(len(values))
+    # A targeted bidder cannot win outside its segments, so neither can its replay.
+    names = log.config.market.segment_names
+    allowed = [i for i, name in enumerate(names) if name in (spec.segments or names)]
+    takes_part = np.isin(log.segment[episode], allowed)
 
     budget_left = np.full(multipliers.size, spec.budget)
     replay_surplus = np.zeros(multipliers.size)
     for step, value in enumerate(values):
         bids = np.minimum(multipliers * value, budget_left)
-        wins = (bids >= auction.reserve) & (bids > highest_other[step])
+        wins = (
+            takes_part[step] & (bids >= auction.reserve) & (bids > highest_other[step])
+        )
         if isinstance(auction, FirstPrice):
             prices = bids
         else:
