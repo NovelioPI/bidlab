@@ -168,6 +168,12 @@ def test_stack_rejects_empty_and_non_stage():
         Stack("pid")  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
 
 
+def test_stack_defines_only_init_and_forward():
+    hooks = {"bind", "on_episode_start", "update_batch", "update", "on_episode_end"}
+    assert {"__init__", "forward"} <= set(vars(Stack))
+    assert not hooks & set(vars(Stack))
+
+
 def test_each_run_starts_fresh():
     Counter.reports.clear()
     spec = BidderSpec("counted", Counter(), CAMPAIGN)

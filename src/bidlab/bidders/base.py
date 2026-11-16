@@ -195,6 +195,7 @@ def bind_tree(bidder: Bidder, rng: np.random.Generator) -> None:
             children, stream.spawn(len(children)), strict=True
         ):
             streams[id(child)] = child_stream
+
         node.bind(stream)
 
 
@@ -225,6 +226,7 @@ def _direct_children(node: Bidder, path: str) -> Iterator[tuple[str, Bidder]]:
                     yield item_path, item
                 else:
                     _reject_hidden(item, item_path)
+
         else:
             _reject_hidden(value, child_path)
 
@@ -236,7 +238,6 @@ def _reject_hidden(value: object, path: str) -> None:
     items = value.values() if isinstance(value, dict) else value
     if any(isinstance(item, Bidder) for item in items):
         raise TypeError(
-            f"the bidder at {path!r} is inside a {type(value).__name__}, so the "
-            "simulator cannot find it; hold child bidders in an attribute, "
-            "list or tuple"
+            f"the {type(value).__name__} at {path!r} holds a bidder the simulator "
+            "cannot find; hold child bidders in an attribute, list or tuple"
         )
