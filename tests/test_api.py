@@ -94,6 +94,7 @@ PUBLIC_NAMES = {
     "regret",
     "rewards",
     "bidders",
+    "segment_metrics",
 }
 
 
@@ -107,6 +108,29 @@ def test_public_names():
     bl = importlib.import_module("bidlab")
     assert set(bl.__all__) == PUBLIC_NAMES
     assert all(getattr(bl, name) is not None for name in bl.__all__)
+
+
+def test_markets_module_exports():
+    import bidlab as bl
+
+    for name in (
+        "Market",
+        "MarketDraw",
+        "LogisticContext",
+        "Segment",
+        "Segmented",
+        "IndependentValues",
+    ):
+        assert getattr(bl.markets, name) is not None
+
+
+def test_metrics_doc_defines_segment_columns():
+    from bidlab.runner import SEGMENT_COLUMNS
+
+    doc = (ROOT / "docs" / "metrics.md").read_text()
+    section = doc.split("## Segment metrics", 1)[1].split("\n## ", 1)[0]
+    for column in SEGMENT_COLUMNS[2:]:
+        assert f"| {column} |" in section
 
 
 def test_bidder_families_are_same_objects():
