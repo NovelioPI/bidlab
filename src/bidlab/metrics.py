@@ -108,12 +108,18 @@ def regret(
     values = log.values[episode, :, bidder]
     others = np.delete(log.bids[episode], bidder, axis=1)
     highest_other = others.max(axis=1) if others.shape[1] else np.zeros(len(values))
+    # A targeted bidder cannot win outside its segments, so neither can its replay.
+    names = log.config.market.segment_names
+    allowed = [i for i, name in enumerate(names) if name in (spec.segments or names)]
+    takes_part = np.isin(log.segment[episode], allowed)
 
     budget_left = np.full(multipliers.size, spec.budget)
     replay_surplus = np.zeros(multipliers.size)
     for step, value in enumerate(values):
         bids = np.minimum(multipliers * value, budget_left)
-        wins = (bids >= auction.reserve) & (bids > highest_other[step])
+        wins = (
+            takes_part[step] & (bids >= auction.reserve) & (bids > highest_other[step])
+        )
         if isinstance(auction, FirstPrice):
             prices = bids
         else:

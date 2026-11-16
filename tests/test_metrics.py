@@ -1,11 +1,13 @@
+import dataclasses
 from dataclasses import dataclass
 
 import numpy as np
 import pytest
 
-from bidlab.auctions import FirstPrice, SecondPrice
+from bidlab.auctions import NO_WINNER, FirstPrice, SecondPrice
 from bidlab.bidders import Truthful
 from bidlab.config import BidderSpec, SimConfig
+from bidlab.markets import Segment, Segmented
 from bidlab.metrics import bidder_metrics, platform_metrics, regret
 from bidlab.simulator import RunLog, run
 
@@ -35,6 +37,7 @@ def hand_log(kind="second", reserve=0.0, budget=10.0, cpa_target=None):
         converted=np.array([[True, False, False]]),
         rewards=np.array([[[1.0, 0.0], [0.0, 2.0], [0.5, 0.0]]]),
         episode_rewards=np.array([[np.nan, np.nan]]),
+        segment=np.zeros((1, 3), dtype=np.int64),
     )
 
 
@@ -138,6 +141,7 @@ def one_episode_log(episode, bidders, auction):
         converted=np.zeros((1, steps), dtype=bool),
         rewards=np.zeros((1, steps, count)),
         episode_rewards=np.full((1, count), np.nan),
+        segment=np.zeros((1, steps), dtype=np.int64),
     )
 
 
@@ -220,3 +224,33 @@ def test_regret_replay_spends_its_budget():
         auction=SecondPrice(),
     )
     assert regret(log, 0, 0, multipliers=np.array([1.0])) == pytest.approx(0.0)
+
+
+def test_regret_masks_other_segments():
+    # "me" bids only in segment x. Own surplus = (1.0-0.1) + (0.6-0.1) = 1.4.
+    # Without the mask, multiplier 3 also wins step 1 in y: 1.4 + 0.7 = 2.1.
+    log = one_episode_log(
+        Episode(
+            values=[[1.0], [0.8], [0.6]],
+            bids=[[1.0], [0.0], [0.6]],
+            winner=[0, NO_WINNER, 0],
+            price=[0.1, 0.0, 0.1],
+        ),
+        bidders=(BidderSpec("me", Truthful, 10.0, 5.0),),
+        auction=SecondPrice(0.1),
+    )
+    market = Segmented((Segment("x", 0.5), Segment("y", 0.5)))
+    targeted = dataclasses.replace(
+        log,
+        config=dataclasses.replace(
+            log.config,
+            market=market,
+            bidders=(BidderSpec("me", Truthful, 10.0, 5.0, segments=("x",)),),
+        ),
+        segment=np.array([[0, 1, 0]]),
+    )
+    assert regret(targeted, 0, 0) == pytest.approx(0.0)
+    untargeted = dataclasses.replace(
+        targeted, config=dataclasses.replace(log.config, market=market)
+    )
+    assert regret(untargeted, 0, 0) == pytest.approx(0.7)

@@ -5,10 +5,10 @@ import numpy as np
 import pytest
 
 from bidlab import rewards
-from bidlab.auctions import FirstPrice
+from bidlab.auctions import NO_WINNER, FirstPrice
 from bidlab.bidders import Bidder
 from bidlab.config import BidderSpec, SimConfig
-from bidlab.markets import Market, MarketDraw
+from bidlab.markets import Market, MarketDraw, Segment, Segmented
 from bidlab.simulator import run
 from bidlab.types import EpisodeStats, Feedback, Observation
 
@@ -256,3 +256,37 @@ def test_no_features_gives_empty_mapping():
         assert dict(observation.features) == {}
         with pytest.raises(TypeError):
             observation.features["hour"] = 4
+
+
+NEWS_AND_SPORTS = Segmented((Segment("news", 0.5), Segment("sports", 0.5)))
+
+
+def test_targeted_bidder_skips_other_segments():
+    cfg = config(
+        spec("news_only", segments=("news",)),
+        spec("everywhere"),
+        market=NEWS_AND_SPORTS,
+    )
+    log, (news_only, _) = run_spies(cfg)
+    sports = log.segment == NEWS_AND_SPORTS.segment_names.index("sports")
+    assert sports.any() and (~sports).any()
+    assert np.all(log.bids[sports][:, 0] == 0.0)
+    assert not np.any(log.winner[sports] == 0)
+    assert len(news_only.observations) == np.sum(~sports)
+    assert len(news_only.feedback) == np.sum(~sports)
+    assert {o.features["segment"] for o in news_only.observations} == {"news"}
+
+
+def test_lone_targeted_bidder_never_wins_outside_its_segments():
+    cfg = config(spec("news_only", segments=("news",)), market=NEWS_AND_SPORTS)
+    log = run(cfg)
+    sports = log.segment == NEWS_AND_SPORTS.segment_names.index("sports")
+    assert np.all(log.winner[sports] == NO_WINNER)
+    assert np.all(log.price[sports] == 0.0)
+
+
+def test_untargeted_bidder_takes_every_step():
+    cfg = config(spec("a"), spec("b", segments=("sports",)), market=NEWS_AND_SPORTS)
+    _, (everywhere, _) = run_spies(cfg)
+    assert len(everywhere.observations) == cfg.episodes * cfg.steps
+    assert len(everywhere.feedback) == cfg.episodes * cfg.steps
