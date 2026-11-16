@@ -8,7 +8,7 @@ from bidlab.auctions import NO_WINNER, FirstPrice, SecondPrice
 from bidlab.bidders import Truthful
 from bidlab.config import BidderSpec, SimConfig
 from bidlab.markets import Segment, Segmented
-from bidlab.metrics import bidder_metrics, platform_metrics, regret
+from bidlab.metrics import bidder_metrics, platform_metrics, regret, segment_metrics
 from bidlab.simulator import RunLog, run
 
 
@@ -254,3 +254,10 @@ def test_regret_masks_other_segments():
         targeted, config=dataclasses.replace(log.config, market=market)
     )
     assert regret(untargeted, 0, 0) == pytest.approx(0.7)
+
+
+def test_segment_rows_carry_their_episode():
+    log = run(
+        SimConfig(bidders=(BidderSpec("a", Truthful, 5.0, 4.0),), episodes=3, steps=5)
+    )
+    assert [row.episode for row in segment_metrics(log)] == [0, 1, 2]

@@ -6,7 +6,13 @@ from scipy import stats
 
 from bidlab.bidders import Truthful
 from bidlab.config import BidderSpec, SimConfig
-from bidlab.markets import IndependentValues, LogisticContext, Segment, Segmented
+from bidlab.markets import (
+    IndependentValues,
+    LogisticContext,
+    MarketDraw,
+    Segment,
+    Segmented,
+)
 from bidlab.simulator import run
 
 
@@ -71,7 +77,7 @@ def test_lift_shifts_logit():
 @pytest.mark.parametrize(
     ("segments", "message"),
     [
-        ((), "at least one segment"),
+        ((), "Segmented needs at least one segment"),
         ((Segment("a", 0.0), Segment("b", 1.0)), "share must be > 0"),
         ((Segment("a", -0.5), Segment("b", 1.5)), "share must be > 0"),
         ((Segment("a", 0.7), Segment("b", 0.2)), "sum to 1"),
@@ -122,7 +128,7 @@ def test_independent_values_clipped():
 
 
 def test_independent_rejects_non_distribution():
-    with pytest.raises(TypeError, match="rvs"):
+    with pytest.raises(TypeError, match="rvs method.*got float"):
         IndependentValues(0.5)
 
 
@@ -133,3 +139,18 @@ def test_independent_adding_bidder_keeps_values(fewer, more):
         small = probabilities(market, fewer, steps=3000, seed=seed)
         large = probabilities(market, more, steps=3000, seed=seed)
         np.testing.assert_array_equal(small, large[:, :fewer])
+
+
+def test_market_draw_stores_float_array_and_read_only_features():
+    draw = MarketDraw({"hour": 3}, [0, 1])
+    assert isinstance(draw.probabilities, np.ndarray)
+    assert draw.probabilities.dtype == np.float64
+    assert draw.segment == "all"
+    with pytest.raises(TypeError):
+        draw.features["hour"] = 4
+
+
+def test_segments_list_stored_as_tuple():
+    market = Segmented([Segment("news", 0.5), Segment("sports", 0.5)])
+    assert market.segments == (Segment("news", 0.5), Segment("sports", 0.5))
+    assert market.segment_names == ("news", "sports")

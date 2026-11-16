@@ -61,6 +61,8 @@ do_not_mutate = [
     "src/bidlab/bidders/*",
 ]
 pytest_add_cli_args_test_selection = ["tests/"]
+# The docs test reads docs/metrics.md from the mutants copy.
+also_copy = ["docs/"]
 # Example tests run the installed package in a subprocess, so they cannot see mutants.
 pytest_add_cli_args = ["--ignore=tests/test_examples.py"]
 
