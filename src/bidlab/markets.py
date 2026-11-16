@@ -7,6 +7,7 @@ import numpy as np
 import numpy.typing as npt
 
 ALL_SEGMENTS = "all"
+SHARE_TOLERANCE = 1e-9
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,56 @@ class LogisticContext(Market):
     def draws(self, bidders: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
         for logits in _logits(self, bidders, rng):
             yield MarketDraw({}, _sigmoid(logits))
+
+
+@dataclass(frozen=True)
+class Segment:
+    name: str
+    share: float
+    lift: float = 0.0
+
+
+@dataclass(frozen=True)
+class Segmented(Market):
+    """Each step comes from one segment; its `lift` shifts every bidder's logit."""
+
+    segments: tuple[Segment, ...]
+    base: LogisticContext = LogisticContext()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "segments", tuple(self.segments))
+        if not self.segments:
+            raise ValueError("Segmented needs at least one segment")
+
+        names = [segment.name for segment in self.segments]
+        if len(set(names)) != len(names):
+            raise ValueError(f"segment names must be unique, got {names}")
+
+        for segment in self.segments:
+            if segment.share <= 0:
+                raise ValueError(
+                    f"segment {segment.name!r}: share must be > 0, got {segment.share}"
+                )
+
+        total = sum(segment.share for segment in self.segments)
+        # Silent normalizing would let a typo such as 0.7 + 0.2 run unnoticed.
+        if abs(total - 1.0) > SHARE_TOLERANCE:
+            raise ValueError(f"segment shares must sum to 1, got {total}")
+
+    @property
+    def segment_names(self) -> tuple[str, ...]:
+        return tuple(segment.name for segment in self.segments)
+
+    def draws(self, bidders: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
+        base_rng, pick_rng = rng.spawn(2)
+        shares = [segment.share for segment in self.segments]
+        for logits in _logits(self.base, bidders, base_rng):
+            segment = self.segments[pick_rng.choice(len(self.segments), p=shares)]
+            yield MarketDraw(
+                {"segment": segment.name},
+                _sigmoid(logits + segment.lift),
+                segment.name,
+            )
 
 
 def _logits(
