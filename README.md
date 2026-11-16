@@ -222,4 +222,4 @@ A factory that holds a large object, such as a model, is copied to each worker.
 
 ## Reproducibility
 
-Each source of randomness has its own seeded stream: the market, tie-breaking, conversions, and each bidder. The same seed gives the same log. Adding a bidder does not change the impressions the others see.
+Each source of randomness has its own seeded stream: the market, tie-breaking, conversions, and each bidder. On one OS and CPU type, the same seed gives a bit-identical log. Other platforms round some floats differently, so their logs can differ in the last bits. Adding a bidder does not change the impressions the others see.

@@ -80,7 +80,8 @@ class _Participant:
 def run(config: SimConfig) -> RunLog:
     """Simulate every episode of ``config`` and return the full log.
 
-    The same config and seed give a bit-identical log. Each bidder sees only
+    On one OS and CPU type, the same config and seed give a bit-identical
+    log. Each bidder sees only
     its own observation and feedback.
 
     Raises
