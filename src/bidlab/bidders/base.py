@@ -1,11 +1,14 @@
 """The `Bidder` base class that every bidding method builds on."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 import numpy as np
 
 from bidlab.types import Campaign, EpisodeStats, Feedback, Observation
+
+_SEQUENCES = (list, tuple)
+_HIDDEN = (list, tuple, dict, set, frozenset)
 
 
 class Bidder(ABC):
@@ -127,3 +130,79 @@ class Bidder(ABC):
             The spec's ``episode_reward`` for this episode, or None when the
             spec sets none.
         """
+
+    def named_bidders(self) -> Iterator[tuple[str, "Bidder"]]:
+        """Yield every bidder in this bidder's tree, with its path.
+
+        A child is a `Bidder` held in an attribute, or as an item of a list or
+        tuple attribute. The order is parent first, then each child's tree in
+        attribute order and item order. A bidder reached twice is listed once,
+        at its first path. Nothing is bound or changed.
+
+        Yields
+        ------
+        path : str
+            ``""`` for this bidder; attribute names and list indexes joined by
+            dots for the rest, such as ``"shade"`` or ``"bidders.0"``.
+        bidder : Bidder
+            The bidder at that path.
+
+        Raises
+        ------
+        TypeError
+            If a `dict`, `set` or `frozenset` attribute holds a bidder, or a
+            list or tuple item is a container that holds one.
+
+        Examples
+        --------
+        >>> import bidlab as bl
+        >>> bidder = bl.Stack(bl.Truthful(), bl.Stack(bl.PidPacing()))
+        >>> [path for path, _ in bidder.named_bidders()]
+        ['', 'bidders.0', 'bidders.1', 'bidders.1.bidders.0']
+        """
+        for path, bidder, _ in _walk(self, "", {id(self)}):
+            yield path, bidder
+
+
+def _walk(
+    node: Bidder, path: str, claimed: set[int]
+) -> Iterator[tuple[str, Bidder, list[Bidder]]]:
+    # A node claims all its new children before the walk enters any of them.
+    children: list[tuple[str, Bidder]] = []
+    for child_path, child in _direct_children(node, path):
+        if id(child) not in claimed:
+            claimed.add(id(child))
+            children.append((child_path, child))
+
+    yield path, node, [child for _, child in children]
+    for child_path, child in children:
+        yield from _walk(child, child_path, claimed)
+
+
+def _direct_children(node: Bidder, path: str) -> Iterator[tuple[str, Bidder]]:
+    for name, value in vars(node).items():
+        child_path = f"{path}.{name}" if path else name
+        if isinstance(value, Bidder):
+            yield child_path, value
+        elif isinstance(value, _SEQUENCES):
+            for index, item in enumerate(value):
+                item_path = f"{child_path}.{index}"
+                if isinstance(item, Bidder):
+                    yield item_path, item
+                else:
+                    _reject_hidden(item, item_path)
+        else:
+            _reject_hidden(value, child_path)
+
+
+def _reject_hidden(value: object, path: str) -> None:
+    if not isinstance(value, _HIDDEN):
+        return
+
+    items = value.values() if isinstance(value, dict) else value
+    if any(isinstance(item, Bidder) for item in items):
+        raise TypeError(
+            f"the bidder at {path!r} is inside a {type(value).__name__}, so the "
+            "simulator cannot find it; hold child bidders in an attribute, "
+            "list or tuple"
+        )
