@@ -20,9 +20,9 @@ import bidlab as bl
 
 config = bl.SimConfig(
     bidders=[
-        bl.BidderSpec("truthful", bl.Truthful, budget=50, value_per_conversion=5),
-        bl.BidderSpec("pid", bl.PidPacing, budget=15, value_per_conversion=5),
-        bl.BidderSpec("bandit", bl.UcbMultiplier, budget=50, value_per_conversion=5),
+        bl.BidderSpec("truthful", bl.Truthful(), bl.Campaign(budget=50, value=5)),
+        bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=15, value=5)),
+        bl.BidderSpec("bandit", bl.UcbMultiplier(), bl.Campaign(budget=50, value=5)),
     ],
     auction=bl.SecondPrice(reserve=0.01),
     episodes=5,
@@ -38,51 +38,89 @@ print(results.summary())
 ## How one step works
 
 1. The market draws the impression's public features and each bidder's conversion probability pᵢ. The default market, `LogisticContext`, uses pᵢ = σ(x · φᵢ + βᵢ) for a random context x.
-2. Each bidder sees its own `Observation`: step, steps left, value vᵢ = wᵢ × pᵢ, value per conversion wᵢ, budget left, and the public features.
-3. Each bid is capped at the bidder's remaining budget.
+2. Each bidder sees its own `Observation`: the `time` in seconds since the episode start, the platform's `value` of the impression, w × pᵢ, and the public `features`.
+3. Each bid is capped at the bidder's remaining budget. The bidder does not see that amount; it tracks its own spend.
 4. The auction picks a winner: `FirstPrice` or `SecondPrice`, with an optional reserve price.
 5. The winner converts with probability p of the winner.
-6. Each bidder gets its own `Feedback`: its bid, whether it won, the price it paid, whether it converted, and its reward. A loser never sees the winning price.
+6. Each bidder gets its own `Feedback`: the auction's `time`, its bid, whether it won, the price it paid, whether it converted, the realized `value`, and its reward. A loser never sees the winning price.
 
-Budgets reset at the start of each episode. Bidder objects persist for the whole run, so a learning bidder keeps what it learned.
+Budgets reset at the start of each episode, and each episode starts with `on_episode_start(campaign)`. Auctions are spaced evenly over `SimConfig.horizon_hours`, 24 by default. Bidder objects persist for the whole run, so a learning bidder keeps what it learned.
+
+`observation.value` is the platform's value: w times its estimate of p. The estimate is exact by default. A bidder with its own model ignores it and predicts from `features`.
 
 ## Write a bidder
 
-Subclass `bl.Bidder` and override `bid`. The optional hooks are `on_episode_start(budget, steps)`, `update(feedback)`, and `on_episode_end(stats, episode_reward)`.
+Subclass `bl.Bidder` and implement `forward(value, observation)`. A bidder turns a value into another value. Alone, it gets the platform's value, `observation.value`, and its output is the bid. Combine bidders with `bl.Stack`: each gets the previous one's output, and the last one's output is the bid. A value model, such as a conversion-rate model, returns its own value. A bid-control method, such as pacing, turns a value into a bid. Bidders in a stack run in order, so pacing then shading differs from shading then pacing.
 
 ```python
-class HalfValue(bl.Bidder):
-    def bid(self, observation):
-        return self.params.get("fraction", 0.5) * observation.value
+class SegmentRate(bl.Bidder):
+    """Learns each segment's conversion rate by counting, and ignores the platform value."""
+
+    def __init__(self, prior=0.05):
+        self.prior = prior
+        self.wins = {}
+        self.conversions = {}
+        self.pending = {}
+
+    def on_episode_start(self, campaign):
+        self.campaign = campaign
+
+    def forward(self, value, observation):
+        segment = observation.features["segment"]
+        self.pending[observation.time] = segment
+        wins = self.wins.get(segment, 0)
+        rate = (self.conversions.get(segment, 0) + self.prior) / (wins + 1)
+        return rate * self.campaign.value
+
+    def update_batch(self, feedbacks):
+        for feedback in feedbacks:
+            segment = self.pending.pop(feedback.time)
+            if feedback.won:
+                self.wins[segment] = self.wins.get(segment, 0) + 1
+                self.conversions[segment] = (
+                    self.conversions.get(segment, 0) + feedback.converted
+                )
 
 
-mine = bl.SimConfig(
+two_segments = bl.markets.Segmented(
+    (bl.markets.Segment("news", 0.5), bl.markets.Segment("sports", 0.5, lift=1.0))
+)
+learning = bl.SimConfig(
     bidders=[
-        bl.BidderSpec("half", HalfValue, budget=50, value_per_conversion=5),
-        bl.BidderSpec("pid", bl.PidPacing, budget=50, value_per_conversion=5),
+        bl.BidderSpec(
+            "learned", bl.Stack(SegmentRate(), bl.PidPacing()), bl.Campaign(15, 5)
+        ),
+        bl.BidderSpec("platform", bl.PidPacing(), bl.Campaign(budget=15, value=5)),
     ],
+    market=two_segments,
     episodes=5,
     steps=500,
 )
-print(bl.run_many(mine, seeds=range(3)).summary())
+print(bl.run_many(learning, seeds=range(3)).summary())
 ```
 
-To pass an object the bidder needs, such as a trained model, give a factory in place of the class. The simulator calls it once per run with the spec's `params` and the bidder's own random generator.
+A bidder keeps what it learns on `self`. Take settings as constructor arguments. The hooks are `on_episode_start(campaign)`, `forward(value, observation)`, `update_batch(feedbacks)` (or `update(feedback)` for one at a time), and `on_episode_end(stats, episode_reward)`. The simulator deep-copies the bidder for each run, so every seed starts from the bidder as you built it, and a pretrained model passes in as is. Each bidder, and each bidder inside a stack, gets its own random stream as `self.rng`.
+
+A bidder that ignores the incoming value works alone, too:
 
 ```python
-def make_half(params, rng):
-    return HalfValue({"fraction": 0.4}, rng)
+class FlatBid(bl.Bidder):
+    def __init__(self, amount):
+        self.amount = amount
+
+    def forward(self, value, observation):
+        return self.amount
 
 
-factory_spec = bl.BidderSpec("half", make_half, budget=50, value_per_conversion=5)
+flat_spec = bl.BidderSpec("flat", FlatBid(0.2), bl.Campaign(budget=50, value=5))
 ```
 
 ## Built-in bidders
 
-| Class | Family | Behavior | Params |
+| Class | Family | Behavior | Arguments |
 |---|---|---|---|
-| `Truthful` | `bl.bidders.baselines` | Bids `multiplier` × value | `multiplier` (1.0) |
-| `PidPacing` | `bl.bidders.pacing` | A PID loop moves a bid multiplier so spend tracks the budget evenly | `initial_multiplier` (1.0), `kp` (20), `ki` (2), `kd` (0), `min_multiplier` (0), `max_multiplier` (10) |
+| `Truthful` | `bl.bidders.baselines` | Outputs `multiplier` × value | `multiplier` (1.0) |
+| `PidPacing` | `bl.bidders.pacing` | A PID loop moves a multiplier so spend tracks the budget evenly over the horizon | `initial_multiplier` (1.0), `gains` (`bl.bidders.PidGains(kp=20, ki=2, kd=0)`), `multiplier_range` ((0, 10)) |
 | `UcbMultiplier` | `bl.bidders.bandits` | UCB1 over a grid of multipliers; one arm per episode | `min_multiplier` (0.2), `max_multiplier` (2.0), `multiplier_step` (0.2), `exploration` (1.0) |
 
 ## Rewards
@@ -94,15 +132,13 @@ Each bidder has a `reward`, called every step, and an optional `episode_reward`,
 | Step | `bl.rewards.surplus` (default), `conversions`, `value` | `f(observation, feedback, params) -> float` |
 | Episode | `bl.rewards.cpa_score`, `total_surplus` | `g(stats, params) -> float` |
 
-The `params` dict holds the bidder's `reward_params`, plus `cpa_target` when the bidder has one.
+A step reward reads the realized value from `feedback.value`. The `params` dict holds the bidder's `reward_params`, plus the campaign's `cpa_target` when it has one.
 
 ```python
 cpa_spec = bl.BidderSpec(
     "pid",
-    bl.PidPacing,
-    budget=15,
-    value_per_conversion=5,
-    cpa_target=3,
+    bl.PidPacing(),
+    bl.Campaign(budget=15, value=5, cpa_target=3),
     episode_reward=bl.rewards.cpa_score,
 )
 ```
@@ -117,7 +153,7 @@ A market draws each step's public features and each bidder's private conversion 
 | `bl.markets.Segmented(segments)` | A segment per step by its `share`; its `lift` is added to every bidder's logit |
 | `bl.markets.IndependentValues(distribution)` | Each pᵢ drawn on its own from a scipy frozen distribution, clipped to [0, 1] |
 
-A segmented market puts the segment name in `observation.features["segment"]`. A bidder with `segments` bids only in those segments. Elsewhere its `bid` and `update` methods are not called, and its logged bid is 0.
+A segmented market puts the segment name in `observation.features["segment"]`. A campaign with `segments` bids only in those segments. Elsewhere its bidder is not called, and its logged bid is 0.
 
 ```python
 market = bl.markets.Segmented(
@@ -128,13 +164,11 @@ market = bl.markets.Segmented(
 )
 segmented = bl.SimConfig(
     bidders=[
-        bl.BidderSpec("everywhere", bl.Truthful, budget=50, value_per_conversion=5),
+        bl.BidderSpec("everywhere", bl.Truthful(), bl.Campaign(budget=50, value=5)),
         bl.BidderSpec(
             "sports_only",
-            bl.Truthful,
-            budget=50,
-            value_per_conversion=5,
-            segments=("sports",),
+            bl.Truthful(),
+            bl.Campaign(budget=50, value=5, segments=("sports",)),
         ),
     ],
     market=market,
@@ -147,7 +181,7 @@ print(segment_results.segments.summary())
 
 `results.segments` is a second `Results` table with spend, wins, conversions, and surplus per seed, bidder, and segment. A market without segments reports one segment, `"all"`. The main table does not change.
 
-A targeted bidder still sees `steps_left` count every step, including steps in other segments. A pacing bidder may under-spend unless it adjusts for that.
+A targeted bidder sees only its segments' auctions. `PidPacing` plans spend by time, so it still spreads the budget over the whole horizon.
 
 To write your own market, subclass `bl.markets.Market`. Its `draws` generator yields one `MarketDraw` per step for the whole run. Use only the `rng` it receives, so runs repeat with the seed.
 
@@ -168,7 +202,7 @@ class Daytime(bl.markets.Market):
 
 
 daytime = bl.SimConfig(
-    bidders=[bl.BidderSpec("pid", bl.PidPacing, budget=15, value_per_conversion=5)],
+    bidders=[bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=15, value=5))],
     market=Daytime(),
     episodes=2,
     steps=240,
@@ -178,7 +212,7 @@ print(bl.run_many(daytime, seeds=range(2)).summary())
 
 A custom market can define its own segments. Override the `segment_names` property, and pass `segment=` to each `MarketDraw`. Targeting and `results.segments` then work as they do for `Segmented`.
 
-`IndependentValues(scipy.stats.uniform(0, 1))` with `value_per_conversion=1` is the textbook independent private values setting.
+`IndependentValues(scipy.stats.uniform(0, 1))` with `Campaign(value=1)` is the textbook independent private values setting.
 
 ## Examples
 
@@ -210,11 +244,11 @@ Each script in `examples/` runs on its own and prints a summary table. Scripts a
 
 ```python
 if __name__ == "__main__":
-    parallel = bl.run_many(mine, seeds=range(4), workers=2)
+    parallel = bl.run_many(learning, seeds=range(4), workers=2)
     print(parallel.summary())
 ```
 
-A factory that holds a large object, such as a model, is copied to each worker.
+A bidder that holds a large object, such as a model, is copied to each worker and once per run.
 
 ## Metrics
 

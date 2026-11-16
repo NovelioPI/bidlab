@@ -156,43 +156,35 @@ class Observation:
 
     Parameters
     ----------
-    step : int
-        Index of the step in the episode, starting at 0.
-    steps_left : int
-        Steps left in the episode, counting this one.
+    time : float
+        Seconds since the episode start. Auctions are spaced evenly over the
+        horizon, so the first is at 0.
     value : float
-        Expected value of the impression to this bidder:
-        ``value_per_conversion`` times its conversion probability.
-    value_per_conversion : float
-        What one conversion is worth to this bidder.
-    budget_left : float
-        Budget left in this episode. A higher bid is capped at this amount.
+        The platform's value of this impression: `Campaign.value` times its
+        estimate of the conversion probability. The estimate is exact unless
+        `SimConfig.estimate_noise` is set. A bidder with its own model may
+        ignore it. Not to be confused with `Campaign.value`, the value of one
+        event.
     features : Mapping[str, str | float], optional
         Public features of the impression, the same for every bidder.
         `bidlab.markets.Segmented` puts the segment name under ``"segment"``.
 
     See Also
     --------
-    Bidder.bid : Receives this object.
+    Bidder.forward : Receives this object.
 
     Examples
     --------
     Build an observation by hand to unit-test a bidder:
 
-    >>> import numpy as np
     >>> import bidlab as bl
-    >>> observation = bl.Observation(
-    ...     step=0, steps_left=100, value=0.5, value_per_conversion=5.0, budget_left=20.0
-    ... )
-    >>> bl.Truthful({"multiplier": 0.8}, np.random.default_rng(0)).bid(observation)
+    >>> observation = bl.Observation(time=0.0, value=0.5)
+    >>> bl.Truthful(multiplier=0.8).forward(observation.value, observation)
     0.4
     """
 
-    step: int
-    steps_left: int
+    time: float
     value: float
-    value_per_conversion: float
-    budget_left: float
     features: Mapping[str, str | float] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -206,6 +198,8 @@ class Feedback:
 
     Parameters
     ----------
+    time : float
+        `Observation.time` of the auction this feedback answers.
     bid : float
         The bid the auction used: NaN and infinity become 0, and the bid is
         capped at the budget left.
@@ -215,28 +209,33 @@ class Feedback:
         Price this bidder paid; 0 when it lost.
     converted : bool
         True only when this bidder won and the impression converted.
+    value : float, optional
+        Realized value of this auction: `Campaign.value` when converted,
+        else 0.
     reward : float, optional
         This step's reward from the bidder's ``reward`` function.
 
     See Also
     --------
-    Bidder.update : Receives this object.
+    Bidder.update_batch : Receives a list of these objects.
 
     Examples
     --------
     >>> import bidlab as bl
-    >>> observation = bl.Observation(
-    ...     step=0, steps_left=100, value=0.5, value_per_conversion=5.0, budget_left=20.0
+    >>> observation = bl.Observation(time=0.0, value=0.5)
+    >>> feedback = bl.Feedback(
+    ...     time=0.0, bid=0.6, won=True, price=0.5, converted=True, value=5.0
     ... )
-    >>> feedback = bl.Feedback(bid=0.6, won=True, price=0.5, converted=True)
     >>> bl.rewards.surplus(observation, feedback, {})
     4.5
     """
 
+    time: float
     bid: float
     won: bool
     price: float
     converted: bool
+    value: float = 0.0
     reward: float = 0.0
 
 
@@ -255,7 +254,7 @@ class EpisodeStats:
     conversions : int
         Number of won impressions that converted.
     value : float
-        ``conversions`` times the bidder's value per conversion.
+        ``conversions`` times `Campaign.value`.
 
     See Also
     --------

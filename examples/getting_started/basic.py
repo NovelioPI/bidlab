@@ -4,23 +4,17 @@ import bidlab as bl
 
 config = bl.SimConfig(
     bidders=[
-        bl.BidderSpec("truthful", bl.Truthful, budget=50, value_per_conversion=5),
+        bl.BidderSpec("truthful", bl.Truthful(), bl.Campaign(budget=50, value=5)),
         bl.BidderSpec(
-            "shaded",
-            bl.Truthful,
-            budget=50,
-            value_per_conversion=5,
-            params={"multiplier": 0.8},
+            "shaded", bl.Truthful(multiplier=0.8), bl.Campaign(budget=50, value=5)
         ),
         bl.BidderSpec(
             "pid",
-            bl.PidPacing,
-            budget=15,
-            value_per_conversion=5,
-            cpa_target=3,
+            bl.PidPacing(),
+            bl.Campaign(budget=15, value=5, cpa_target=3),
             episode_reward=bl.rewards.cpa_score,
         ),
-        bl.BidderSpec("bandit", bl.UcbMultiplier, budget=50, value_per_conversion=5),
+        bl.BidderSpec("bandit", bl.UcbMultiplier(), bl.Campaign(budget=50, value=5)),
     ],
     auction=bl.SecondPrice(reserve=0.01),
     episodes=20,

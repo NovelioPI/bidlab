@@ -1,6 +1,7 @@
 """Frozen, validated settings for one simulation."""
 
-from collections.abc import Callable, Sequence
+import copy
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -10,30 +11,23 @@ from bidlab.auctions import Auction, FirstPrice, SecondPrice
 from bidlab.bidders.base import Bidder
 from bidlab.markets import LogisticContext, Market
 from bidlab.rewards import EpisodeReward, StepReward
-
-BidderFactory = Callable[[dict[str, float], np.random.Generator], Bidder]
+from bidlab.types import HOURS_PER_DAY, Campaign
 
 
 @dataclass(frozen=True)
 class BidderSpec:
-    """One advertiser in a simulation: its bidding method, budget and goals.
+    """One advertiser in a simulation: its bidder, campaign and rewards.
 
     Parameters
     ----------
     name : str
         Label used in results; unique within a `SimConfig`.
-    bidder : type[Bidder] or callable
-        A `Bidder` subclass, or a factory ``f(params, rng) -> Bidder``. The
-        simulator calls it once per run, so the object lives for all episodes.
-    budget : float
-        Budget per episode. Must be > 0.
-    value_per_conversion : float
-        What one conversion is worth to this advertiser. Must be > 0.
-    cpa_target : float, optional
-        Highest acceptable cost per conversion. Reward functions get it as
-        ``params["cpa_target"]``. Must be > 0 when set.
-    params : dict[str, float], optional
-        Passed to the bidder, for tuning values.
+    bidder : Bidder
+        A bidder instance, such as ``bl.PidPacing()`` or a `Stack`. The
+        simulator deep-copies it once per run, so the object you pass never
+        changes and every run starts from it.
+    campaign : Campaign
+        The advertiser's budget, value and targets.
     reward : StepReward, optional
         Called every step, ``f(observation, feedback, params) -> float``.
         Defaults to `bidlab.rewards.surplus`.
@@ -41,86 +35,89 @@ class BidderSpec:
         Called at the end of each episode, ``g(stats, params) -> float``.
     reward_params : dict[str, float], optional
         Passed to both reward functions.
-    segments : Sequence[str], optional
-        Market segments this bidder bids in, stored as a tuple. None means
-        every segment.
 
     Raises
     ------
     TypeError
-        If ``bidder`` or ``segments`` is a string, or a field that must be
-        callable is not.
-    ValueError
-        If a number is <= 0 or ``segments`` is empty.
+        If ``bidder`` is not a `Bidder` instance, ``campaign`` is not a
+        `Campaign`, or a reward is not callable.
 
     Examples
     --------
     >>> import bidlab as bl
     >>> spec = bl.BidderSpec(
-    ...     "pid", bl.PidPacing, budget=15, value_per_conversion=5,
-    ...     cpa_target=3, episode_reward=bl.rewards.cpa_score,
+    ...     "pid", bl.PidPacing(), bl.Campaign(budget=15, value=5, cpa_target=3),
+    ...     episode_reward=bl.rewards.cpa_score,
     ... )
-    >>> spec.budget
+    >>> spec.campaign.budget
     15.0
     """
 
     name: str
-    bidder: BidderFactory
-    budget: float
-    value_per_conversion: float
-    cpa_target: float | None = None
-    params: dict[str, float] = field(default_factory=dict[str, float])
+    bidder: Bidder
+    campaign: Campaign
     reward: StepReward = rewards.surplus
     episode_reward: EpisodeReward | None = None
     reward_params: dict[str, float] = field(default_factory=dict[str, float])
-    segments: Sequence[str] | None = None
 
     def __post_init__(self) -> None:
-        self._check_segments()
-        if isinstance(self.bidder, str):
+        # Callers can pass any object at run time; the type hint does not check it.
+        bidder: object = self.bidder
+        if isinstance(bidder, type):
             raise TypeError(
-                f"bidder {self.name!r}: got the string {self.bidder!r}; "
-                "pass a Bidder subclass or a factory f(params, rng) -> Bidder"
+                f"bidder {self.name!r}: got the class {bidder.__name__}; "
+                f"pass an instance, such as {bidder.__name__}()"
             )
 
-        for field_name in ("bidder", "reward"):
-            if not callable(getattr(self, field_name)):
-                raise TypeError(f"bidder {self.name!r}: {field_name} must be callable")
+        if not isinstance(bidder, Bidder):
+            raise TypeError(
+                f"bidder {self.name!r}: bidder must be a Bidder instance, "
+                f"got {type(bidder).__name__}"
+            )
+
+        campaign: object = self.campaign
+        if not isinstance(campaign, Campaign):
+            raise TypeError(
+                f"bidder {self.name!r}: campaign must be a Campaign, "
+                f"got {type(campaign).__name__}"
+            )
+
+        if not callable(self.reward):
+            raise TypeError(f"bidder {self.name!r}: reward must be callable")
 
         if self.episode_reward is not None and not callable(self.episode_reward):
             raise TypeError(
                 f"bidder {self.name!r}: episode_reward must be callable or None"
             )
 
-        # An int budget would make integer numpy arrays that reject float prices.
-        for field_name in ("budget", "value_per_conversion", "cpa_target"):
-            number = getattr(self, field_name)
-            if number is None:
-                continue
+    def build(self, rng: np.random.Generator) -> Bidder:
+        """Return a fresh copy of the bidder for one run; the simulator calls this.
 
-            if number <= 0:
-                raise ValueError(
-                    f"bidder {self.name!r}: {field_name} must be > 0, got {number}"
-                )
+        Parameters
+        ----------
+        rng : numpy.random.Generator
+            The bidder's random stream for the run.
 
-            object.__setattr__(self, field_name, float(number))
+        Returns
+        -------
+        Bidder
+            A deep copy of ``bidder``, bound to ``rng``.
 
-    def _check_segments(self) -> None:
-        if self.segments is None:
-            return
-
-        if isinstance(self.segments, str):
+        Raises
+        ------
+        TypeError
+            If the bidder holds an object that cannot be copied.
+        """
+        try:
+            bidder = copy.deepcopy(self.bidder)
+        except Exception as error:
             raise TypeError(
-                f"bidder {self.name!r}: segments must be a tuple of names, "
-                f"got the string {self.segments!r}"
-            )
+                f"bidder {self.name!r} cannot be copied for a fresh run: {error}. "
+                "Create objects such as open files or locks in on_episode_start"
+            ) from error
 
-        object.__setattr__(self, "segments", tuple(self.segments))
-        if not self.segments:
-            raise ValueError(
-                f"bidder {self.name!r}: segments must list at least one segment; "
-                "use None to bid everywhere"
-            )
+        bidder.bind(rng)
+        return bidder
 
     def merged_reward_params(self) -> dict[str, float]:
         """Return the ``params`` the reward functions get.
@@ -128,13 +125,13 @@ class BidderSpec:
         Returns
         -------
         dict[str, float]
-            ``reward_params``, plus ``cpa_target`` when set. A
+            ``reward_params``, plus the campaign's ``cpa_target`` when set. A
             ``cpa_target`` key in ``reward_params`` wins.
         """
-        if self.cpa_target is None:
+        if self.campaign.cpa_target is None:
             return dict(self.reward_params)
 
-        return {"cpa_target": self.cpa_target, **self.reward_params}
+        return {"cpa_target": self.campaign.cpa_target, **self.reward_params}
 
 
 @dataclass(frozen=True)
@@ -156,6 +153,11 @@ class SimConfig:
     market : bidlab.markets.Market, optional
         Draws features and conversion probabilities. Defaults to
         `bidlab.markets.LogisticContext`.
+    horizon_hours : float, optional
+        Episode length in hours. Auctions are spaced evenly over it. Must be
+        > 0.
+    start_hour : float, optional
+        Hour of day when each episode starts, in [0, 24).
 
     Raises
     ------
@@ -163,15 +165,16 @@ class SimConfig:
         If ``auction`` or ``market`` has the wrong type.
     ValueError
         If ``bidders`` is empty, names repeat, ``episodes`` or ``steps`` is
-        below 1, or a bidder names a segment the market does not have.
+        below 1, the schedule is out of range or differs from a campaign's,
+        or a campaign names a segment the market does not have.
 
     Examples
     --------
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
     ...     bidders=[
-    ...         bl.BidderSpec("truthful", bl.Truthful, budget=50, value_per_conversion=5),
-    ...         bl.BidderSpec("pid", bl.PidPacing, budget=15, value_per_conversion=5),
+    ...         bl.BidderSpec("truthful", bl.Truthful(), bl.Campaign(budget=50, value=5)),
+    ...         bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=15, value=5)),
     ...     ],
     ...     auction=bl.FirstPrice(reserve=0.01),
     ...     episodes=2,
@@ -187,6 +190,8 @@ class SimConfig:
     seed: int = 0
     auction: Auction = field(default_factory=SecondPrice)
     market: Market = field(default_factory=LogisticContext)
+    horizon_hours: float = 24.0
+    start_hour: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "bidders", tuple(self.bidders))
@@ -201,6 +206,16 @@ class SimConfig:
             if getattr(self, field_name) < 1:
                 raise ValueError(f"{field_name} must be >= 1")
 
+        if self.horizon_hours <= 0:
+            raise ValueError(f"horizon_hours must be > 0, got {self.horizon_hours}")
+
+        if not 0 <= self.start_hour < HOURS_PER_DAY:
+            raise ValueError(f"start_hour must be in [0, 24), got {self.start_hour}")
+
+        object.__setattr__(self, "horizon_hours", float(self.horizon_hours))
+        object.__setattr__(self, "start_hour", float(self.start_hour))
+        self._check_schedules()
+
         # Callers can pass any object at run time; the type hint does not check it.
         auction: object = self.auction
         if not isinstance(auction, FirstPrice | SecondPrice):
@@ -214,9 +229,20 @@ class SimConfig:
 
         known = set(self.market.segment_names)
         for spec in self.bidders:
-            unknown = sorted(set(spec.segments or ()) - known)
+            unknown = sorted(set(spec.campaign.segments or ()) - known)
             if unknown:
                 raise ValueError(
                     f"bidder {spec.name!r}: segments {unknown} are not in the "
                     f"market's segment_names {self.market.segment_names}"
                 )
+
+    def _check_schedules(self) -> None:
+        for spec in self.bidders:
+            for field_name in ("horizon_hours", "start_hour"):
+                own = getattr(spec.campaign, field_name)
+                if own is not None and own != getattr(self, field_name):
+                    raise ValueError(
+                        f"bidder {spec.name!r}: campaign {field_name}={own} differs "
+                        f"from SimConfig {field_name}={getattr(self, field_name)}; "
+                        "set the schedule on SimConfig"
+                    )

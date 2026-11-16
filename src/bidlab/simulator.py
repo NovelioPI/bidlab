@@ -1,6 +1,5 @@
 """The core loop: `run` simulates every auction and records a `RunLog`."""
 
-from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -11,7 +10,7 @@ from bidlab.bidders import Bidder
 from bidlab.config import BidderSpec, SimConfig
 from bidlab.markets import MarketDraw
 from bidlab.rewards import EpisodeReward, StepReward
-from bidlab.types import EpisodeStats, Feedback, Observation
+from bidlab.types import SECONDS_PER_HOUR, Campaign, EpisodeStats, Feedback, Observation
 
 
 @dataclass(frozen=True)
@@ -27,7 +26,8 @@ class RunLog:
     bids : numpy.ndarray
         Bids after cleaning and capping; 0 for a bidder outside its segments.
     values : numpy.ndarray
-        Each bidder's expected value per step.
+        Each bidder's true expected value per step: `Campaign.value` × the
+        true conversion probability.
     winner : numpy.ndarray
         Index of the winning bidder per step; -1 when nobody won.
     price : numpy.ndarray
@@ -44,10 +44,10 @@ class RunLog:
     Examples
     --------
     >>> import bidlab as bl
-    >>> spec = bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)
+    >>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))
     >>> log = bl.run(bl.SimConfig(bidders=[spec], episodes=2, steps=50))
     >>> won = log.winner[0] == 0
-    >>> bool(log.price[0][won].sum() <= spec.budget)
+    >>> bool(log.price[0][won].sum() <= spec.campaign.budget)
     True
     >>> log.bids.flags.writeable
     False
@@ -67,28 +67,26 @@ class RunLog:
 @dataclass(frozen=True)
 class _Participant:
     bidder: Bidder
-    budget: float
-    value_per_conversion: float
+    campaign: Campaign
     step_reward: StepReward
     episode_reward: EpisodeReward | None
     reward_params: dict[str, float]
-    segments: Sequence[str] | None
 
     def takes_part_in(self, segment: str) -> bool:
-        return self.segments is None or segment in self.segments
+        segments = self.campaign.segments
+        return segments is None or segment in segments
 
 
 def run(config: SimConfig) -> RunLog:
     """Simulate every episode of ``config`` and return the full log.
 
     On one OS and CPU type, the same config and seed give a bit-identical
-    log. Each bidder sees only
-    its own observation and feedback.
+    log. Each bidder sees only its own observation and feedback.
 
     Raises
     ------
     TypeError
-        If a bidder factory returns something that is not a `Bidder`.
+        If a bidder cannot be copied for a fresh run.
     ValueError
         If the market yields a draw with the wrong shape, a probability
         outside [0, 1], or an unknown segment.
@@ -99,7 +97,7 @@ def run(config: SimConfig) -> RunLog:
     --------
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
-    ...     bidders=[bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)],
+    ...     bidders=[bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))],
     ...     episodes=2,
     ...     steps=50,
     ... )
@@ -114,17 +112,6 @@ def run(config: SimConfig) -> RunLog:
     return simulation.log
 
 
-def _build_bidder(spec: BidderSpec, rng: np.random.Generator) -> Bidder:
-    bidder = spec.bidder(dict(spec.params), rng)
-    if not isinstance(bidder, Bidder):
-        raise TypeError(
-            f"bidder {spec.name!r}: the factory returned "
-            f"{type(bidder).__name__}, not a Bidder"
-        )
-
-    return bidder
-
-
 class _Simulation:
     def __init__(self, config: SimConfig):
         count = len(config.bidders)
@@ -133,22 +120,16 @@ class _Simulation:
             config.seed
         ).spawn(3 + count)
         self.config = config
-        self.weights = np.array([s.value_per_conversion for s in config.bidders])
+        self.weights = np.array([spec.campaign.value for spec in config.bidders])
+        self.seconds_per_step = config.horizon_hours * SECONDS_PER_HOUR / config.steps
         self.market_draws = config.market.draws(
             count, np.random.default_rng(market_seed)
         )
         self.tie_rng = np.random.default_rng(tie_seed)
         self.conversion_rng = np.random.default_rng(conversion_seed)
+        self.estimate_seeds: list[np.random.SeedSequence] = []
         self.participants = [
-            _Participant(
-                bidder=_build_bidder(spec, np.random.default_rng(seed)),
-                budget=spec.budget,
-                value_per_conversion=spec.value_per_conversion,
-                step_reward=spec.reward,
-                episode_reward=spec.episode_reward,
-                reward_params=spec.merged_reward_params(),
-                segments=spec.segments,
-            )
+            self._participant(spec, seed)
             for spec, seed in zip(config.bidders, bidder_seeds, strict=True)
         ]
         self.segment_index = {
@@ -165,6 +146,25 @@ class _Simulation:
             rewards=np.zeros((*shape, count)),
             episode_rewards=np.full((config.episodes, count), np.nan),
             segment=np.zeros(shape, dtype=np.int64),
+        )
+
+    def _participant(
+        self, spec: BidderSpec, seed: np.random.SeedSequence
+    ) -> _Participant:
+        # Risk: if this child is spawned after the bidder is built, then a stack's
+        # stages take it and the platform-estimate stream shifts.
+        self.estimate_seeds.append(seed.spawn(1)[0])
+        campaign = replace(
+            spec.campaign,
+            horizon_hours=self.config.horizon_hours,
+            start_hour=self.config.start_hour,
+        )
+        return _Participant(
+            bidder=spec.build(np.random.default_rng(seed)),
+            campaign=campaign,
+            step_reward=spec.reward,
+            episode_reward=spec.episode_reward,
+            reward_params=spec.merged_reward_params(),
         )
 
     def run_all(self) -> None:
@@ -185,12 +185,11 @@ class _Simulation:
             array.flags.writeable = False
 
     def _run_episode(self, episode: int) -> None:
-        steps = self.config.steps
-        budget_left = np.array([p.budget for p in self.participants])
+        budget_left = np.array([p.campaign.budget for p in self.participants])
         for participant in self.participants:
-            participant.bidder.on_episode_start(participant.budget, steps)
+            participant.bidder.on_episode_start(participant.campaign)
 
-        for step in range(steps):
+        for step in range(self.config.steps):
             self._run_step(episode, step, budget_left)
 
         self._end_episode(episode)
@@ -201,22 +200,17 @@ class _Simulation:
         draw = self._next_draw(episode, step)
         probabilities = draw.probabilities
         values = self.weights * probabilities
+        time = step * self.seconds_per_step
         # Bidders outside their segments are not asked to bid, so they cannot learn from it.
         observations = {
-            i: Observation(
-                step=step,
-                steps_left=self.config.steps - step,
-                value=float(values[i]),
-                value_per_conversion=p.value_per_conversion,
-                budget_left=float(budget_left[i]),
-                features=draw.features,
-            )
+            i: Observation(time=time, value=float(values[i]), features=draw.features)
             for i, p in enumerate(self.participants)
             if p.takes_part_in(draw.segment)
         }
         bids = np.zeros(len(self.participants))
         for i, observation in observations.items():
-            bids[i] = self.participants[i].bidder.bid(observation)
+            bidder = self.participants[i].bidder
+            bids[i] = bidder.forward(observation.value, observation)
         # Risk: if bids are not capped at the remaining budget, then spend can exceed it.
 
         bids = np.clip(
@@ -237,15 +231,17 @@ class _Simulation:
             participant = self.participants[i]
             won = i == winner
             feedback = Feedback(
+                time=time,
                 bid=float(bids[i]),
                 won=won,
                 price=price if won else 0.0,
                 converted=converted and won,
+                value=participant.campaign.value if converted and won else 0.0,
             )
             reward = participant.step_reward(
                 observation, feedback, participant.reward_params
             )
-            participant.bidder.update(replace(feedback, reward=reward))
+            participant.bidder.update_batch([replace(feedback, reward=reward)])
             self.log.rewards[episode, step, i] = reward
 
         self.log.bids[episode, step] = bids
@@ -288,11 +284,11 @@ class _Simulation:
             won = winner == i
             conversions = int(np.sum(self.log.converted[episode] & won))
             stats = EpisodeStats(
-                budget=participant.budget,
+                budget=participant.campaign.budget,
                 spend=float(np.sum(self.log.price[episode][won])),
                 wins=int(np.sum(won)),
                 conversions=conversions,
-                value=conversions * participant.value_per_conversion,
+                value=conversions * participant.campaign.value,
             )
             episode_reward = None
             if participant.episode_reward is not None:

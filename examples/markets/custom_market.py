@@ -25,15 +25,13 @@ class DayAndNight(bl.markets.Market):
 
 config = bl.SimConfig(
     bidders=[
-        bl.BidderSpec("truthful", bl.Truthful, budget=40, value_per_conversion=5),
+        bl.BidderSpec("truthful", bl.Truthful(), bl.Campaign(budget=40, value=5)),
         bl.BidderSpec(
             "night_only",
-            bl.Truthful,
-            budget=40,
-            value_per_conversion=5,
-            segments=("night",),
+            bl.Truthful(),
+            bl.Campaign(budget=40, value=5, segments=("night",)),
         ),
-        bl.BidderSpec("bandit", bl.UcbMultiplier, budget=40, value_per_conversion=5),
+        bl.BidderSpec("bandit", bl.UcbMultiplier(), bl.Campaign(budget=40, value=5)),
     ],
     market=DayAndNight(),
     episodes=10,

@@ -66,7 +66,7 @@ class Market(ABC):
     ...     def draws(self, bidders, rng):
     ...         while True:
     ...             yield bl.markets.MarketDraw({}, np.full(bidders, 0.1))
-    >>> spec = bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)
+    >>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))
     >>> log = bl.run(bl.SimConfig(bidders=[spec], market=Flat(), episodes=1, steps=10))
     >>> log.values[0, :3, 0].tolist()
     [0.5, 0.5, 0.5]

@@ -42,7 +42,7 @@ class Results:
     --------
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
-    ...     bidders=[bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)],
+    ...     bidders=[bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))],
     ...     episodes=2,
     ...     steps=50,
     ... )

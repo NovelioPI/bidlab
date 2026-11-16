@@ -7,12 +7,13 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from bidlab.bidders import PidPacing, Truthful
+from bidlab.bidders import Bidder, PidPacing, Truthful
 from bidlab.config import BidderSpec, SimConfig
 from bidlab.markets import Market, MarketDraw, Segment, Segmented
 from bidlab.results import Results
 from bidlab.runner import COLUMNS, SEGMENT_COLUMNS, run_many
 from bidlab.simulator import run
+from bidlab.types import Campaign
 
 
 def segments_table(results: Results) -> Results:
@@ -22,8 +23,8 @@ def segments_table(results: Results) -> Results:
 
 def config(*extra):
     bidders = [
-        BidderSpec("t", Truthful, 20.0, 5.0),
-        BidderSpec("p", PidPacing, 8.0, 5.0),
+        BidderSpec("t", Truthful(), Campaign(20.0, 5.0)),
+        BidderSpec("p", PidPacing(), Campaign(8.0, 5.0)),
         *extra,
     ]
     return SimConfig(bidders=bidders, episodes=2, steps=100)
@@ -53,14 +54,14 @@ def test_workers_give_same_rows():
 def test_lambdas_and_closures_run_in_parallel():
     fraction = 0.7
 
-    def make_bidder(params, rng):
-        return Truthful({"multiplier": fraction}, rng)
+    class Closure(Bidder):
+        def forward(self, value, observation):
+            return fraction * value
 
     extra = BidderSpec(
         "closure",
-        make_bidder,
-        20.0,
-        5.0,
+        Closure(),
+        Campaign(20.0, 5.0),
         reward=lambda observation, feedback, params: 2 * feedback.price,
     )
     serial = run_many(config(extra), seeds=range(3))
@@ -69,17 +70,18 @@ def test_lambdas_and_closures_run_in_parallel():
 
 
 def test_unpicklable_spec_fails_before_runs(monkeypatch):
-    lock = threading.Lock()
+    class Locked(Bidder):
+        def __init__(self):
+            self.lock = threading.Lock()
 
-    def make_bidder(params, rng):
-        with lock:
-            return Truthful(params, rng)
+        def forward(self, value, observation):
+            return value
 
     pools = []
     monkeypatch.setattr(
         "bidlab.runner.ProcessPoolExecutor", lambda *args, **kwargs: pools.append(1)
     )
-    extra = BidderSpec("locked", make_bidder, 20.0, 5.0)
+    extra = BidderSpec("locked", Locked(), Campaign(20.0, 5.0))
     with pytest.raises(TypeError, match="'locked'.*workers=1"):
         run_many(config(extra), seeds=range(2), workers=2)
 
@@ -193,7 +195,7 @@ def test_custom_market_same_rows_in_parallel():
 
 def segmented_config():
     market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)))
-    targeted = BidderSpec("n", Truthful, 20.0, 5.0, segments=("news",))
+    targeted = BidderSpec("n", Truthful(), Campaign(20.0, 5.0, segments=("news",)))
     return SimConfig(
         bidders=[*config().bidders, targeted], episodes=2, steps=100, market=market
     )
@@ -303,7 +305,7 @@ def test_custom_market_segments_reach_segments_table():
                 name = "day" if rng.random() < 0.6 else "night"
                 yield MarketDraw({}, rng.uniform(0.0, 0.2, size=bidders), name)
 
-    night = BidderSpec("n", Truthful, 20.0, 5.0, segments=("night",))
+    night = BidderSpec("n", Truthful(), Campaign(20.0, 5.0, segments=("night",)))
     cfg = SimConfig(
         bidders=[*config().bidders, night], episodes=2, steps=100, market=DayAndNight()
     )
