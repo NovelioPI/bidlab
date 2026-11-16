@@ -10,9 +10,10 @@ class Stack(Bidder):
     """A bidder that runs its bidders in order and outputs the last one's output.
 
     The first bidder gets the incoming value, `Observation.value` at the top;
-    each later bidder gets the previous one's output. Every hook reaches
-    every bidder, in order. Order matters: pacing then shading differs from
-    shading then pacing. A stack is itself a bidder, so stacks can nest.
+    each later bidder gets the previous one's output. The bidders are the
+    stack's children, at paths ``"bidders.0"``, ``"bidders.1"`` and so on,
+    so every hook reaches each of them, in order. Order matters: pacing then
+    shading differs from shading then pacing. Stacks can nest.
 
     Parameters
     ----------

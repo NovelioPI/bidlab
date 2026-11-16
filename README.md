@@ -99,7 +99,7 @@ learning = bl.SimConfig(
 print(bl.run_many(learning, seeds=range(3)).summary())
 ```
 
-A bidder keeps what it learns on `self`. Take settings as constructor arguments. The hooks are `on_episode_start(campaign)`, `forward(value, observation)`, `update_batch(feedbacks)` (or `update(feedback)` for one at a time), and `on_episode_end(stats, episode_reward)`. The simulator deep-copies the bidder for each run, so every seed starts from the bidder as you built it, and a pretrained model passes in as is. Each bidder, and each bidder inside a stack, gets its own random stream as `self.rng`.
+A bidder keeps what it learns on `self`. Take settings as constructor arguments. The hooks are `on_episode_start(campaign)`, `forward(value, observation)`, `update_batch(feedbacks)` (or `update(feedback)` for one at a time), and `on_episode_end(stats, episode_reward)`. The simulator deep-copies the bidder for each run, so every seed starts from the bidder as you built it, and a pretrained model passes in as is. Each bidder, and each child bidder inside it, gets its own random stream as `self.rng`.
 
 A bidder that ignores the incoming value works alone, too:
 
@@ -113,6 +113,40 @@ class FlatBid(bl.Bidder):
 
 
 flat_spec = bl.BidderSpec("flat", FlatBid(0.2), bl.Campaign(budget=50, value=5))
+```
+
+A bidder can hold other bidders, its children, in attributes, lists or tuples. Call each child's `forward` yourself, with any extra keyword arguments it takes. `bl.Stack` is one such bidder.
+
+Analogy: a PyTorch module that holds submodules.
+
+The simulator does the rest. Each child gets its own `self.rng`, and `on_episode_start`, `update_batch` and `on_episode_end`, parent first. Do not call those on a child yourself, or it learns twice. Create children in `__init__`: a child added during a run raises an error.
+
+```python
+class Shade(bl.Bidder):
+    def forward(self, value, observation, factor=1.0):
+        return value * factor
+
+
+class NightShade(bl.Bidder):
+    """Shades harder at night, then paces. Its children still get every hook."""
+
+    def __init__(self):
+        self.shade = Shade()
+        self.pacing = bl.PidPacing()
+
+    def on_episode_start(self, campaign):
+        self.campaign = campaign
+
+    def forward(self, value, observation):
+        factor = 0.6 if self.campaign.hour_of_day(observation.time) < 6 else 0.9
+        shaded = self.shade.forward(value, observation, factor=factor)
+        return self.pacing.forward(shaded, observation)
+
+
+night_spec = bl.BidderSpec("night", NightShade(), bl.Campaign(budget=15, value=5))
+print(
+    [path for path, _ in night_spec.bidder.named_bidders()]
+)  # ['', 'shade', 'pacing']
 ```
 
 ## Built-in bidders

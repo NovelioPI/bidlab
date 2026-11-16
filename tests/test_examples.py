@@ -78,3 +78,12 @@ def test_readme_shows_value_stage_before_pacing():
     assert "self.pending[observation.time]" in blocks
     assert "def update_batch(self, feedbacks):" in blocks
     assert "bl.Stack(SegmentRate(), bl.PidPacing())" in blocks
+
+
+def test_readme_shows_composite_bidder():
+    readme = (ROOT / "README.md").read_text()
+    blocks = "\n".join(re.findall(r"```python\n(.*?)```", readme, flags=re.DOTALL))
+    assert "self.shade = Shade()" in blocks
+    assert "self.pacing = bl.PidPacing()" in blocks
+    assert "factor=factor" in blocks
+    assert "named_bidders()" in blocks

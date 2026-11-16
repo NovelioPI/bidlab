@@ -28,6 +28,15 @@ class Bidder(ABC):
     then `on_episode_end`. Outside the campaign's ``segments``, `forward` and
     `update_batch` are not called.
 
+    A bidder may hold other bidders, its children, in attributes, lists or
+    tuples. Call a child's `forward` yourself, with any extra keyword
+    arguments it takes. The simulator calls every other hook on every child,
+    parent first, and gives each child its own ``rng``. Do not call a child's
+    `on_episode_start`, `update_batch` or `on_episode_end` yourself, or it
+    runs twice. Create children in ``__init__``: a child added during a run
+    raises `ValueError`. Outside a run, `BidderSpec.build` binds the whole
+    tree, and `bind` binds only this bidder.
+
     Attributes
     ----------
     rng : numpy.random.Generator
@@ -37,6 +46,7 @@ class Bidder(ABC):
     See Also
     --------
     Stack : Chains bidders.
+    named_bidders : Lists this bidder's children.
     BidderSpec : Puts a bidder in a simulation.
 
     Examples
