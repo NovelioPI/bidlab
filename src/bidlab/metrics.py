@@ -29,6 +29,17 @@ class BidderEpisodeMetrics:
 
 
 @dataclass(frozen=True)
+class BidderSegmentMetrics:
+    episode: int
+    bidder: str
+    segment: str
+    spend: float
+    wins: int
+    conversions: int
+    surplus: float
+
+
+@dataclass(frozen=True)
 class PlatformEpisodeMetrics:
     episode: int
     revenue: float
@@ -83,6 +94,31 @@ def bidder_metrics(log: RunLog) -> list[BidderEpisodeMetrics]:
                     episode_reward=float(log.episode_rewards[episode, i]),
                 )
             )
+    return rows
+
+
+def segment_metrics(log: RunLog) -> list[BidderSegmentMetrics]:
+    """One row per episode, bidder and market segment."""
+    rows = []
+    names = log.config.market.segment_names
+    for episode in range(log.winner.shape[0]):
+        for i, spec in enumerate(log.config.bidders):
+            won = log.winner[episode] == i
+            for index, name in enumerate(names):
+                won_here = won & (log.segment[episode] == index)
+                spend = float(log.price[episode][won_here].sum())
+                conversions = int((log.converted[episode] & won_here).sum())
+                rows.append(
+                    BidderSegmentMetrics(
+                        episode=episode,
+                        bidder=spec.name,
+                        segment=name,
+                        spend=spend,
+                        wins=int(won_here.sum()),
+                        conversions=conversions,
+                        surplus=conversions * spec.value_per_conversion - spend,
+                    )
+                )
     return rows
 
 

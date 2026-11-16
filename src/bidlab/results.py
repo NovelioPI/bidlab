@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 ResultRow = Mapping[str, str | int | float]
 
 SUMMARY_METRICS = ("spend", "conversions", "surplus", "budget_used", "regret", "reward")
+SEGMENT_SUMMARY_METRICS = ("spend", "wins", "conversions", "surplus")
 SUMMARY_COLUMN_WIDTH = 22
 CONFIDENCE = 0.95
 
@@ -25,6 +26,7 @@ class Results:
 
     columns: tuple[str, ...]
     rows: tuple[ResultRow, ...]
+    segments: "Results | None" = None
 
     def __post_init__(self) -> None:
         read_only = tuple(MappingProxyType(dict(row)) for row in self.rows)
@@ -34,7 +36,7 @@ class Results:
         return len(self.rows)
 
     def equals(self, other: "Results") -> bool:
-        """Exact equality of columns and rows, with NaN equal to NaN."""
+        """Exact equality of this table's columns and rows; NaN equals NaN."""
         if self.columns != other.columns or len(self.rows) != len(other.rows):
             return False
 
@@ -45,21 +47,28 @@ class Results:
         )
 
     def summary(self) -> str:
-        """Table of mean ± 95% Student-t half-width across seeds, per bidder."""
-        bidders = list(dict.fromkeys(str(row["bidder"]) for row in self.rows))
-        width = max(len("bidder"), *(len(name) for name in bidders))
-        header = f"{'bidder':<{width}}" + "".join(
-            f"{metric:>{SUMMARY_COLUMN_WIDTH}}" for metric in SUMMARY_METRICS
+        """Mean ± 95% Student-t half-width across seeds, per bidder (and segment)."""
+        keys = ("bidder", "segment") if "segment" in self.columns else ("bidder",)
+        metrics = (
+            SEGMENT_SUMMARY_METRICS if "segment" in self.columns else SUMMARY_METRICS
         )
-        lines = [header]
-        for bidder in bidders:
-            own = [row for row in self.rows if row["bidder"] == bidder]
-            cells: list[str] = []
-            for metric in SUMMARY_METRICS:
-                values = np.array([float(row[metric]) for row in own])
-                cells.append(f"{_mean_and_interval(values):>{SUMMARY_COLUMN_WIDTH}}")
-
-            lines.append(f"{bidder:<{width}}" + "".join(cells))
+        groups = list(
+            dict.fromkeys(tuple(str(row[k]) for k in keys) for row in self.rows)
+        )
+        widths = [
+            max(len(key), *(len(group[k]) for group in groups))
+            for k, key in enumerate(keys)
+        ]
+        lines = [_summary_line(keys, widths, metrics)]
+        for group in groups:
+            own = [
+                row for row in self.rows if tuple(str(row[k]) for k in keys) == group
+            ]
+            cells = [
+                _mean_and_interval(np.array([float(row[metric]) for row in own]))
+                for metric in metrics
+            ]
+            lines.append(_summary_line(group, widths, cells))
 
         return "\n".join(lines)
 
@@ -79,6 +88,15 @@ class Results:
 
         records = [dict(row) for row in self.rows]
         return pandas.DataFrame(records, columns=list(self.columns))
+
+
+def _summary_line(
+    labels: tuple[str, ...], widths: list[int], cells: tuple[str, ...] | list[str]
+) -> str:
+    label = " ".join(
+        f"{text:<{width}}" for text, width in zip(labels, widths, strict=True)
+    )
+    return label + "".join(f"{cell:>{SUMMARY_COLUMN_WIDTH}}" for cell in cells)
 
 
 def _mean_and_interval(values: npt.NDArray[np.float64]) -> str:

@@ -8,7 +8,12 @@ import cloudpickle
 import numpy as np
 
 from bidlab.config import SimConfig
-from bidlab.metrics import BidderEpisodeMetrics, bidder_metrics, platform_metrics
+from bidlab.metrics import (
+    BidderEpisodeMetrics,
+    bidder_metrics,
+    platform_metrics,
+    segment_metrics,
+)
 from bidlab.results import ResultRow, Results
 from bidlab.simulator import run
 
@@ -18,8 +23,16 @@ BIDDER_COLUMNS = tuple(
     if f.name not in ("episode", "bidder")
 )
 COLUMNS = ("seed", "bidder", *BIDDER_COLUMNS, "revenue", "welfare")
+SEGMENT_METRIC_COLUMNS = ("spend", "wins", "conversions", "surplus")
+SEGMENT_COLUMNS = ("seed", "bidder", "segment", *SEGMENT_METRIC_COLUMNS)
 
 RowBuilder = dict[str, str | int | float]
+
+
+@dataclasses.dataclass(frozen=True)
+class _SeedRows:
+    main: list[ResultRow]
+    segments: list[ResultRow]
 
 
 def run_many(config: SimConfig, seeds: Iterable[int], workers: int = 1) -> Results:
@@ -37,8 +50,13 @@ def run_many(config: SimConfig, seeds: Iterable[int], workers: int = 1) -> Resul
         with ProcessPoolExecutor(max_workers=workers, mp_context=context) as pool:
             per_seed = list(pool.map(_run_seed, repeat(payload), seed_list))
 
-    rows = tuple(row for seed_rows in per_seed for row in seed_rows)
-    return Results(columns=COLUMNS, rows=rows)
+    rows = tuple(row for seed_rows in per_seed for row in seed_rows.main)
+    segment_rows = tuple(row for seed_rows in per_seed for row in seed_rows.segments)
+    return Results(
+        columns=COLUMNS,
+        rows=rows,
+        segments=Results(columns=SEGMENT_COLUMNS, rows=segment_rows),
+    )
 
 
 def _pickle_config(config: SimConfig) -> bytes:
@@ -54,11 +72,11 @@ def _pickle_config(config: SimConfig) -> bytes:
     return cloudpickle.dumps(config)
 
 
-def _run_seed(payload: bytes, seed: int) -> list[ResultRow]:
+def _run_seed(payload: bytes, seed: int) -> _SeedRows:
     return _seed_rows(cloudpickle.loads(payload), seed)
 
 
-def _seed_rows(config: SimConfig, seed: int) -> list[ResultRow]:
+def _seed_rows(config: SimConfig, seed: int) -> _SeedRows:
     log = run(dataclasses.replace(config, seed=seed))
     platform = platform_metrics(log)
     revenue = float(np.mean([p.revenue for p in platform]))
@@ -75,4 +93,18 @@ def _seed_rows(config: SimConfig, seed: int) -> list[ResultRow]:
         row["welfare"] = welfare
         rows.append(row)
 
-    return rows
+    segments = segment_metrics(log)
+    segment_rows: list[ResultRow] = []
+    for spec in config.bidders:
+        for name in config.market.segment_names:
+            own = [m for m in segments if m.bidder == spec.name and m.segment == name]
+            segment_row: RowBuilder = {
+                "seed": seed,
+                "bidder": spec.name,
+                "segment": name,
+            }
+            for column in SEGMENT_METRIC_COLUMNS:
+                segment_row[column] = float(np.mean([getattr(m, column) for m in own]))
+            segment_rows.append(segment_row)
+
+    return _SeedRows(main=rows, segments=segment_rows)
