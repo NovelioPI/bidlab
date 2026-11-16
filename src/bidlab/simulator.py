@@ -60,13 +60,13 @@ class _Simulation:
     def __init__(self, config: SimConfig):
         count = len(config.bidders)
         # One stream per role, so adding a bidder keeps the market's draws equal.
-        world_seed, tie_seed, conversion_seed, *bidder_seeds = np.random.SeedSequence(
+        market_seed, tie_seed, conversion_seed, *bidder_seeds = np.random.SeedSequence(
             config.seed
         ).spawn(3 + count)
         self.config = config
         self.weights = np.array([s.value_per_conversion for s in config.bidders])
         self.market_draws = config.market.draws(
-            count, np.random.default_rng(world_seed)
+            count, np.random.default_rng(market_seed)
         )
         self.tie_rng = np.random.default_rng(tie_seed)
         self.conversion_rng = np.random.default_rng(conversion_seed)

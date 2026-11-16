@@ -1,5 +1,5 @@
 import csv
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -48,10 +48,9 @@ class Results:
 
     def summary(self) -> str:
         """Mean ± 95% Student-t half-width across seeds, per bidder (and segment)."""
-        keys = ("bidder", "segment") if "segment" in self.columns else ("bidder",)
-        metrics = (
-            SEGMENT_SUMMARY_METRICS if "segment" in self.columns else SUMMARY_METRICS
-        )
+        keys, metrics = ("bidder",), SUMMARY_METRICS
+        if "segment" in self.columns:
+            keys, metrics = ("bidder", "segment"), SEGMENT_SUMMARY_METRICS
         groups = list(
             dict.fromkeys(tuple(str(row[k]) for k in keys) for row in self.rows)
         )
@@ -91,7 +90,7 @@ class Results:
 
 
 def _summary_line(
-    labels: tuple[str, ...], widths: list[int], cells: tuple[str, ...] | list[str]
+    labels: Sequence[str], widths: list[int], cells: Sequence[str]
 ) -> str:
     label = " ".join(
         f"{text:<{width}}" for text, width in zip(labels, widths, strict=True)
