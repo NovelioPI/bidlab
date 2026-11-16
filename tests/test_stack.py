@@ -219,6 +219,19 @@ def test_stack_parallel_equals_serial():
     assert parallel.equals(serial)
 
 
+def test_stack_streams_match_main():
+    # Recorded on main 60c1412, before the tree walk took over binding.
+    expected = {
+        "a": [0.9412261510533382, 0.5963327018170845, 0.9598601871506219],
+        "b": [0.9945804582113029, 0.09643783630573322, 0.941043133979684],
+        "c": [0.7616405784268819, 0.2761865794161845, 0.5232990510378713],
+    }
+    Draws.draws.clear()
+    nested = Stack(Draws("a"), Stack(Draws("b"), Draws("c")))
+    run(config(BidderSpec("d", nested, CAMPAIGN), other()))
+    assert {name: draws[:3] for name, draws in Draws.draws.items()} == expected
+
+
 def test_bidder_draws_keep_noise_stream():
     seen: dict[bool, list[float]] = {}
     for draw in (True, False):
@@ -226,4 +239,5 @@ def test_bidder_draws_keep_noise_stream():
         Watch.values.clear()
         run(config(BidderSpec("d", drawing, CAMPAIGN), other(), estimate_noise=0.5))
         seen[draw] = list(Watch.values)
+
     assert seen[True] == seen[False]
