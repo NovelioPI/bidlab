@@ -176,7 +176,20 @@ daytime = bl.SimConfig(
 print(bl.run_many(daytime, seeds=range(2)).summary())
 ```
 
+A custom market can define its own segments. Override the `segment_names` property, and pass `segment=` to each `MarketDraw`. Targeting and `results.segments` then work as they do for `Segmented`.
+
 `IndependentValues(scipy.stats.uniform(0, 1))` with `value_per_conversion=1` is the textbook independent private values setting.
+
+## Examples
+
+Each script in `examples/` runs on its own and prints a summary table.
+
+| Script | Shows |
+|---|---|
+| `basic.py` | Four built-in bidders over five seeds in parallel |
+| `segments.py` | A segmented market and a bidder that targets one segment |
+| `custom_market.py` | A custom market with its own day and night segments |
+| `independent_values.py` | First price with independent uniform values, truthful against shaded bids |
 
 ## Results
 
