@@ -68,3 +68,15 @@ pytest_add_cli_args = ["--ignore=tests/test_examples.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint]
+extend-select = ["D"]
+# Magic methods such as __post_init__ and __len__ describe themselves.
+ignore = ["D105"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]
+"examples/*" = ["D"]

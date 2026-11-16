@@ -1,3 +1,5 @@
+"""Run one simulation per seed and collect the metrics in a table."""
+
 import dataclasses
 from collections.abc import Iterable
 from concurrent.futures import ProcessPoolExecutor
@@ -36,7 +38,48 @@ class _SeedRows:
 
 
 def run_many(config: SimConfig, seeds: Iterable[int], workers: int = 1) -> Results:
-    """Run each seed; rows are ordered by seed, then bidder."""
+    """Run each seed; rows are ordered by seed, then bidder.
+
+    Each row holds one bidder's metrics for one seed, averaged over the
+    episodes. ``workers > 1`` runs seeds in parallel processes and gives the
+    same results as ``workers=1``.
+
+    Parameters
+    ----------
+    config : SimConfig
+        The simulation; its ``seed`` is replaced by each seed in turn.
+    seeds : Iterable[int]
+        One run per seed.
+    workers : int, optional
+        Number of processes.
+
+    Returns
+    -------
+    Results
+        The bidder table, with the per-segment table in ``.segments``.
+
+    Raises
+    ------
+    ValueError
+        If ``workers`` is below 1.
+    TypeError
+        If ``workers > 1`` and a bidder cannot be pickled with cloudpickle.
+
+    Examples
+    --------
+    >>> import bidlab as bl
+    >>> config = bl.SimConfig(
+    ...     bidders=[
+    ...         bl.BidderSpec("a", bl.Truthful, budget=10, value_per_conversion=5),
+    ...         bl.BidderSpec("b", bl.PidPacing, budget=10, value_per_conversion=5),
+    ...     ],
+    ...     episodes=2,
+    ...     steps=50,
+    ... )
+    >>> results = bl.run_many(config, seeds=[0, 1])
+    >>> [(row["seed"], row["bidder"]) for row in results.rows]
+    [(0, 'a'), (0, 'b'), (1, 'a'), (1, 'b')]
+    """
     if workers < 1:
         raise ValueError(f"workers must be >= 1, got {workers}")
 
