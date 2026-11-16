@@ -9,9 +9,9 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | Symbol | Meaning | Unit |
 |---|---|---|
 | t | Step in the episode | step |
-| vᵢₜ | Expected value of bidder i at step t: wᵢ × pᵢₜ | money |
-| wᵢ | Value per conversion of bidder i | money |
-| pᵢₜ | Conversion probability of bidder i at step t | probability |
+| vᵢₜ | True expected value of bidder i at step t: wᵢ × pᵢₜ, as in `RunLog.values` | money |
+| wᵢ | Value of one conversion to bidder i: `campaign.value` | money |
+| pᵢₜ | True conversion probability of bidder i at step t, not the bidder's estimate | probability |
 | Wᵢ | Steps that bidder i won | set of steps |
 | priceₜ | Price paid at step t | money |
 | Bᵢ | Budget of bidder i per episode | money |
@@ -71,6 +71,7 @@ Regret compares the bidder with the best fixed multiplier in hindsight.
 ## Limits of regret
 
 - Regret can be negative. An adaptive bidder can beat every fixed multiplier.
+- The replay bids on the true value. With `estimate_noise` above 0, or a bidder's own model, the bidder saw a different value, so regret includes the cost of that wrong estimate.
 - Regret ignores CPA targets. A bidder that underbids to keep its CPA shows high regret. Read it together with `cpa_violation`.
 - Other bidders do not react in the replay. Learning competitors would have bid differently against the replayed bidder.
 - Ties lose in the replay, but the simulator breaks them at random. With continuous values, ties almost never happen.

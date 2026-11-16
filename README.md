@@ -46,7 +46,7 @@ print(results.summary())
 
 Budgets reset at the start of each episode, and each episode starts with `on_episode_start(campaign)`. Auctions are spaced evenly over `SimConfig.horizon_hours`, 24 by default. Bidder objects persist for the whole run, so a learning bidder keeps what it learned.
 
-`observation.value` is the platform's value: w times its estimate of p. The estimate is exact by default. A bidder with its own model ignores it and predicts from `features`.
+`observation.value` is the platform's value: w times its estimate of p. The estimate is exact by default. Set `SimConfig(estimate_noise=0.5)` to add normal noise with that standard deviation to logit(p), and test how a bidder copes with a wrong value. A bidder with its own model ignores it and predicts from `features`. Metrics always use the true value.
 
 ## Write a bidder
 
@@ -256,4 +256,4 @@ A bidder that holds a large object, such as a model, is copied to each worker an
 
 ## Reproducibility
 
-Each source of randomness has its own seeded stream: the market, tie-breaking, conversions, and each bidder. On one OS and CPU type, the same seed gives a bit-identical log. Other platforms round some floats differently, so their logs can differ in the last bits. Adding a bidder does not change the impressions the others see.
+Each source of randomness has its own seeded stream: the market, tie-breaking, conversions, each bidder's estimate error, and each bidder. A `Stack` splits its bidder's stream so each inner bidder gets its own. On one OS and CPU type, the same seed gives a bit-identical log. Other platforms round some floats differently, so their logs can differ in the last bits. Adding a bidder does not change the impressions the others see.
