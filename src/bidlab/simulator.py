@@ -1,3 +1,5 @@
+"""The core loop: `run` simulates every auction and records a `RunLog`."""
+
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -13,7 +15,42 @@ from bidlab.types import EpisodeStats, Feedback, Observation
 
 @dataclass(frozen=True)
 class RunLog:
-    """Arrays are (episodes, steps[, bidders]); episode_rewards is (episodes, bidders)."""
+    """Arrays are (episodes, steps[, bidders]); episode_rewards is (episodes, bidders).
+
+    Every array is read-only, so metrics computed from it always agree.
+
+    Attributes
+    ----------
+    config : SimConfig
+        The config that made this log.
+    bids : numpy.ndarray
+        Bids after cleaning and capping; 0 for a bidder outside its segments.
+    values : numpy.ndarray
+        Each bidder's expected value per step.
+    winner : numpy.ndarray
+        Index of the winning bidder per step; -1 when nobody won.
+    price : numpy.ndarray
+        Price the winner paid per step; 0 when nobody won.
+    converted : numpy.ndarray
+        Whether the winner converted per step.
+    rewards : numpy.ndarray
+        Each bidder's step reward; 0 outside its segments.
+    episode_rewards : numpy.ndarray
+        Each bidder's episode reward; NaN when the spec sets none.
+    segment : numpy.ndarray
+        Index into ``config.market.segment_names`` per step.
+
+    Examples
+    --------
+    >>> import bidlab as bl
+    >>> spec = bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)
+    >>> log = bl.run(bl.SimConfig(bidders=[spec], episodes=2, steps=50))
+    >>> won = log.winner[0] == 0
+    >>> bool(log.price[0][won].sum() <= spec.budget)
+    True
+    >>> log.bids.flags.writeable
+    False
+    """
 
     config: SimConfig
     bids: npt.NDArray[np.float64]
@@ -41,6 +78,36 @@ class _Participant:
 
 
 def run(config: SimConfig) -> RunLog:
+    """Simulate every episode of ``config`` and return the full log.
+
+    On one OS and CPU type, the same config and seed give a bit-identical
+    log. Each bidder sees only
+    its own observation and feedback.
+
+    Raises
+    ------
+    TypeError
+        If a bidder factory returns something that is not a `Bidder`.
+    ValueError
+        If the market yields a draw with the wrong shape, a probability
+        outside [0, 1], or an unknown segment.
+    RuntimeError
+        If the market stops yielding draws before the run ends.
+
+    Examples
+    --------
+    >>> import bidlab as bl
+    >>> config = bl.SimConfig(
+    ...     bidders=[bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)],
+    ...     episodes=2,
+    ...     steps=50,
+    ... )
+    >>> log = bl.run(config)
+    >>> log.bids.shape, log.winner.shape
+    ((2, 50, 1), (2, 50))
+    >>> bool((bl.run(config).bids == log.bids).all())
+    True
+    """
     simulation = _Simulation(config)
     simulation.run_all()
     return simulation.log
@@ -53,6 +120,7 @@ def _build_bidder(spec: BidderSpec, rng: np.random.Generator) -> Bidder:
             f"bidder {spec.name!r}: the factory returned "
             f"{type(bidder).__name__}, not a Bidder"
         )
+
     return bidder
 
 
@@ -102,6 +170,7 @@ class _Simulation:
         for episode in range(self.config.episodes):
             self._run_episode(episode)
         # Callers must not change the log, or later metrics silently disagree.
+
         for array in (
             self.log.bids,
             self.log.values,
@@ -119,8 +188,10 @@ class _Simulation:
         budget_left = np.array([p.budget for p in self.participants])
         for participant in self.participants:
             participant.bidder.on_episode_start(participant.budget, steps)
+
         for step in range(steps):
             self._run_step(episode, step, budget_left)
+
         self._end_episode(episode)
 
     def _run_step(
@@ -146,6 +217,7 @@ class _Simulation:
         for i, observation in observations.items():
             bids[i] = self.participants[i].bidder.bid(observation)
         # Risk: if bids are not capped at the remaining budget, then spend can exceed it.
+
         bids = np.clip(
             np.nan_to_num(bids, nan=0.0, posinf=0.0, neginf=0.0), 0.0, budget_left
         )
@@ -197,13 +269,16 @@ class _Simulation:
                 f"expected ({len(self.participants)},)"
             )
         # The negated check also catches NaN, which fails every comparison.
+
         if not np.all((probabilities >= 0.0) & (probabilities <= 1.0)):
             raise ValueError(f"{where}: probabilities must lie in [0, 1]")
+
         if draw.segment not in self.segment_index:
             raise ValueError(
                 f"{where}: segment {draw.segment!r} is not in "
                 f"segment_names {tuple(self.segment_index)}"
             )
+
         return draw
 
     def _end_episode(self, episode: int) -> None:
@@ -224,4 +299,5 @@ class _Simulation:
                     stats, participant.reward_params
                 )
                 self.log.episode_rewards[episode, i] = episode_reward
+
             participant.bidder.on_episode_end(stats, episode_reward)

@@ -1,3 +1,5 @@
+"""Markets: where each step's features and conversion probabilities come from."""
+
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -17,11 +19,26 @@ class Distribution(Protocol):
 
     def rvs(
         self, size: int, random_state: np.random.Generator
-    ) -> npt.NDArray[np.float64]: ...
+    ) -> npt.NDArray[np.float64]:
+        """Return ``size`` independent draws from ``random_state``."""
+        ...
 
 
 @dataclass(frozen=True)
 class MarketDraw:
+    """One step's draw: public features, private probabilities and the segment.
+
+    Parameters
+    ----------
+    features : Mapping[str, str | float]
+        Public features every bidder sees in `Observation.features`.
+    probabilities : numpy.ndarray
+        Each bidder's conversion probability, shape ``(bidders,)``, in [0, 1].
+        A bidder sees only its own, as part of its value.
+    segment : str, optional
+        Name of this step's segment; must be in the market's `segment_names`.
+    """
+
     features: Mapping[str, str | float]
     probabilities: npt.NDArray[np.float64]
     segment: str = ALL_SEGMENTS
@@ -34,32 +51,102 @@ class MarketDraw:
 
 
 class Market(ABC):
-    """Draws each step's public features and every bidder's conversion probability."""
+    """Draws each step's public features and every bidder's conversion probability.
+
+    Subclass it and implement `draws`. Override `segment_names` when the
+    market has segments.
+
+    Examples
+    --------
+    A market where every bidder has the same fixed probability:
+
+    >>> import numpy as np
+    >>> import bidlab as bl
+    >>> class Flat(bl.markets.Market):
+    ...     def draws(self, bidders, rng):
+    ...         while True:
+    ...             yield bl.markets.MarketDraw({}, np.full(bidders, 0.1))
+    >>> spec = bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)
+    >>> log = bl.run(bl.SimConfig(bidders=[spec], market=Flat(), episodes=1, steps=10))
+    >>> log.values[0, :3, 0].tolist()
+    [0.5, 0.5, 0.5]
+    """
 
     @property
     def segment_names(self) -> tuple[str, ...]:
+        """Every segment name a draw can have; ``("all",)`` by default."""
         return (ALL_SEGMENTS,)
 
     @abstractmethod
     def draws(self, bidders: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
-        """Yield one draw per step, for the whole run."""
+        """Yield one draw per step, for the whole run.
+
+        Parameters
+        ----------
+        bidders : int
+            Number of bidders; each draw holds one probability per bidder.
+        rng : numpy.random.Generator
+            The market's own random stream. Use only this stream, so runs
+            stay reproducible.
+
+        Yields
+        ------
+        MarketDraw
+            The next step's draw. The generator must not stop before the run
+            ends.
+        """
 
 
 @dataclass(frozen=True)
 class LogisticContext(Market):
-    """Conversion probability σ(ad vector · random context + bias) per bidder."""
+    """Conversion probability σ(ad vector · random context + bias) per bidder.
+
+    Each bidder gets a fixed ad vector and bias for the whole run. Each step
+    draws a new standard normal context, so bidders' probabilities move
+    together on some steps and apart on others.
+
+    Parameters
+    ----------
+    context_dim : int, optional
+        Length of the context and ad vectors.
+    bias_mean : float, optional
+        Mean of the per-bidder bias; -3 gives probabilities near 5%.
+    bias_std : float, optional
+        Spread of the per-bidder bias.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import bidlab as bl
+    >>> draws = bl.markets.LogisticContext().draws(3, np.random.default_rng(0))
+    >>> next(draws).probabilities.shape
+    (3,)
+    """
 
     context_dim: int = 8
     bias_mean: float = -3.0
     bias_std: float = 0.5
 
     def draws(self, bidders: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
+        """Yield one draw per step; see `Market.draws`."""
         for logits in _logits(self, bidders, rng):
             yield MarketDraw({}, _sigmoid(logits))
 
 
 @dataclass(frozen=True)
 class Segment:
+    """One segment of a `Segmented` market.
+
+    Parameters
+    ----------
+    name : str
+        Segment name; bidders list it in `BidderSpec.segments`.
+    share : float
+        Fraction of steps from this segment. Shares must sum to 1.
+    lift : float, optional
+        Added to every bidder's logit in this segment.
+    """
+
     name: str
     share: float
     lift: float = 0.0
@@ -67,7 +154,31 @@ class Segment:
 
 @dataclass(frozen=True)
 class Segmented(Market):
-    """Each step comes from one segment; its `lift` shifts every bidder's logit."""
+    """Each step comes from one segment; its `lift` shifts every bidder's logit.
+
+    The segment name goes in `Observation.features` under ``"segment"``.
+
+    Parameters
+    ----------
+    segments : tuple[Segment, ...]
+        At least one segment, with unique names and shares that sum to 1.
+    base : LogisticContext, optional
+        Draws the logits before the lift is added.
+
+    Raises
+    ------
+    ValueError
+        If there is no segment, a name repeats, a share is <= 0, or the
+        shares do not sum to 1.
+
+    Examples
+    --------
+    >>> import bidlab as bl
+    >>> from bidlab.markets import Segment, Segmented
+    >>> market = Segmented((Segment("mobile", 0.7, lift=0.5), Segment("desktop", 0.3)))
+    >>> market.segment_names
+    ('mobile', 'desktop')
+    """
 
     segments: tuple[Segment, ...]
     base: LogisticContext = LogisticContext()
@@ -94,9 +205,11 @@ class Segmented(Market):
 
     @property
     def segment_names(self) -> tuple[str, ...]:
+        """The segment names, in the order given."""
         return tuple(segment.name for segment in self.segments)
 
     def draws(self, bidders: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
+        """Yield one draw per step; see `Market.draws`."""
         base_rng, pick_rng = rng.spawn(2)
         shares = [segment.share for segment in self.segments]
         for logits in _logits(self.base, bidders, base_rng):
@@ -110,7 +223,31 @@ class Segmented(Market):
 
 @dataclass(frozen=True)
 class IndependentValues(Market):
-    """Each bidder's probability is an independent, clipped draw from `distribution`."""
+    """Each bidder's probability is an independent, clipped draw from `distribution`.
+
+    Draws are clipped to [0, 1]. Each bidder has its own stream, so adding a
+    bidder leaves the others' probabilities unchanged.
+
+    Parameters
+    ----------
+    distribution : Distribution
+        A scipy frozen distribution, such as ``scipy.stats.beta(2, 30)``.
+
+    Raises
+    ------
+    TypeError
+        If ``distribution`` has no ``rvs`` method.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from scipy import stats
+    >>> import bidlab as bl
+    >>> market = bl.markets.IndependentValues(stats.uniform(0, 0.1))
+    >>> draw = next(market.draws(2, np.random.default_rng(0)))
+    >>> bool(((draw.probabilities >= 0) & (draw.probabilities <= 0.1)).all())
+    True
+    """
 
     distribution: Distribution
 
@@ -122,6 +259,7 @@ class IndependentValues(Market):
             )
 
     def draws(self, bidders: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
+        """Yield one draw per step; see `Market.draws`."""
         # Child stream i depends only on i, so adding a bidder keeps the others' values.
         streams = rng.spawn(bidders)
         while True:

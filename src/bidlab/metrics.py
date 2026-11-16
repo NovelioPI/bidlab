@@ -1,3 +1,8 @@
+"""Per-episode metrics computed from a `RunLog`.
+
+The definitions match ``docs/metrics.md`` in the bidlab repository.
+"""
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -12,6 +17,41 @@ REGRET_MULTIPLIERS = np.round(np.arange(0.0, 3.0001, 0.05), 2)
 
 @dataclass(frozen=True)
 class BidderEpisodeMetrics:
+    """One bidder's metrics for one episode.
+
+    Attributes
+    ----------
+    episode : int
+        Episode index.
+    bidder : str
+        The spec's name.
+    spend : float
+        Sum of prices paid.
+    wins : int
+        Impressions won.
+    conversions : int
+        Realized conversions on won impressions.
+    value : float
+        ``conversions`` × value per conversion.
+    surplus : float
+        ``value`` − ``spend``.
+    budget_used : float
+        ``spend`` / budget; never above 1.
+    cpa : float
+        ``spend`` / ``conversions``; NaN with no conversion.
+    cpa_violation : float
+        max(0, ``cpa`` / target − 1); 0 with no spend, +inf with spend and
+        no conversion, NaN with no target.
+    cpa_score : float
+        See `bidlab.rewards.cpa_score_of`; NaN with no target.
+    regret : float
+        See `regret`.
+    reward : float
+        Sum of the bidder's step rewards.
+    episode_reward : float
+        The spec's episode reward; NaN when none is set.
+    """
+
     episode: int
     bidder: str
     spend: float
@@ -30,6 +70,26 @@ class BidderEpisodeMetrics:
 
 @dataclass(frozen=True)
 class BidderSegmentMetrics:
+    """One bidder's metrics for one episode, over one market segment's steps.
+
+    Attributes
+    ----------
+    episode : int
+        Episode index.
+    bidder : str
+        The spec's name.
+    segment : str
+        Name from the market's ``segment_names``.
+    spend : float
+        Sum of prices paid in the segment.
+    wins : int
+        Impressions won in the segment.
+    conversions : int
+        Realized conversions in the segment.
+    surplus : float
+        ``conversions`` × value per conversion − ``spend``.
+    """
+
     episode: int
     bidder: str
     segment: str
@@ -41,12 +101,34 @@ class BidderSegmentMetrics:
 
 @dataclass(frozen=True)
 class PlatformEpisodeMetrics:
+    """The seller's metrics for one episode.
+
+    Attributes
+    ----------
+    episode : int
+        Episode index.
+    revenue : float
+        Sum of all prices paid.
+    welfare : float
+        Sum of the winner's expected value, over steps with a sale.
+    """
+
     episode: int
     revenue: float
     welfare: float
 
 
 def platform_metrics(log: RunLog) -> list[PlatformEpisodeMetrics]:
+    """One row per episode with the seller's revenue and welfare.
+
+    Examples
+    --------
+    >>> import bidlab as bl
+    >>> spec = bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)
+    >>> log = bl.run(bl.SimConfig(bidders=[spec], episodes=2, steps=50))
+    >>> [row.revenue for row in bl.platform_metrics(log)]
+    [0.0, 0.0]
+    """
     rows = []
     for episode in range(log.winner.shape[0]):
         winner = log.winner[episode]
@@ -59,11 +141,27 @@ def platform_metrics(log: RunLog) -> list[PlatformEpisodeMetrics]:
                 welfare=float(winner_values.sum()),
             )
         )
+
     return rows
 
 
 def bidder_metrics(log: RunLog) -> list[BidderEpisodeMetrics]:
-    """One row per episode and bidder; definitions are in docs/metrics.md."""
+    """One row per episode and bidder; definitions are in docs/metrics.md.
+
+    Examples
+    --------
+    >>> import bidlab as bl
+    >>> config = bl.SimConfig(
+    ...     bidders=[
+    ...         bl.BidderSpec("a", bl.Truthful, budget=10, value_per_conversion=5),
+    ...         bl.BidderSpec("b", bl.PidPacing, budget=10, value_per_conversion=5),
+    ...     ],
+    ...     episodes=2,
+    ...     steps=50,
+    ... )
+    >>> [(row.episode, row.bidder) for row in bl.bidder_metrics(bl.run(config))]
+    [(0, 'a'), (0, 'b'), (1, 'a'), (1, 'b')]
+    """
     rows = []
     for episode in range(log.winner.shape[0]):
         for i, spec in enumerate(log.config.bidders):
@@ -94,11 +192,26 @@ def bidder_metrics(log: RunLog) -> list[BidderEpisodeMetrics]:
                     episode_reward=float(log.episode_rewards[episode, i]),
                 )
             )
+
     return rows
 
 
 def segment_metrics(log: RunLog) -> list[BidderSegmentMetrics]:
-    """One row per episode, bidder and market segment."""
+    """One row per episode, bidder and market segment.
+
+    For one episode and bidder, each metric summed over segments equals the
+    value in `bidder_metrics`.
+
+    Examples
+    --------
+    >>> import bidlab as bl
+    >>> from bidlab.markets import Segment, Segmented
+    >>> market = Segmented((Segment("day", 0.6), Segment("night", 0.4)))
+    >>> spec = bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)
+    >>> log = bl.run(bl.SimConfig(bidders=[spec], market=market, episodes=1, steps=50))
+    >>> [row.segment for row in bl.segment_metrics(log)]
+    ['day', 'night']
+    """
     rows = []
     names = log.config.market.segment_names
     for episode in range(log.winner.shape[0]):
@@ -119,16 +232,20 @@ def segment_metrics(log: RunLog) -> list[BidderSegmentMetrics]:
                         surplus=conversions * spec.value_per_conversion - spend,
                     )
                 )
+
     return rows
 
 
 def _cpa_violation(spend: float, conversions: int, target: float | None) -> float:
     if target is None:
         return np.nan
+
     if spend == 0:
         return 0.0
+
     if conversions == 0:
         return np.inf
+
     return max(0.0, (spend / conversions) / target - 1.0)
 
 
@@ -138,7 +255,40 @@ def regret(
     bidder: int,
     multipliers: npt.NDArray[np.float64] = REGRET_MULTIPLIERS,
 ) -> float:
-    """Best fixed-multiplier expected surplus minus the bidder's own expected surplus."""
+    """Best fixed-multiplier expected surplus minus the bidder's own expected surplus.
+
+    Other bidders' logged bids stay fixed while the episode is replayed with
+    this bidder bidding m × value for each multiplier m. See the Regret
+    section of ``docs/metrics.md`` for every rule and its limits.
+
+    Parameters
+    ----------
+    log : RunLog
+        The run to replay.
+    episode : int
+        Episode index.
+    bidder : int
+        Bidder index in ``log.config.bidders``.
+    multipliers : numpy.ndarray, optional
+        Multipliers to try; 0, 0.05, ..., 3 by default.
+
+    Returns
+    -------
+    float
+        Regret; it can be negative when an adaptive bidder beats every fixed
+        multiplier.
+
+    Examples
+    --------
+    A truthful bidder alone in a second-price auction pays 0, so no
+    multiplier beats it:
+
+    >>> import bidlab as bl
+    >>> spec = bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)
+    >>> log = bl.run(bl.SimConfig(bidders=[spec], episodes=1, steps=50))
+    >>> round(bl.regret(log, episode=0, bidder=0), 9)
+    0.0
+    """
     spec = log.config.bidders[bidder]
     auction = log.config.auction
     values = log.values[episode, :, bidder]
@@ -162,6 +312,7 @@ def regret(
             prices = np.full(
                 multipliers.size, max(highest_other[step], auction.reserve)
             )
+
         replay_surplus += np.where(wins, value - prices, 0.0)
         budget_left -= np.where(wins, prices, 0.0)
 

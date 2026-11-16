@@ -1,3 +1,22 @@
+"""bidlab: simulate ad auctions to test and compare bidding methods.
+
+Examples
+--------
+>>> import bidlab as bl
+>>> config = bl.SimConfig(
+...     bidders=[
+...         bl.BidderSpec("truthful", bl.Truthful, budget=50, value_per_conversion=5),
+...         bl.BidderSpec("pid", bl.PidPacing, budget=15, value_per_conversion=5),
+...     ],
+...     auction=bl.SecondPrice(reserve=0.01),
+...     episodes=2,
+...     steps=100,
+... )
+>>> results = bl.run_many(config, seeds=range(2))
+>>> len(results)
+4
+"""
+
 from bidlab import bidders, markets, rewards
 from bidlab.auctions import FirstPrice, SecondPrice
 from bidlab.bidders import Bidder, PidPacing, Truthful, UcbMultiplier

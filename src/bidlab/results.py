@@ -1,3 +1,5 @@
+"""The `Results` table that `run_many` returns."""
+
 import csv
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -22,7 +24,34 @@ CONFIDENCE = 0.95
 
 @dataclass(frozen=True)
 class Results:
-    """Rows from `run_many`: one per seed and bidder, averaged over episodes."""
+    """Rows from `run_many`: one per seed and bidder, averaged over episodes.
+
+    Compare two tables with `equals`, not ``==``: some metrics are NaN by
+    design.
+
+    Attributes
+    ----------
+    columns : tuple[str, ...]
+        Column names, in order.
+    rows : tuple[Mapping[str, str | int | float], ...]
+        Read-only rows, ordered by seed, then bidder.
+    segments : Results or None
+        One row per seed, bidder and market segment; None inside that table.
+
+    Examples
+    --------
+    >>> import bidlab as bl
+    >>> config = bl.SimConfig(
+    ...     bidders=[bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)],
+    ...     episodes=2,
+    ...     steps=50,
+    ... )
+    >>> results = bl.run_many(config, seeds=range(3))
+    >>> len(results), results.columns[:3]
+    (3, ('seed', 'bidder', 'spend'))
+    >>> results.equals(bl.run_many(config, seeds=range(3)))
+    True
+    """
 
     columns: tuple[str, ...]
     rows: tuple[ResultRow, ...]
@@ -72,12 +101,20 @@ class Results:
         return "\n".join(lines)
 
     def save_csv(self, path: str | Path) -> None:
+        """Write the rows to a CSV file with a header line."""
         with Path(path).open("w", newline="") as file:
             writer = csv.DictWriter(file, fieldnames=self.columns)
             writer.writeheader()
             writer.writerows(self.rows)
 
     def to_pandas(self) -> "pandas.DataFrame":
+        """Return the rows as a DataFrame; needs ``pip install bidlab[pandas]``.
+
+        Raises
+        ------
+        ImportError
+            If pandas is not installed.
+        """
         try:
             import pandas
         except ImportError:
