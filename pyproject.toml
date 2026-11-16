@@ -38,6 +38,7 @@ Issues = "https://github.com/NovelioPI/bidlab/issues"
 dev = [
     "hypothesis>=6.170.15",
     "mutmut>=3.8.1",
+    "pyright>=1.1.414",
     "pytest>=8.0",
     "ruff>=0.17.5",
     "scipy-stubs>=1.18.1.1",
@@ -68,3 +69,19 @@ pytest_add_cli_args = ["--ignore=tests/test_examples.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint]
+extend-select = ["D"]
+# Magic methods such as __post_init__ and __len__ describe themselves.
+ignore = ["D105"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]
+"examples/*" = ["D"]
+
+[tool.pyright]
+# Tests pass wrong types on purpose to check the error messages.
+include = ["src"]
