@@ -155,8 +155,8 @@ class _Simulation:
     def _participant(
         self, spec: BidderSpec, seed: np.random.SeedSequence
     ) -> _Participant:
-        # Risk: if this child is spawned after the bidder is built, then a stack's
-        # stages take it and the platform-estimate stream shifts.
+        # Risk: if this child is spawned after the bidder is bound, then a stack's
+        # inner bidders take it and the platform-estimate stream shifts.
         self.estimate_seeds.append(seed.spawn(1)[0])
         campaign = replace(
             spec.campaign,
