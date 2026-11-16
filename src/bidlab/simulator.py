@@ -6,6 +6,7 @@ import numpy.typing as npt
 from bidlab.auctions import NO_WINNER
 from bidlab.bidders import Bidder
 from bidlab.config import BidderSpec, SimConfig
+from bidlab.markets import MarketDraw
 from bidlab.rewards import EpisodeReward, StepReward
 from bidlab.types import EpisodeStats, Feedback, Observation
 
@@ -114,7 +115,7 @@ class _Simulation:
     def _run_step(
         self, episode: int, step: int, budget_left: npt.NDArray[np.float64]
     ) -> None:
-        draw = next(self.market_draws)
+        draw = self._next_draw(episode, step)
         probabilities = draw.probabilities
         values = self.weights * probabilities
         observations = [
@@ -124,6 +125,7 @@ class _Simulation:
                 value=float(values[i]),
                 value_per_conversion=p.value_per_conversion,
                 budget_left=float(budget_left[i]),
+                features=draw.features,
             )
             for i, p in enumerate(self.participants)
         ]
@@ -166,6 +168,25 @@ class _Simulation:
         self.log.winner[episode, step] = winner
         self.log.price[episode, step] = price
         self.log.converted[episode, step] = converted
+
+    def _next_draw(self, episode: int, step: int) -> MarketDraw:
+        market = type(self.config.market).__name__
+        where = f"{market} at episode {episode}, step {step}"
+        try:
+            draw = next(self.market_draws)
+        except StopIteration:
+            raise RuntimeError(f"{where}: the market stopped yielding draws") from None
+
+        probabilities = draw.probabilities
+        if probabilities.shape != (len(self.participants),):
+            raise ValueError(
+                f"{where}: got probabilities of shape {probabilities.shape}, "
+                f"expected ({len(self.participants)},)"
+            )
+        # The negated check also catches NaN, which fails every comparison.
+        if not np.all((probabilities >= 0.0) & (probabilities <= 1.0)):
+            raise ValueError(f"{where}: probabilities must lie in [0, 1]")
+        return draw
 
     def _end_episode(self, episode: int) -> None:
         winner = self.log.winner[episode]

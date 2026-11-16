@@ -1,4 +1,5 @@
 import csv
+import dataclasses
 import sys
 import threading
 
@@ -8,6 +9,7 @@ from scipy import stats
 
 from bidlab.bidders import PidPacing, Truthful
 from bidlab.config import BidderSpec, SimConfig
+from bidlab.markets import Market, MarketDraw
 from bidlab.results import Results
 from bidlab.runner import COLUMNS, run_many
 from bidlab.simulator import run
@@ -167,3 +169,15 @@ def test_run_log_arrays_are_read_only():
     for array in (log.bids, log.values, log.winner, log.price, log.converted):
         with pytest.raises(ValueError, match="read-only"):
             array[0, 0] = 0
+
+
+def test_custom_market_same_rows_in_parallel():
+    class LowRates(Market):
+        def draws(self, bidders, rng):
+            while True:
+                yield MarketDraw({}, rng.uniform(0.0, 0.2, size=bidders))
+
+    cfg = dataclasses.replace(config(), market=LowRates())
+    serial = run_many(cfg, seeds=range(3))
+    parallel = run_many(cfg, seeds=range(3), workers=2)
+    assert parallel.equals(serial)

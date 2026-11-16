@@ -1,4 +1,6 @@
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 
 # Bidders receive only these objects, so each holds one bidder's own data.
 
@@ -10,6 +12,9 @@ class Observation:
     value: float
     value_per_conversion: float
     budget_left: float
+    features: Mapping[str, str | float] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 @dataclass(frozen=True)
