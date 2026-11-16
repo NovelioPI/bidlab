@@ -10,6 +10,7 @@ from bidlab import rewards
 from bidlab.auctions import FirstPrice, SecondPrice
 from bidlab.bidders import PidPacing, Truthful, UcbMultiplier
 from bidlab.config import BidderSpec, SimConfig
+from bidlab.runner import run_many
 from bidlab.simulator import run
 
 ROOT = Path(__file__).parent.parent
@@ -19,6 +20,8 @@ RUN_LOG_HASHES = {
     "first": "0e5d6efc0b7ae42f673b54dc58d0644b44b44c36ca9fb8af0fd0c1b26c6f3227",
     "second": "816a0cce5097ed03cd9326051670f57915dcfb0a3a86ea5626d2b9aca1c6aa3d",
 }
+# Main results table CSV for seeds 0 and 1, recorded before the markets feature.
+RESULTS_HASH = "73b1f3e35594a8ff59952c739e1a46eac0b1ff501f0cf8ad1129b01255987bba"
 
 
 def fingerprint_config(kind):
@@ -63,10 +66,16 @@ def test_run_log_fingerprint(kind):
     assert digest.hexdigest() == RUN_LOG_HASHES[kind]
 
 
+def test_results_fingerprint(tmp_path):
+    path = tmp_path / "results.csv"
+    run_many(fingerprint_config("second"), seeds=[0, 1]).save_csv(path)
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == RESULTS_HASH
+
+
 PUBLIC_NAMES = {
     "SimConfig",
     "BidderSpec",
-    "WorldConfig",
+    "markets",
     "FirstPrice",
     "SecondPrice",
     "Bidder",
@@ -129,6 +138,9 @@ def test_removed_interfaces():
     import bidlab.config
 
     assert not hasattr(bidlab.config, "load_config")
+    assert importlib.util.find_spec("bidlab.world") is None
+    with pytest.raises(AttributeError):
+        _ = importlib.import_module("bidlab").WorldConfig
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     dependencies = " ".join(pyproject["project"]["dependencies"]).lower()
     assert "yaml" not in dependencies

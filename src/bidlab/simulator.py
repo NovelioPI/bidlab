@@ -8,7 +8,6 @@ from bidlab.bidders import Bidder
 from bidlab.config import BidderSpec, SimConfig
 from bidlab.rewards import EpisodeReward, StepReward
 from bidlab.types import EpisodeStats, Feedback, Observation
-from bidlab.world import World
 
 
 @dataclass(frozen=True)
@@ -54,14 +53,14 @@ def _build_bidder(spec: BidderSpec, rng: np.random.Generator) -> Bidder:
 class _Simulation:
     def __init__(self, config: SimConfig):
         count = len(config.bidders)
-        # One stream per role, so adding a bidder keeps the world's draws equal.
+        # One stream per role, so adding a bidder keeps the market's draws equal.
         world_seed, tie_seed, conversion_seed, *bidder_seeds = np.random.SeedSequence(
             config.seed
         ).spawn(3 + count)
         self.config = config
         self.weights = np.array([s.value_per_conversion for s in config.bidders])
-        self.world = World(
-            config.world, self.weights, np.random.default_rng(world_seed)
+        self.market_draws = config.market.draws(
+            count, np.random.default_rng(world_seed)
         )
         self.tie_rng = np.random.default_rng(tie_seed)
         self.conversion_rng = np.random.default_rng(conversion_seed)
@@ -115,7 +114,9 @@ class _Simulation:
     def _run_step(
         self, episode: int, step: int, budget_left: npt.NDArray[np.float64]
     ) -> None:
-        probabilities, values = self.world.step()
+        draw = next(self.market_draws)
+        probabilities = draw.probabilities
+        values = self.weights * probabilities
         observations = [
             Observation(
                 step=step,
@@ -139,8 +140,8 @@ class _Simulation:
         )
         winner, price = self.config.auction.run(bids, self.tie_rng)
         # One draw every step keeps the conversion stream aligned across runs.
-        draw = self.conversion_rng.random()
-        converted = winner != NO_WINNER and draw < probabilities[winner]
+        conversion_draw = self.conversion_rng.random()
+        converted = winner != NO_WINNER and conversion_draw < probabilities[winner]
         if winner != NO_WINNER:
             budget_left[winner] -= price
 

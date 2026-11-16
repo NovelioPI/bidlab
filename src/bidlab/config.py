@@ -6,8 +6,8 @@ import numpy as np
 from bidlab import rewards
 from bidlab.auctions import Auction, FirstPrice, SecondPrice
 from bidlab.bidders.base import Bidder
+from bidlab.markets import LogisticContext, Market
 from bidlab.rewards import EpisodeReward, StepReward
-from bidlab.world import WorldConfig
 
 BidderFactory = Callable[[dict[str, float], np.random.Generator], Bidder]
 
@@ -67,7 +67,7 @@ class SimConfig:
     steps: int = 1000
     seed: int = 0
     auction: Auction = field(default_factory=SecondPrice)
-    world: WorldConfig = field(default_factory=WorldConfig)
+    market: Market = field(default_factory=LogisticContext)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "bidders", tuple(self.bidders))
@@ -86,3 +86,9 @@ class SimConfig:
         auction: object = self.auction
         if not isinstance(auction, FirstPrice | SecondPrice):
             raise TypeError("auction must be FirstPrice or SecondPrice")
+
+        market: object = self.market
+        if not isinstance(market, Market):
+            raise TypeError(
+                f"market must be a bidlab.markets.Market, got {type(market).__name__}"
+            )

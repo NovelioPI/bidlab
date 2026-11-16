@@ -5,6 +5,7 @@ from bidlab import rewards
 from bidlab.auctions import FirstPrice, SecondPrice
 from bidlab.bidders import Bidder, PidPacing, Truthful
 from bidlab.config import BidderSpec, SimConfig
+from bidlab.markets import LogisticContext
 from bidlab.rewards import cpa_score_of
 from bidlab.simulator import run
 
@@ -182,6 +183,20 @@ def test_sim_config_rejects_bad_bidders_and_lengths(kwargs, message):
 def test_sim_config_rejects_unknown_auction():
     with pytest.raises(TypeError, match="FirstPrice or SecondPrice"):
         SimConfig(bidders=[other()], auction="second")
+
+
+def test_default_market_is_logistic_context():
+    assert SimConfig(bidders=[other()]).market == LogisticContext()
+
+
+def test_world_argument_rejected():
+    with pytest.raises(TypeError, match="world"):
+        SimConfig(bidders=[other()], world=LogisticContext())
+
+
+def test_non_market_rejected():
+    with pytest.raises(TypeError, match="Market"):
+        SimConfig(bidders=[other()], market="logistic")
 
 
 def test_bidders_list_stored_as_tuple():
