@@ -110,7 +110,8 @@ def _logits(
     biases = bias_rng.normal(market.bias_mean, market.bias_std, size=bidders)
     while True:
         context = context_rng.normal(size=dimensions)
-        yield ad_vectors @ context + biases
+        # A matrix product rounds differently as rows are added; a per-row sum does not.
+        yield (ad_vectors * context).sum(axis=1) + biases
 
 
 def _sigmoid(logits: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:

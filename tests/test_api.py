@@ -15,13 +15,13 @@ from bidlab.simulator import run
 
 ROOT = Path(__file__).parent.parent
 
-# Hashes recorded at 7c747f0 (before the Python API change) with numpy 2.5.4; HEAD matched.
+# Recorded with numpy 2.5.4 after logits became a per-row sum; winners and conversions match c4e510f.
 RUN_LOG_HASHES = {
-    "first": "0e5d6efc0b7ae42f673b54dc58d0644b44b44c36ca9fb8af0fd0c1b26c6f3227",
-    "second": "816a0cce5097ed03cd9326051670f57915dcfb0a3a86ea5626d2b9aca1c6aa3d",
+    "first": "d7d3c1922d2a874932b7807b55812a371c3f2d7ae0af375498a79a24e57f25f6",
+    "second": "eea773aa17fca4d9a72fc669f20c0ec0fc8a96ddceb6f6ad268305117a25189d",
 }
-# Main results table CSV for seeds 0 and 1, recorded before the markets feature.
-RESULTS_HASH = "73b1f3e35594a8ff59952c739e1a46eac0b1ff501f0cf8ad1129b01255987bba"
+# Main results table CSV for seeds 0 and 1, recorded with the run-log hashes above.
+RESULTS_HASH = "b1b2fbb506bad681c00d35dcf2bd5b851bc0b515ece996bc434559ccd4294d85"
 
 
 def fingerprint_config(kind):
