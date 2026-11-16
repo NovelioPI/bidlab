@@ -14,10 +14,10 @@ from bidlab.simulator import run
 
 ROOT = Path(__file__).parent.parent
 
-# Hashes recorded from commit 2a8797b plus the budget fix, before the Python API change.
+# Hashes recorded at 7c747f0 (before the Python API change) with numpy 2.5.4; HEAD matched.
 RUN_LOG_HASHES = {
-    "first": "05d813761620ab4fc954210c26f5674779050fe0aaee8b94574fedf901dd32e2",
-    "second": "9b59dcbebee36f3fc26ed276765c06283704e79f221722ec679f35390f378eb6",
+    "first": "0e5d6efc0b7ae42f673b54dc58d0644b44b44c36ca9fb8af0fd0c1b26c6f3227",
+    "second": "816a0cce5097ed03cd9326051670f57915dcfb0a3a86ea5626d2b9aca1c6aa3d",
 }
 
 
