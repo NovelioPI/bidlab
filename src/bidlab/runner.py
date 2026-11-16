@@ -70,8 +70,8 @@ def run_many(config: SimConfig, seeds: Iterable[int], workers: int = 1) -> Resul
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
     ...     bidders=[
-    ...         bl.BidderSpec("a", bl.Truthful, budget=10, value_per_conversion=5),
-    ...         bl.BidderSpec("b", bl.PidPacing, budget=10, value_per_conversion=5),
+    ...         bl.BidderSpec("a", bl.Truthful(), bl.Campaign(budget=10, value=5)),
+    ...         bl.BidderSpec("b", bl.PidPacing(), bl.Campaign(budget=10, value=5)),
     ...     ],
     ...     episodes=2,
     ...     steps=50,

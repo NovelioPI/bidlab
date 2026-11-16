@@ -69,3 +69,12 @@ def test_readme_shows_segmented_market_with_targeted_bidder():
     assert "bl.markets.Segmented(" in blocks
     assert "segments=(" in blocks
     assert "segment_names" in readme
+
+
+def test_readme_shows_value_stage_before_pacing():
+    readme = (ROOT / "README.md").read_text()
+    blocks = "\n".join(re.findall(r"```python\n(.*?)```", readme, flags=re.DOTALL))
+    assert "class SegmentRate(bl.Bidder):" in blocks
+    assert "self.pending[observation.time]" in blocks
+    assert "def update_batch(self, feedbacks):" in blocks
+    assert "bl.Stack(SegmentRate(), bl.PidPacing())" in blocks

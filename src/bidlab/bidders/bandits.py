@@ -5,7 +5,7 @@ from typing import override
 import numpy as np
 
 from bidlab.bidders.base import Bidder
-from bidlab.types import EpisodeStats, Feedback, Observation
+from bidlab.types import Campaign, EpisodeStats, Feedback, Observation
 
 # np.arange excludes its end, so a small margin keeps max_multiplier in the grid.
 ARM_GRID_END_MARGIN = 1e-9
@@ -16,50 +16,68 @@ MIN_REWARD_SCALE = 1e-12
 class UcbMultiplier(Bidder):
     """UCB1 over bid multipliers; one arm per episode, learned across episodes.
 
-    Each arm is a fixed multiplier m, and the bidder bids m × value for a
+    Each arm is a fixed multiplier m, and the bidder outputs m × value for a
     whole episode. An arm's reward is the episode reward when the spec sets
     one, else the sum of step rewards. The exploration bonus is scaled by
     the spread of the arm means, so it works for any reward unit.
 
     Parameters
     ----------
-    params : dict[str, float]
-        ``min_multiplier`` (0.2), ``max_multiplier`` (2.0) and
-        ``multiplier_step`` (0.2) set the arm grid. ``exploration`` (1.0)
-        scales the bonus.
-    rng : numpy.random.Generator
-        Not used.
+    min_multiplier, max_multiplier : float, optional
+        The arm grid's ends, with 0 <= ``min_multiplier`` <= ``max_multiplier``.
+    multiplier_step : float, optional
+        The grid's spacing. Must be > 0.
+    exploration : float, optional
+        Scales the exploration bonus. Must be >= 0.
+
+    Raises
+    ------
+    ValueError
+        If an argument is out of range.
 
     Examples
     --------
-    >>> import numpy as np
     >>> import bidlab as bl
-    >>> bandit = bl.UcbMultiplier({"multiplier_step": 0.6}, np.random.default_rng(0))
-    >>> bandit.arms.round(1).tolist()
+    >>> bl.UcbMultiplier(multiplier_step=0.6).arms.round(1).tolist()
     [0.2, 0.8, 1.4, 2.0]
     """
 
-    def __init__(self, params: dict[str, float], rng: np.random.Generator):
-        super().__init__(params, rng)
+    def __init__(
+        self,
+        min_multiplier: float = 0.2,
+        max_multiplier: float = 2.0,
+        multiplier_step: float = 0.2,
+        exploration: float = 1.0,
+    ):
+        if not 0 <= min_multiplier <= max_multiplier:
+            raise ValueError(
+                "need 0 <= min_multiplier <= max_multiplier, got "
+                f"{min_multiplier} and {max_multiplier}"
+            )
+
+        if multiplier_step <= 0:
+            raise ValueError(f"multiplier_step must be > 0, got {multiplier_step}")
+
+        if exploration < 0:
+            raise ValueError(f"exploration must be >= 0, got {exploration}")
+
         self.arms = np.arange(
-            params.get("min_multiplier", 0.2),
-            params.get("max_multiplier", 2.0) + ARM_GRID_END_MARGIN,
-            params.get("multiplier_step", 0.2),
+            min_multiplier, max_multiplier + ARM_GRID_END_MARGIN, multiplier_step
         )
-        self.exploration = params.get("exploration", 1.0)
+        self.exploration = exploration
         self.pulls = np.zeros(self.arms.size)
         self.reward_sums = np.zeros(self.arms.size)
         self.arm = 0
         self.episode_step_rewards = 0.0
 
     @override
-    def on_episode_start(self, budget: float, steps: int) -> None:
+    def on_episode_start(self, campaign: Campaign) -> None:
         self.arm = self._choose_arm()
         self.episode_step_rewards = 0.0
 
     @override
-    def bid(self, observation: Observation) -> float:
-        return float(self.arms[self.arm]) * observation.value
+    def forward(self, value: float, observation: Observation) -> float:
+        return float(self.arms[self.arm]) * value
 
     @override
     def update(self, feedback: Feedback) -> None:

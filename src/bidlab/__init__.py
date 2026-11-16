@@ -5,8 +5,8 @@ Examples
 >>> import bidlab as bl
 >>> config = bl.SimConfig(
 ...     bidders=[
-...         bl.BidderSpec("truthful", bl.Truthful, budget=50, value_per_conversion=5),
-...         bl.BidderSpec("pid", bl.PidPacing, budget=15, value_per_conversion=5),
+...         bl.BidderSpec("truthful", bl.Truthful(), bl.Campaign(budget=50, value=5)),
+...         bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=15, value=5)),
 ...     ],
 ...     auction=bl.SecondPrice(reserve=0.01),
 ...     episodes=2,
@@ -19,17 +19,18 @@ Examples
 
 from bidlab import bidders, markets, rewards
 from bidlab.auctions import FirstPrice, SecondPrice
-from bidlab.bidders import Bidder, PidPacing, Truthful, UcbMultiplier
+from bidlab.bidders import Bidder, PidPacing, Stack, Truthful, UcbMultiplier
 from bidlab.config import BidderSpec, SimConfig
 from bidlab.metrics import bidder_metrics, platform_metrics, regret, segment_metrics
 from bidlab.results import Results
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
-from bidlab.types import EpisodeStats, Feedback, Observation
+from bidlab.types import Campaign, EpisodeStats, Feedback, Observation
 
 __all__ = [
     "Bidder",
     "BidderSpec",
+    "Campaign",
     "EpisodeStats",
     "Feedback",
     "FirstPrice",
@@ -39,6 +40,7 @@ __all__ = [
     "RunLog",
     "SecondPrice",
     "SimConfig",
+    "Stack",
     "Truthful",
     "UcbMultiplier",
     "bidder_metrics",

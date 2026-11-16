@@ -7,18 +7,24 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from bidlab.bidders import PidPacing, Truthful
+from bidlab.bidders import Bidder, PidPacing, Truthful
 from bidlab.config import BidderSpec, SimConfig
 from bidlab.markets import Market, MarketDraw, Segment, Segmented
 from bidlab.results import Results
 from bidlab.runner import COLUMNS, SEGMENT_COLUMNS, run_many
 from bidlab.simulator import run
+from bidlab.types import Campaign
+
+
+def segments_table(results: Results) -> Results:
+    assert results.segments is not None
+    return results.segments
 
 
 def config(*extra):
     bidders = [
-        BidderSpec("t", Truthful, 20.0, 5.0),
-        BidderSpec("p", PidPacing, 8.0, 5.0),
+        BidderSpec("t", Truthful(), Campaign(20.0, 5.0)),
+        BidderSpec("p", PidPacing(), Campaign(8.0, 5.0)),
         *extra,
     ]
     return SimConfig(bidders=bidders, episodes=2, steps=100)
@@ -48,14 +54,14 @@ def test_workers_give_same_rows():
 def test_lambdas_and_closures_run_in_parallel():
     fraction = 0.7
 
-    def make_bidder(params, rng):
-        return Truthful({"multiplier": fraction}, rng)
+    class Closure(Bidder):
+        def forward(self, value, observation):
+            return fraction * value
 
     extra = BidderSpec(
         "closure",
-        make_bidder,
-        20.0,
-        5.0,
+        Closure(),
+        Campaign(20.0, 5.0),
         reward=lambda observation, feedback, params: 2 * feedback.price,
     )
     serial = run_many(config(extra), seeds=range(3))
@@ -64,17 +70,18 @@ def test_lambdas_and_closures_run_in_parallel():
 
 
 def test_unpicklable_spec_fails_before_runs(monkeypatch):
-    lock = threading.Lock()
+    class Locked(Bidder):
+        def __init__(self):
+            self.lock = threading.Lock()
 
-    def make_bidder(params, rng):
-        with lock:
-            return Truthful(params, rng)
+        def forward(self, value, observation):
+            return value
 
     pools = []
     monkeypatch.setattr(
         "bidlab.runner.ProcessPoolExecutor", lambda *args, **kwargs: pools.append(1)
     )
-    extra = BidderSpec("locked", make_bidder, 20.0, 5.0)
+    extra = BidderSpec("locked", Locked(), Campaign(20.0, 5.0))
     with pytest.raises(TypeError, match="'locked'.*workers=1"):
         run_many(config(extra), seeds=range(2), workers=2)
 
@@ -84,7 +91,7 @@ def test_unpicklable_spec_fails_before_runs(monkeypatch):
 def hand_results(spends):
     rows = []
     for seed, spend in enumerate(spends):
-        row = {column: 0.0 for column in COLUMNS}
+        row: dict[str, str | float] = {column: 0.0 for column in COLUMNS}
         row.update(seed=seed, bidder="a", spend=spend)
         rows.append(row)
 
@@ -113,6 +120,8 @@ def test_save_csv_round_trip(tmp_path):
     with path.open() as file:
         reader = csv.DictReader(file)
         rows = list(reader)
+
+    assert reader.fieldnames is not None
 
     assert tuple(reader.fieldnames) == COLUMNS
     assert len(rows) == len(results)
@@ -161,7 +170,7 @@ def test_equals_treats_nan_as_equal():
 def test_results_rows_are_read_only():
     results = run_many(config(), seeds=range(1))
     with pytest.raises(TypeError):
-        results.rows[0]["spend"] = 0.0
+        results.rows[0]["spend"] = 0.0  # pyright: ignore[reportIndexIssue]  Reason: the test checks that rows are read-only.
 
 
 def test_run_log_arrays_are_read_only():
@@ -181,12 +190,12 @@ def test_custom_market_same_rows_in_parallel():
     serial = run_many(cfg, seeds=range(3))
     parallel = run_many(cfg, seeds=range(3), workers=2)
     assert parallel.equals(serial)
-    assert parallel.segments.equals(serial.segments)
+    assert segments_table(parallel).equals(segments_table(serial))
 
 
 def segmented_config():
     market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)))
-    targeted = BidderSpec("n", Truthful, 20.0, 5.0, segments=("news",))
+    targeted = BidderSpec("n", Truthful(), Campaign(20.0, 5.0, segments=("news",)))
     return SimConfig(
         bidders=[*config().bidders, targeted], episodes=2, steps=100, market=market
     )
@@ -214,11 +223,11 @@ def test_segment_sums_match_main_table():
     for row in results.rows:
         own = [
             segment
-            for segment in results.segments.rows
+            for segment in segments_table(results).rows
             if segment["seed"] == row["seed"] and segment["bidder"] == row["bidder"]
         ]
         for column in ("spend", "wins", "conversions", "surplus"):
-            total = sum(segment[column] for segment in own)
+            total = sum(float(segment[column]) for segment in own)
             assert total == pytest.approx(row[column], abs=1e-9)
 
 
@@ -226,7 +235,7 @@ def test_targeted_bidder_has_nothing_in_other_segments():
     results = run_many(segmented_config(), seeds=range(2))
     sports = [
         row
-        for row in results.segments.rows
+        for row in segments_table(results).rows
         if row["bidder"] == "n" and row["segment"] == "sports"
     ]
     assert sports and all(row["wins"] == 0 and row["spend"] == 0 for row in sports)
@@ -235,7 +244,8 @@ def test_targeted_bidder_has_nothing_in_other_segments():
 def test_unsegmented_market_has_all_segment():
     results = run_many(config(), seeds=range(2))
     assert [
-        (row["seed"], row["bidder"], row["segment"]) for row in results.segments.rows
+        (row["seed"], row["bidder"], row["segment"])
+        for row in segments_table(results).rows
     ] == [
         (0, "t", "all"),
         (0, "p", "all"),
@@ -245,7 +255,7 @@ def test_unsegmented_market_has_all_segment():
 
 
 def test_segments_summary_and_csv(tmp_path):
-    segments = run_many(segmented_config(), seeds=range(3)).segments
+    segments = segments_table(run_many(segmented_config(), seeds=range(3)))
     lines = segments.summary().splitlines()
     assert lines[0].split() == [
         "bidder",
@@ -269,13 +279,15 @@ def test_segments_summary_and_csv(tmp_path):
     with path.open() as file:
         reader = csv.DictReader(file)
         rows = list(reader)
+
+    assert reader.fieldnames is not None
     assert tuple(reader.fieldnames) == SEGMENT_COLUMNS
     assert len(rows) == len(segments)
 
 
 def test_segments_to_pandas():
     pytest.importorskip("pandas")
-    segments = run_many(segmented_config(), seeds=range(2)).segments
+    segments = segments_table(run_many(segmented_config(), seeds=range(2)))
     frame = segments.to_pandas()
     assert tuple(frame.columns) == SEGMENT_COLUMNS
     round_trip = Results(columns=SEGMENT_COLUMNS, rows=tuple(frame.to_dict("records")))
@@ -293,13 +305,21 @@ def test_custom_market_segments_reach_segments_table():
                 name = "day" if rng.random() < 0.6 else "night"
                 yield MarketDraw({}, rng.uniform(0.0, 0.2, size=bidders), name)
 
-    night = BidderSpec("n", Truthful, 20.0, 5.0, segments=("night",))
+    night = BidderSpec("n", Truthful(), Campaign(20.0, 5.0, segments=("night",)))
     cfg = SimConfig(
         bidders=[*config().bidders, night], episodes=2, steps=100, market=DayAndNight()
     )
-    segments = run_many(cfg, seeds=range(2)).segments
+    segments = segments_table(run_many(cfg, seeds=range(2)))
     assert {row["segment"] for row in segments.rows} == {"day", "night"}
     day_rows = [
         r for r in segments.rows if r["bidder"] == "n" and r["segment"] == "day"
     ]
     assert day_rows and all(row["wins"] == 0 for row in day_rows)
+
+
+def test_noisy_parallel_equals_serial():
+    cfg = dataclasses.replace(config(), estimate_noise=0.5)
+    serial = run_many(cfg, seeds=range(3))
+    parallel = run_many(cfg, seeds=range(3), workers=2)
+    assert parallel.equals(serial)
+    assert not serial.equals(run_many(config(), seeds=range(3)))

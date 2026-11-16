@@ -10,15 +10,14 @@ from bidlab.config import BidderSpec, SimConfig
 from bidlab.markets import Segment, Segmented
 from bidlab.metrics import bidder_metrics, platform_metrics, regret, segment_metrics
 from bidlab.simulator import RunLog, run
+from bidlab.types import Campaign
 
 
 def hand_log(kind="second", reserve=0.0, budget=10.0, cpa_target=None):
     """One episode, 3 steps, 2 bidders, with every number chosen by hand."""
     bidders = (
-        BidderSpec(
-            "a", Truthful, budget, value_per_conversion=4.0, cpa_target=cpa_target
-        ),
-        BidderSpec("b", Truthful, 10.0, value_per_conversion=2.0),
+        BidderSpec("a", Truthful(), Campaign(budget, 4.0, cpa_target=cpa_target)),
+        BidderSpec("b", Truthful(), Campaign(10.0, 2.0)),
     )
     config = SimConfig(
         bidders=bidders,
@@ -98,9 +97,9 @@ def test_regret_respects_budget():
 def test_regret_nonnegative_for_fixed_multipliers():
     for multiplier in (0.5, 1.0, 1.5):
         bidders = (
-            BidderSpec("me", Truthful, 50.0, 5.0, params={"multiplier": multiplier}),
-            BidderSpec("x", Truthful, 50.0, 4.0),
-            BidderSpec("y", Truthful, 50.0, 6.0, params={"multiplier": 0.7}),
+            BidderSpec("me", Truthful(multiplier=multiplier), Campaign(50.0, 5.0)),
+            BidderSpec("x", Truthful(), Campaign(50.0, 4.0)),
+            BidderSpec("y", Truthful(multiplier=0.7), Campaign(50.0, 6.0)),
         )
         log = run(SimConfig(bidders=bidders, episodes=2, steps=300, seed=3))
         for episode in range(2):
@@ -110,8 +109,8 @@ def test_regret_nonnegative_for_fixed_multipliers():
 def test_regret_accepts_integer_budget():
     def config(budget):
         bidders = (
-            BidderSpec("me", Truthful, budget, 5.0),
-            BidderSpec("x", Truthful, 50.0, 4.0),
+            BidderSpec("me", Truthful(), Campaign(budget, 5.0)),
+            BidderSpec("x", Truthful(), Campaign(50.0, 4.0)),
         )
         return SimConfig(bidders=bidders, episodes=1, steps=200, seed=4)
 
@@ -168,8 +167,8 @@ def test_no_spend_means_no_cpa_violation():
 
 def test_metric_rows_carry_their_episode():
     bidders = (
-        BidderSpec("a", Truthful, 50.0, 5.0),
-        BidderSpec("b", Truthful, 50.0, 4.0),
+        BidderSpec("a", Truthful(), Campaign(50.0, 5.0)),
+        BidderSpec("b", Truthful(), Campaign(50.0, 4.0)),
     )
     log = run(SimConfig(bidders=bidders, episodes=2, steps=50, seed=1))
     assert [row.episode for row in platform_metrics(log)] == [0, 1]
@@ -186,7 +185,7 @@ def test_regret_with_a_single_bidder():
             winner=[0, 0, 0],
             price=[0.1, 0.1, 0.1],
         ),
-        bidders=(BidderSpec("solo", Truthful, 10.0, 5.0),),
+        bidders=(BidderSpec("solo", Truthful(), Campaign(10.0, 5.0)),),
         auction=SecondPrice(0.1),
     )
     assert regret(log, 0, 0) == pytest.approx(0.0)
@@ -201,7 +200,7 @@ def test_regret_replay_bid_equal_to_reserve_wins():
             winner=[0],
             price=[0.5],
         ),
-        bidders=(BidderSpec("solo", Truthful, 10.0, 5.0),),
+        bidders=(BidderSpec("solo", Truthful(), Campaign(10.0, 5.0)),),
         auction=SecondPrice(0.5),
     )
     assert regret(log, 0, 0, multipliers=np.array([0.5])) == pytest.approx(0.0)
@@ -218,8 +217,8 @@ def test_regret_replay_spends_its_budget():
             price=[0.5, 0.0],
         ),
         bidders=(
-            BidderSpec("me", Truthful, 0.6, 5.0),
-            BidderSpec("other", Truthful, 10.0, 5.0),
+            BidderSpec("me", Truthful(), Campaign(0.6, 5.0)),
+            BidderSpec("other", Truthful(), Campaign(10.0, 5.0)),
         ),
         auction=SecondPrice(),
     )
@@ -236,7 +235,7 @@ def test_regret_masks_other_segments():
             winner=[0, NO_WINNER, 0],
             price=[0.1, 0.0, 0.1],
         ),
-        bidders=(BidderSpec("me", Truthful, 10.0, 5.0),),
+        bidders=(BidderSpec("me", Truthful(), Campaign(10.0, 5.0)),),
         auction=SecondPrice(0.1),
     )
     market = Segmented((Segment("x", 0.5), Segment("y", 0.5)))
@@ -245,7 +244,9 @@ def test_regret_masks_other_segments():
         config=dataclasses.replace(
             log.config,
             market=market,
-            bidders=(BidderSpec("me", Truthful, 10.0, 5.0, segments=("x",)),),
+            bidders=(
+                BidderSpec("me", Truthful(), Campaign(10.0, 5.0, segments=("x",))),
+            ),
         ),
         segment=np.array([[0, 1, 0]]),
     )
@@ -258,6 +259,10 @@ def test_regret_masks_other_segments():
 
 def test_segment_rows_carry_their_episode():
     log = run(
-        SimConfig(bidders=(BidderSpec("a", Truthful, 5.0, 4.0),), episodes=3, steps=5)
+        SimConfig(
+            bidders=(BidderSpec("a", Truthful(), Campaign(5.0, 4.0)),),
+            episodes=3,
+            steps=5,
+        )
     )
     assert [row.episode for row in segment_metrics(log)] == [0, 1, 2]

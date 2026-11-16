@@ -1,7 +1,7 @@
 """Markets: where each step's features and conversion probabilities come from."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol
@@ -66,7 +66,7 @@ class Market(ABC):
     ...     def draws(self, bidders, rng):
     ...         while True:
     ...             yield bl.markets.MarketDraw({}, np.full(bidders, 0.1))
-    >>> spec = bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)
+    >>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))
     >>> log = bl.run(bl.SimConfig(bidders=[spec], market=Flat(), episodes=1, steps=10))
     >>> log.values[0, :3, 0].tolist()
     [0.5, 0.5, 0.5]
@@ -160,8 +160,9 @@ class Segmented(Market):
 
     Parameters
     ----------
-    segments : tuple[Segment, ...]
-        At least one segment, with unique names and shares that sum to 1.
+    segments : Sequence[Segment]
+        At least one segment, stored as a tuple, with unique names and shares
+        that sum to 1.
     base : LogisticContext, optional
         Draws the logits before the lift is added.
 
@@ -180,7 +181,7 @@ class Segmented(Market):
     ('mobile', 'desktop')
     """
 
-    segments: tuple[Segment, ...]
+    segments: Sequence[Segment]
     base: LogisticContext = LogisticContext()
 
     def __post_init__(self) -> None:
