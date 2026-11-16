@@ -202,6 +202,7 @@ def test_campaign_schedule_must_match_sim_config(field_name):
         {"horizon_hours": -1},
         {"start_hour": -1},
         {"start_hour": 24},
+        {"estimate_noise": -0.1},
     ],
 )
 def test_sim_config_rejects_bad_schedule_and_noise(kwargs):

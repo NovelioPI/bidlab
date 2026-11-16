@@ -315,3 +315,11 @@ def test_custom_market_segments_reach_segments_table():
         r for r in segments.rows if r["bidder"] == "n" and r["segment"] == "day"
     ]
     assert day_rows and all(row["wins"] == 0 for row in day_rows)
+
+
+def test_noisy_parallel_equals_serial():
+    cfg = dataclasses.replace(config(), estimate_noise=0.5)
+    serial = run_many(cfg, seeds=range(3))
+    parallel = run_many(cfg, seeds=range(3), workers=2)
+    assert parallel.equals(serial)
+    assert not serial.equals(run_many(config(), seeds=range(3)))

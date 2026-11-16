@@ -382,3 +382,38 @@ def test_custom_market_segments_drive_targeting_and_log():
     np.testing.assert_array_equal(log.segment, (step % 10 >= 6).astype(int))
     assert len(night_only.observations) == np.sum(step % 10 >= 6)
     assert not np.any(log.winner[log.segment == 0] == 0)
+
+
+def test_estimate_noise_has_set_spread():
+    log, (spy,) = run_spies(
+        config(spec("a"), episodes=1, steps=20_000, estimate_noise=0.5)
+    )
+    estimated = np.array([o.value for o in spy.observations]) / 5.0
+    true = log.values[0, :, 0] / 5.0
+    errors = np.log(estimated / (1 - estimated)) - np.log(true / (1 - true))
+    assert abs(errors.mean()) < 0.02
+    assert abs(errors.std() - 0.5) < 0.02
+
+
+def test_estimate_noise_keeps_true_values():
+    noisy = run(config(spec("a"), spec("b"), estimate_noise=0.5))
+    exact = run(config(spec("a"), spec("b")))
+    assert noisy.values.tobytes() == exact.values.tobytes()
+
+
+def test_adding_bidder_keeps_noisy_values():
+    _, two = run_spies(config(spec("a"), spec("b"), estimate_noise=0.5))
+    _, three = run_spies(config(spec("a"), spec("b"), spec("c"), estimate_noise=0.5))
+    for before, after in zip(two, three[:2], strict=True):
+        assert [o.value for o in before.observations] == [
+            o.value for o in after.observations
+        ]
+
+
+def test_estimate_noise_at_zero_and_one():
+    market = FixedMarket([0.0, 1.0])
+    _, spies = run_spies(
+        config(spec("a"), spec("b"), market=market, estimate_noise=2.0)
+    )
+    assert {o.value for o in spies[0].observations} == {0.0}
+    assert {o.value for o in spies[1].observations} == {5.0}

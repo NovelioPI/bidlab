@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 import numpy.typing as npt
+from scipy.special import expit, logit
 
 from bidlab.auctions import NO_WINNER
 from bidlab.bidders import Bidder
@@ -132,6 +133,9 @@ class _Simulation:
             self._participant(spec, seed)
             for spec, seed in zip(config.bidders, bidder_seeds, strict=True)
         ]
+        self.estimate_rngs = [
+            np.random.default_rng(seed) for seed in self.estimate_seeds
+        ]
         self.segment_index = {
             name: index for index, name in enumerate(config.market.segment_names)
         }
@@ -200,10 +204,11 @@ class _Simulation:
         draw = self._next_draw(episode, step)
         probabilities = draw.probabilities
         values = self.weights * probabilities
+        observed = self._observed_values(values, probabilities)
         time = step * self.seconds_per_step
         # Bidders outside their segments are not asked to bid, so they cannot learn from it.
         observations = {
-            i: Observation(time=time, value=float(values[i]), features=draw.features)
+            i: Observation(time=time, value=float(observed[i]), features=draw.features)
             for i, p in enumerate(self.participants)
             if p.takes_part_in(draw.segment)
         }
@@ -250,6 +255,22 @@ class _Simulation:
         self.log.price[episode, step] = price
         self.log.converted[episode, step] = converted
         self.log.segment[episode, step] = self.segment_index[draw.segment]
+
+    def _observed_values(
+        self,
+        values: npt.NDArray[np.float64],
+        probabilities: npt.NDArray[np.float64],
+    ) -> npt.NDArray[np.float64]:
+        noise = self.config.estimate_noise
+        # Without noise, the true values pass through untouched, bit for bit.
+        if noise == 0:
+            return values
+
+        # Every bidder draws every step, taking part or not, so no stream shifts.
+        errors = np.array([rng.standard_normal() for rng in self.estimate_rngs])
+        # logit(0) and logit(1) are infinite, so p = 0 and p = 1 stay exact.
+        estimates = expit(logit(probabilities) + noise * errors)
+        return self.weights * estimates
 
     def _next_draw(self, episode: int, step: int) -> MarketDraw:
         market = type(self.config.market).__name__

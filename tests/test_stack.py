@@ -90,6 +90,16 @@ class Draws(Bidder):
         return value
 
 
+class Watch(Bidder):
+    """Records each observation's value."""
+
+    values: ClassVar[list[float]] = []
+
+    def forward(self, value, observation):
+        Watch.values.append(observation.value)
+        return value
+
+
 class Jitter(Bidder):
     """Multiplies the value by a random factor from its own stream."""
 
@@ -207,3 +217,13 @@ def test_stack_parallel_equals_serial():
     serial = run_many(config(spec, other()), seeds=range(3))
     parallel = run_many(config(spec, other()), seeds=range(3), workers=2)
     assert parallel.equals(serial)
+
+
+def test_bidder_draws_keep_noise_stream():
+    seen: dict[bool, list[float]] = {}
+    for draw in (True, False):
+        drawing = Stack(Draws("first", draw=draw), Watch())
+        Watch.values.clear()
+        run(config(BidderSpec("d", drawing, CAMPAIGN), other(), estimate_noise=0.5))
+        seen[draw] = list(Watch.values)
+    assert seen[True] == seen[False]

@@ -158,6 +158,10 @@ class SimConfig:
         > 0.
     start_hour : float, optional
         Hour of day when each episode starts, in [0, 24).
+    estimate_noise : float, optional
+        How wrong the platform's estimate p̂ is: the standard deviation of
+        normal noise added to logit(p). 0, the default, gives the exact p.
+        `Observation.value` uses p̂; `RunLog.values` keeps the true p.
 
     Raises
     ------
@@ -165,7 +169,8 @@ class SimConfig:
         If ``auction`` or ``market`` has the wrong type.
     ValueError
         If ``bidders`` is empty, names repeat, ``episodes`` or ``steps`` is
-        below 1, the schedule is out of range or differs from a campaign's,
+        below 1, ``estimate_noise`` is negative, the schedule is out of range
+        or differs from a campaign's,
         or a campaign names a segment the market does not have.
 
     Examples
@@ -192,6 +197,7 @@ class SimConfig:
     market: Market = field(default_factory=LogisticContext)
     horizon_hours: float = 24.0
     start_hour: float = 0.0
+    estimate_noise: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "bidders", tuple(self.bidders))
@@ -212,6 +218,10 @@ class SimConfig:
         if not 0 <= self.start_hour < HOURS_PER_DAY:
             raise ValueError(f"start_hour must be in [0, 24), got {self.start_hour}")
 
+        if self.estimate_noise < 0:
+            raise ValueError(f"estimate_noise must be >= 0, got {self.estimate_noise}")
+
+        object.__setattr__(self, "estimate_noise", float(self.estimate_noise))
         object.__setattr__(self, "horizon_hours", float(self.horizon_hours))
         object.__setattr__(self, "start_hour", float(self.start_hour))
         self._check_schedules()
