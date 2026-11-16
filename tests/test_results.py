@@ -280,3 +280,26 @@ def test_segments_to_pandas():
     assert tuple(frame.columns) == SEGMENT_COLUMNS
     round_trip = Results(columns=SEGMENT_COLUMNS, rows=tuple(frame.to_dict("records")))
     assert round_trip.equals(segments)
+
+
+def test_custom_market_segments_reach_segments_table():
+    class DayAndNight(Market):
+        @property
+        def segment_names(self):
+            return ("day", "night")
+
+        def draws(self, bidders, rng):
+            while True:
+                name = "day" if rng.random() < 0.6 else "night"
+                yield MarketDraw({}, rng.uniform(0.0, 0.2, size=bidders), name)
+
+    night = BidderSpec("n", Truthful, 20.0, 5.0, segments=("night",))
+    cfg = SimConfig(
+        bidders=[*config().bidders, night], episodes=2, steps=100, market=DayAndNight()
+    )
+    segments = run_many(cfg, seeds=range(2)).segments
+    assert {row["segment"] for row in segments.rows} == {"day", "night"}
+    day_rows = [
+        r for r in segments.rows if r["bidder"] == "n" and r["segment"] == "day"
+    ]
+    assert day_rows and all(row["wins"] == 0 for row in day_rows)

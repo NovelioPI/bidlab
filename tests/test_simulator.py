@@ -290,3 +290,29 @@ def test_untargeted_bidder_takes_every_step():
     _, (everywhere, _) = run_spies(cfg)
     assert len(everywhere.observations) == cfg.episodes * cfg.steps
     assert len(everywhere.feedback) == cfg.episodes * cfg.steps
+
+
+class DayAndNight(Market):
+    """First 6 of every 10 steps are "day", the rest "night"."""
+
+    @property
+    def segment_names(self):
+        return ("day", "night")
+
+    def draws(self, bidders, rng):
+        step = 0
+        while True:
+            name = "day" if step % 10 < 6 else "night"
+            yield MarketDraw({"segment": name}, np.full(bidders, 0.1), name)
+            step += 1
+
+
+def test_custom_market_segments_drive_targeting_and_log():
+    cfg = config(
+        spec("night_only", segments=("night",)), spec("a"), market=DayAndNight()
+    )
+    log, (night_only, _) = run_spies(cfg)
+    step = np.arange(cfg.episodes * cfg.steps).reshape(cfg.episodes, cfg.steps)
+    np.testing.assert_array_equal(log.segment, (step % 10 >= 6).astype(int))
+    assert len(night_only.observations) == np.sum(step % 10 >= 6)
+    assert not np.any(log.winner[log.segment == 0] == 0)
