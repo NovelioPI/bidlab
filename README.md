@@ -182,14 +182,14 @@ A custom market can define its own segments. Override the `segment_names` proper
 
 ## Examples
 
-Each script in `examples/` runs on its own and prints a summary table.
+Each script in `examples/` runs on its own and prints a summary table. Scripts are grouped by topic.
 
 | Script | Shows |
 |---|---|
-| `basic.py` | Four built-in bidders over five seeds in parallel |
-| `segments.py` | A segmented market and a bidder that targets one segment |
-| `custom_market.py` | A custom market with its own day and night segments |
-| `independent_values.py` | First price with independent uniform values, truthful against shaded bids |
+| `getting_started/basic.py` | Four built-in bidders over five seeds in parallel |
+| `markets/segments.py` | A segmented market and a bidder that targets one segment |
+| `markets/custom_market.py` | A custom market with its own day and night segments |
+| `markets/independent_values.py` | First price with independent uniform values, truthful against shaded bids |
 
 ## Results
 

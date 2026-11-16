@@ -9,25 +9,25 @@ ROOT = Path(__file__).parent.parent
 
 
 EXAMPLE_LABELS = {
-    "basic.py": [("truthful",), ("shaded",), ("pid",), ("bandit",)],
-    "segments.py": [
+    "getting_started/basic.py": [("truthful",), ("shaded",), ("pid",), ("bandit",)],
+    "markets/segments.py": [
         (bidder, segment)
         for bidder in ("everywhere", "sports_only", "pid")
         for segment in ("news", "sports", "games")
     ],
-    "custom_market.py": [
+    "markets/custom_market.py": [
         (bidder, segment)
         for bidder in ("truthful", "night_only", "bandit")
         for segment in ("day", "night")
     ],
-    "independent_values.py": [("truthful",), ("equilibrium",), ("low",)],
+    "markets/independent_values.py": [("truthful",), ("equilibrium",), ("low",)],
 }
 
 
 def test_every_example_is_listed():
-    assert {path.name for path in (ROOT / "examples").glob("*.py")} == set(
-        EXAMPLE_LABELS
-    )
+    examples = ROOT / "examples"
+    scripts = {path.relative_to(examples).as_posix() for path in examples.rglob("*.py")}
+    assert scripts == set(EXAMPLE_LABELS)
 
 
 @pytest.mark.parametrize("name", sorted(EXAMPLE_LABELS))
