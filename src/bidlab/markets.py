@@ -1,7 +1,7 @@
 """Markets: where each step's features and conversion probabilities come from."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol
@@ -160,8 +160,9 @@ class Segmented(Market):
 
     Parameters
     ----------
-    segments : tuple[Segment, ...]
-        At least one segment, with unique names and shares that sum to 1.
+    segments : Sequence[Segment]
+        At least one segment, stored as a tuple, with unique names and shares
+        that sum to 1.
     base : LogisticContext, optional
         Draws the logits before the lift is added.
 
@@ -180,7 +181,7 @@ class Segmented(Market):
     ('mobile', 'desktop')
     """
 
-    segments: tuple[Segment, ...]
+    segments: Sequence[Segment]
     base: LogisticContext = LogisticContext()
 
     def __post_init__(self) -> None:

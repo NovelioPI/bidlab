@@ -129,7 +129,7 @@ def test_independent_values_clipped():
 
 def test_independent_rejects_non_distribution():
     with pytest.raises(TypeError, match="rvs method.*got float"):
-        IndependentValues(0.5)
+        IndependentValues(0.5)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
 
 
 @pytest.mark.parametrize(("fewer", "more"), [(1, 2), (2, 5), (1, 8)])
@@ -142,12 +142,12 @@ def test_independent_adding_bidder_keeps_values(fewer, more):
 
 
 def test_market_draw_stores_float_array_and_read_only_features():
-    draw = MarketDraw({"hour": 3}, [0, 1])
+    draw = MarketDraw({"hour": 3}, [0, 1])  # pyright: ignore[reportArgumentType]  Reason: the test checks that a list becomes a float array.
     assert isinstance(draw.probabilities, np.ndarray)
     assert draw.probabilities.dtype == np.float64
     assert draw.segment == "all"
     with pytest.raises(TypeError):
-        draw.features["hour"] = 4
+        draw.features["hour"] = 4  # pyright: ignore[reportIndexIssue]  Reason: the test checks that features are read-only.
 
 
 def test_segments_list_stored_as_tuple():

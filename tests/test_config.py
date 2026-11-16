@@ -90,7 +90,7 @@ def test_factory_returning_non_bidder_fails_before_step_zero():
             steps_run.append(observation.step)
             return observation.value
 
-    spec = BidderSpec("bad", lambda params, rng: object(), 50, 5)
+    spec = BidderSpec("bad", lambda params, rng: object(), 50, 5)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
     config = SimConfig(
         bidders=[BidderSpec("watch", Watch, 50, 5), spec], episodes=1, steps=10
     )
@@ -102,7 +102,7 @@ def test_factory_returning_non_bidder_fails_before_step_zero():
 
 def test_string_bidder_rejected():
     with pytest.raises(TypeError, match="Bidder subclass or a factory"):
-        BidderSpec("pid", "pid_pacing", 15, 5)
+        BidderSpec("pid", "pid_pacing", 15, 5)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
 
 
 @pytest.mark.parametrize(
@@ -182,7 +182,7 @@ def test_sim_config_rejects_bad_bidders_and_lengths(kwargs, message):
 
 def test_sim_config_rejects_unknown_auction():
     with pytest.raises(TypeError, match="FirstPrice or SecondPrice"):
-        SimConfig(bidders=[other()], auction="second")
+        SimConfig(bidders=[other()], auction="second")  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
 
 
 def test_default_market_is_logistic_context():
@@ -191,12 +191,12 @@ def test_default_market_is_logistic_context():
 
 def test_world_argument_rejected():
     with pytest.raises(TypeError, match="world"):
-        SimConfig(bidders=[other()], world=LogisticContext())
+        SimConfig(bidders=[other()], world=LogisticContext())  # pyright: ignore[reportCallIssue]  Reason: the test checks the runtime error for a wrong type.
 
 
 def test_non_market_rejected():
     with pytest.raises(TypeError, match="Market"):
-        SimConfig(bidders=[other()], market="logistic")
+        SimConfig(bidders=[other()], market="logistic")  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
 
 
 def test_bidders_list_stored_as_tuple():
@@ -223,7 +223,7 @@ def test_bidder_without_bid_fails_on_creation():
             return observation.value
 
     with pytest.raises(TypeError, match="abstract method 'bid'"):
-        Forgot({}, np.random.default_rng(0))
+        Forgot({}, np.random.default_rng(0))  # pyright: ignore[reportAbstractUsage]  Reason: the test checks the error for a missing bid method.
     with pytest.raises(TypeError, match="abstract method 'bid'"):
         run(small_config(BidderSpec("forgot", Forgot, 50, 5)))
 

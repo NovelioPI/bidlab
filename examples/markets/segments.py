@@ -30,4 +30,5 @@ config = bl.SimConfig(
 
 if __name__ == "__main__":
     results = bl.run_many(config, seeds=range(5))
+    assert results.segments is not None
     print(results.segments.summary())

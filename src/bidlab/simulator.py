@@ -1,5 +1,6 @@
 """The core loop: `run` simulates every auction and records a `RunLog`."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -71,7 +72,7 @@ class _Participant:
     step_reward: StepReward
     episode_reward: EpisodeReward | None
     reward_params: dict[str, float]
-    segments: tuple[str, ...] | None
+    segments: Sequence[str] | None
 
     def takes_part_in(self, segment: str) -> bool:
         return self.segments is None or segment in self.segments

@@ -1,6 +1,6 @@
 """Frozen, validated settings for one simulation."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -41,8 +41,9 @@ class BidderSpec:
         Called at the end of each episode, ``g(stats, params) -> float``.
     reward_params : dict[str, float], optional
         Passed to both reward functions.
-    segments : tuple[str, ...], optional
-        Market segments this bidder bids in. None means every segment.
+    segments : Sequence[str], optional
+        Market segments this bidder bids in, stored as a tuple. None means
+        every segment.
 
     Raises
     ------
@@ -72,7 +73,7 @@ class BidderSpec:
     reward: StepReward = rewards.surplus
     episode_reward: EpisodeReward | None = None
     reward_params: dict[str, float] = field(default_factory=dict[str, float])
-    segments: tuple[str, ...] | None = None
+    segments: Sequence[str] | None = None
 
     def __post_init__(self) -> None:
         self._check_segments()
@@ -142,8 +143,8 @@ class SimConfig:
 
     Parameters
     ----------
-    bidders : tuple[BidderSpec, ...]
-        At least one bidder; names must be unique.
+    bidders : Sequence[BidderSpec]
+        At least one bidder, stored as a tuple; names must be unique.
     episodes : int, optional
         Episodes per run. Budgets reset each episode; bidders keep learning.
     steps : int, optional
@@ -180,7 +181,7 @@ class SimConfig:
     (2, 100, 2)
     """
 
-    bidders: tuple[BidderSpec, ...]
+    bidders: Sequence[BidderSpec]
     episodes: int = 10
     steps: int = 1000
     seed: int = 0

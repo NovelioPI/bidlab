@@ -1,5 +1,5 @@
 import dataclasses
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import numpy as np
 import pytest
@@ -60,7 +60,7 @@ def spec(name, multiplier=1.0, budget=100.0, **kwargs):
 
 
 def config(*bidders, **kwargs):
-    defaults = {"episodes": 3, "steps": 200, "seed": 7}
+    defaults: dict[str, Any] = {"episodes": 3, "steps": 200, "seed": 7}
     return SimConfig(bidders=tuple(bidders), **(defaults | kwargs))
 
 
@@ -247,7 +247,7 @@ def test_features_reach_every_bidder_read_only():
         for observation in spy.observations:
             assert observation.features["hour"] == 3
             with pytest.raises(TypeError):
-                observation.features["hour"] = 4
+                observation.features["hour"] = 4  # pyright: ignore[reportIndexIssue]  Reason: the test checks that features are read-only.
 
 
 def test_no_features_gives_empty_mapping():
@@ -255,7 +255,7 @@ def test_no_features_gives_empty_mapping():
     for observation in spies[0].observations:
         assert dict(observation.features) == {}
         with pytest.raises(TypeError):
-            observation.features["hour"] = 4
+            observation.features["hour"] = 4  # pyright: ignore[reportIndexIssue]  Reason: the test checks that features are read-only.
 
 
 NEWS_AND_SPORTS = Segmented((Segment("news", 0.5), Segment("sports", 0.5)))
