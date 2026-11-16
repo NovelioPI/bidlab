@@ -75,6 +75,7 @@ def test_results_fingerprint(tmp_path):
 PUBLIC_NAMES = {
     "SimConfig",
     "BidderSpec",
+    "Campaign",
     "markets",
     "FirstPrice",
     "SecondPrice",

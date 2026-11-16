@@ -8,6 +8,7 @@ from bidlab.config import BidderSpec, SimConfig
 from bidlab.markets import LogisticContext, Segment, Segmented
 from bidlab.rewards import cpa_score_of
 from bidlab.simulator import run
+from bidlab.types import Campaign
 
 
 class Recorder(Bidder):
@@ -246,3 +247,55 @@ def test_bad_segments_rejected(segments, error):
 def test_segments_list_stored_as_tuple():
     spec = BidderSpec("b", Truthful, 1, 1, segments=["news"])
     assert spec.segments == ("news",)
+
+
+def test_campaign_stores_floats_and_defaults():
+    campaign = Campaign(budget=10, value=5)
+    assert (campaign.budget, campaign.value) == (10.0, 5.0)
+    assert isinstance(campaign.budget, float) and isinstance(campaign.value, float)
+    assert campaign.cpa_target is None
+    assert campaign.segments is None
+    assert campaign.horizon_hours is None
+    assert campaign.start_hour is None
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "field_name"),
+    [
+        ({"budget": 0}, "budget"),
+        ({"budget": -1}, "budget"),
+        ({"value": 0}, "value"),
+        ({"cpa_target": 0}, "cpa_target"),
+        ({"horizon_hours": 0}, "horizon_hours"),
+        ({"segments": ()}, "segments"),
+        ({"start_hour": -0.5}, "start_hour"),
+        ({"start_hour": 24}, "start_hour"),
+    ],
+)
+def test_campaign_rejects_bad_values(kwargs, field_name):
+    arguments = {"budget": 10, "value": 5} | kwargs
+    with pytest.raises(ValueError, match=field_name):
+        Campaign(**arguments)
+
+
+def test_campaign_rejects_string_segments():
+    with pytest.raises(TypeError):
+        Campaign(10, 5, segments="news")
+
+
+def test_time_left():
+    campaign = Campaign(10, 5, horizon_hours=24, start_hour=0)
+    assert campaign.time_left(1000.0) == 86400 - 1000.0
+
+
+def test_hour_of_day_wraps():
+    campaign = Campaign(10, 5, horizon_hours=24, start_hour=22)
+    assert campaign.hour_of_day(3 * 3600) == 1.0
+
+
+@pytest.mark.parametrize("schedule", [{}, {"horizon_hours": 24}, {"start_hour": 0}])
+def test_helpers_need_schedule(schedule):
+    campaign = Campaign(10, 5, **schedule)
+    for helper in (campaign.time_left, campaign.hour_of_day):
+        with pytest.raises(ValueError, match="simulator sets"):
+            helper(0.0)
