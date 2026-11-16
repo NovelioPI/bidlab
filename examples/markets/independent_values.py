@@ -11,10 +11,8 @@ config = bl.SimConfig(
     bidders=[
         bl.BidderSpec(
             name,
-            bl.Truthful,
-            budget=BUDGET,
-            value_per_conversion=1,
-            params={"multiplier": multiplier},
+            bl.Truthful(multiplier=multiplier),
+            bl.Campaign(budget=BUDGET, value=1),
         )
         for name, multiplier in (
             ("truthful", 1.0),

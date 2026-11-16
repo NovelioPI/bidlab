@@ -9,7 +9,7 @@ Examples
 >>> import bidlab as bl
 >>> def wins(observation, feedback, params):
 ...     return float(feedback.won)
->>> spec = bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5, reward=wins)
+>>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5), reward=wins)
 """
 
 from typing import Protocol
@@ -40,18 +40,18 @@ class EpisodeReward(Protocol):
 def surplus(
     observation: Observation, feedback: Feedback, params: dict[str, float]
 ) -> float:
-    """Realized value minus price: the default step reward.
+    """Realized value minus price, from `Feedback`: the default step reward.
 
     Examples
     --------
     >>> import bidlab as bl
-    >>> observation = bl.Observation(0, 100, 0.5, 5.0, 20.0)
-    >>> bl.rewards.surplus(observation, bl.Feedback(0.6, True, 0.5, True), {})
+    >>> observation = bl.Observation(time=0.0, value=0.5)
+    >>> bl.rewards.surplus(observation, bl.Feedback(0.0, 0.6, True, 0.5, True, value=5.0), {})
     4.5
-    >>> bl.rewards.surplus(observation, bl.Feedback(0.6, True, 0.5, False), {})
+    >>> bl.rewards.surplus(observation, bl.Feedback(0.0, 0.6, True, 0.5, False), {})
     -0.5
     """
-    return feedback.converted * observation.value_per_conversion - feedback.price
+    return feedback.value - feedback.price
 
 
 def conversions(
@@ -62,8 +62,8 @@ def conversions(
     Examples
     --------
     >>> import bidlab as bl
-    >>> observation = bl.Observation(0, 100, 0.5, 5.0, 20.0)
-    >>> bl.rewards.conversions(observation, bl.Feedback(0.6, True, 0.5, True), {})
+    >>> observation = bl.Observation(time=0.0, value=0.5)
+    >>> bl.rewards.conversions(observation, bl.Feedback(0.0, 0.6, True, 0.5, True, value=5.0), {})
     1.0
     """
     return float(feedback.converted)
@@ -77,11 +77,11 @@ def value(
     Examples
     --------
     >>> import bidlab as bl
-    >>> observation = bl.Observation(0, 100, 0.5, 5.0, 20.0)
-    >>> bl.rewards.value(observation, bl.Feedback(0.6, True, 0.5, True), {})
+    >>> observation = bl.Observation(time=0.0, value=0.5)
+    >>> bl.rewards.value(observation, bl.Feedback(0.0, 0.6, True, 0.5, True, value=5.0), {})
     5.0
     """
-    return feedback.converted * observation.value_per_conversion
+    return feedback.value
 
 
 def cpa_score_of(

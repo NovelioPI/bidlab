@@ -12,15 +12,13 @@ market = bl.markets.Segmented(
 
 config = bl.SimConfig(
     bidders=[
-        bl.BidderSpec("everywhere", bl.Truthful, budget=50, value_per_conversion=5),
+        bl.BidderSpec("everywhere", bl.Truthful(), bl.Campaign(budget=50, value=5)),
         bl.BidderSpec(
             "sports_only",
-            bl.Truthful,
-            budget=50,
-            value_per_conversion=5,
-            segments=("sports",),
+            bl.Truthful(),
+            bl.Campaign(budget=50, value=5, segments=("sports",)),
         ),
-        bl.BidderSpec("pid", bl.PidPacing, budget=15, value_per_conversion=5),
+        bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=15, value=5)),
     ],
     market=market,
     auction=bl.SecondPrice(reserve=0.01),
@@ -30,4 +28,5 @@ config = bl.SimConfig(
 
 if __name__ == "__main__":
     results = bl.run_many(config, seeds=range(5))
+    assert results.segments is not None
     print(results.segments.summary())

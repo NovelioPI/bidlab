@@ -124,7 +124,7 @@ def platform_metrics(log: RunLog) -> list[PlatformEpisodeMetrics]:
     Examples
     --------
     >>> import bidlab as bl
-    >>> spec = bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)
+    >>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))
     >>> log = bl.run(bl.SimConfig(bidders=[spec], episodes=2, steps=50))
     >>> [row.revenue for row in bl.platform_metrics(log)]
     [0.0, 0.0]
@@ -153,8 +153,8 @@ def bidder_metrics(log: RunLog) -> list[BidderEpisodeMetrics]:
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
     ...     bidders=[
-    ...         bl.BidderSpec("a", bl.Truthful, budget=10, value_per_conversion=5),
-    ...         bl.BidderSpec("b", bl.PidPacing, budget=10, value_per_conversion=5),
+    ...         bl.BidderSpec("a", bl.Truthful(), bl.Campaign(budget=10, value=5)),
+    ...         bl.BidderSpec("b", bl.PidPacing(), bl.Campaign(budget=10, value=5)),
     ...     ],
     ...     episodes=2,
     ...     steps=50,
@@ -168,8 +168,8 @@ def bidder_metrics(log: RunLog) -> list[BidderEpisodeMetrics]:
             won = log.winner[episode] == i
             spend = float(log.price[episode][won].sum())
             conversions = int((log.converted[episode] & won).sum())
-            value = conversions * spec.value_per_conversion
-            target = spec.cpa_target
+            value = conversions * spec.campaign.value
+            target = spec.campaign.cpa_target
             rows.append(
                 BidderEpisodeMetrics(
                     episode=episode,
@@ -179,7 +179,7 @@ def bidder_metrics(log: RunLog) -> list[BidderEpisodeMetrics]:
                     conversions=conversions,
                     value=value,
                     surplus=value - spend,
-                    budget_used=spend / spec.budget,
+                    budget_used=spend / spec.campaign.budget,
                     cpa=spend / conversions if conversions else np.nan,
                     cpa_violation=_cpa_violation(spend, conversions, target),
                     cpa_score=(
@@ -207,7 +207,7 @@ def segment_metrics(log: RunLog) -> list[BidderSegmentMetrics]:
     >>> import bidlab as bl
     >>> from bidlab.markets import Segment, Segmented
     >>> market = Segmented((Segment("day", 0.6), Segment("night", 0.4)))
-    >>> spec = bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)
+    >>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))
     >>> log = bl.run(bl.SimConfig(bidders=[spec], market=market, episodes=1, steps=50))
     >>> [row.segment for row in bl.segment_metrics(log)]
     ['day', 'night']
@@ -229,7 +229,7 @@ def segment_metrics(log: RunLog) -> list[BidderSegmentMetrics]:
                         spend=spend,
                         wins=int(won_here.sum()),
                         conversions=conversions,
-                        surplus=conversions * spec.value_per_conversion - spend,
+                        surplus=conversions * spec.campaign.value - spend,
                     )
                 )
 
@@ -284,7 +284,7 @@ def regret(
     multiplier beats it:
 
     >>> import bidlab as bl
-    >>> spec = bl.BidderSpec("t", bl.Truthful, budget=10, value_per_conversion=5)
+    >>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))
     >>> log = bl.run(bl.SimConfig(bidders=[spec], episodes=1, steps=50))
     >>> round(bl.regret(log, episode=0, bidder=0), 9)
     0.0
@@ -296,10 +296,12 @@ def regret(
     highest_other = others.max(axis=1) if others.shape[1] else np.zeros(len(values))
     # A targeted bidder cannot win outside its segments, so neither can its replay.
     names = log.config.market.segment_names
-    allowed = [i for i, name in enumerate(names) if name in (spec.segments or names)]
+    allowed = [
+        i for i, name in enumerate(names) if name in (spec.campaign.segments or names)
+    ]
     takes_part = np.isin(log.segment[episode], allowed)
 
-    budget_left = np.full(multipliers.size, spec.budget)
+    budget_left = np.full(multipliers.size, spec.campaign.budget)
     replay_surplus = np.zeros(multipliers.size)
     for step, value in enumerate(values):
         bids = np.minimum(multipliers * value, budget_left)

@@ -14,23 +14,31 @@ class Truthful(Bidder):
 
     Parameters
     ----------
-    params : dict[str, float]
-        ``multiplier`` (default 1.0): the bid as a fraction of the value.
-    rng : numpy.random.Generator
-        Not used.
+    multiplier : float, optional
+        The output as a fraction of the incoming value. Must be >= 0.
+
+    Raises
+    ------
+    ValueError
+        If ``multiplier`` is negative.
 
     Examples
     --------
     >>> import bidlab as bl
     >>> shaded = bl.BidderSpec(
-    ...     "shaded", bl.Truthful, budget=10, value_per_conversion=5,
-    ...     params={"multiplier": 0.8},
+    ...     "shaded", bl.Truthful(multiplier=0.8), bl.Campaign(budget=10, value=5)
     ... )
     >>> log = bl.run(bl.SimConfig(bidders=[shaded], episodes=1, steps=20))
     >>> bool((log.bids == 0.8 * log.values).all())
     True
     """
 
+    def __init__(self, multiplier: float = 1.0):
+        if multiplier < 0:
+            raise ValueError(f"multiplier must be >= 0, got {multiplier}")
+
+        self.multiplier = multiplier
+
     @override
-    def bid(self, observation: Observation) -> float:
-        return self.params.get("multiplier", 1.0) * observation.value
+    def forward(self, value: float, observation: Observation) -> float:
+        return self.multiplier * value

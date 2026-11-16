@@ -1,23 +1,26 @@
 import numpy as np
+import pytest
 
 from bidlab import rewards
-from bidlab.bidders import PidPacing, Truthful, UcbMultiplier
+from bidlab.auctions import FirstPrice
+from bidlab.bidders import PidGains, PidPacing, Truthful, UcbMultiplier
 from bidlab.config import BidderSpec, SimConfig
 from bidlab.simulator import run
+from bidlab.types import Campaign
 
 STEPS = 2000
 
 
 def competitors():
     return (
-        BidderSpec("x", Truthful, 1e6, 4.0),
-        BidderSpec("y", Truthful, 1e6, 6.0, params={"multiplier": 0.8}),
-        BidderSpec("z", Truthful, 1e6, 5.0, params={"multiplier": 0.9}),
+        BidderSpec("x", Truthful(), Campaign(1e6, 4.0)),
+        BidderSpec("y", Truthful(multiplier=0.8), Campaign(1e6, 6.0)),
+        BidderSpec("z", Truthful(multiplier=0.9), Campaign(1e6, 5.0)),
     )
 
 
-def spend_curve(bidder_class, budget, seed=11):
-    me = BidderSpec("me", bidder_class, budget, 5.0)
+def spend_curve(bidder, budget, seed=11):
+    me = BidderSpec("me", bidder, Campaign(budget, 5.0))
     log = run(
         SimConfig(bidders=(me, *competitors()), episodes=1, steps=STEPS, seed=seed)
     )
@@ -26,10 +29,10 @@ def spend_curve(bidder_class, budget, seed=11):
 
 
 def test_pid_spends_near_budget():
-    unconstrained = spend_curve(Truthful, 1e6)[-1]
+    unconstrained = spend_curve(Truthful(), 1e6)[-1]
     budget = 0.3 * unconstrained
-    truthful = spend_curve(Truthful, budget)
-    pid = spend_curve(PidPacing, budget)
+    truthful = spend_curve(Truthful(), budget)
+    pid = spend_curve(PidPacing(), budget)
     # Reason: the cap lets a near-empty bidder spend crumbs, so "out" means 99%.
     assert truthful[STEPS // 2] >= 0.99 * budget
     # PID ends within 10% of the budget and still has budget left at 80% of the episode.
@@ -38,7 +41,7 @@ def test_pid_spends_near_budget():
 
 
 def bandit_log(reward, episodes=80, seed=5):
-    me = BidderSpec("me", UcbMultiplier, 1e6, 5.0, reward=reward)
+    me = BidderSpec("me", UcbMultiplier(), Campaign(1e6, 5.0), reward=reward)
     return run(
         SimConfig(bidders=(me, *competitors()), episodes=episodes, steps=300, seed=seed)
     )
@@ -68,3 +71,32 @@ def test_bandit_uses_configured_reward():
         bandit_log(rewards.conversions, episodes=300)
     )
     assert by_conversions > by_surplus
+
+
+def test_pid_spends_evenly_alone():
+    pid = BidderSpec("pid", PidPacing(), Campaign(budget=10, value=5))
+    log = run(SimConfig(bidders=(pid,), auction=FirstPrice(), episodes=1, steps=200))
+    first, second = log.price[0, :100].sum(), log.price[0, 100:].sum()
+    assert 4 <= first <= 6
+    assert 4 <= second <= 6
+    assert first + second <= 10 + 1e-12
+
+
+@pytest.mark.parametrize(
+    ("build", "argument"),
+    [
+        (lambda: PidGains(kp=-1), "kp"),
+        (lambda: PidGains(ki=-1), "ki"),
+        (lambda: PidGains(kd=-1), "kd"),
+        (lambda: PidPacing(initial_multiplier=0), "initial_multiplier"),
+        (lambda: PidPacing(multiplier_range=(2, 1)), "multiplier_range"),
+        (lambda: PidPacing(multiplier_range=(-1, 1)), "multiplier_range"),
+        (lambda: UcbMultiplier(multiplier_step=0), "multiplier_step"),
+        (lambda: UcbMultiplier(min_multiplier=-1), "min_multiplier"),
+        (lambda: UcbMultiplier(exploration=-1), "exploration"),
+        (lambda: Truthful(multiplier=-1), "multiplier"),
+    ],
+)
+def test_stage_arguments_validated(build, argument):
+    with pytest.raises(ValueError, match=argument):
+        build()
