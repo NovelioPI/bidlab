@@ -2,12 +2,22 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Protocol
 
 import numpy as np
 import numpy.typing as npt
 
 ALL_SEGMENTS = "all"
 SHARE_TOLERANCE = 1e-9
+SAMPLE_BLOCK_SIZE = 1024
+
+
+class Distribution(Protocol):
+    """A scipy frozen distribution, such as `scipy.stats.uniform(0, 1)`."""
+
+    def rvs(
+        self, size: int, random_state: np.random.Generator
+    ) -> npt.NDArray[np.float64]: ...
 
 
 @dataclass(frozen=True)
@@ -96,6 +106,33 @@ class Segmented(Market):
                 _sigmoid(logits + segment.lift),
                 segment.name,
             )
+
+
+@dataclass(frozen=True)
+class IndependentValues(Market):
+    """Each bidder's probability is an independent, clipped draw from `distribution`."""
+
+    distribution: Distribution
+
+    def __post_init__(self) -> None:
+        if not callable(getattr(self.distribution, "rvs", None)):
+            raise TypeError(
+                "distribution must have an rvs method, such as scipy.stats.uniform(0, 1); "
+                f"got {type(self.distribution).__name__}"
+            )
+
+    def draws(self, bidders: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
+        # Child stream i depends only on i, so adding a bidder keeps the others' values.
+        streams = rng.spawn(bidders)
+        while True:
+            block = np.column_stack(
+                [
+                    self.distribution.rvs(size=SAMPLE_BLOCK_SIZE, random_state=stream)
+                    for stream in streams
+                ]
+            )
+            for probabilities in np.clip(block, 0.0, 1.0):
+                yield MarketDraw({}, probabilities)
 
 
 def _logits(

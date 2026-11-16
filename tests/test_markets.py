@@ -2,8 +2,12 @@ from itertools import islice
 
 import numpy as np
 import pytest
+from scipy import stats
 
-from bidlab.markets import LogisticContext, Segment, Segmented
+from bidlab.bidders import Truthful
+from bidlab.config import BidderSpec, SimConfig
+from bidlab.markets import IndependentValues, LogisticContext, Segment, Segmented
+from bidlab.simulator import run
 
 
 def probabilities(market, bidders, steps, seed=0):
@@ -90,3 +94,42 @@ def test_segmented_adding_bidder_keeps_draws(fewer, more):
             np.array([d.probabilities for d in small]),
             np.array([d.probabilities for d in large])[:, :fewer],
         )
+
+
+def test_independent_uniform_mean_and_correlation():
+    rates = probabilities(IndependentValues(stats.uniform(0, 1)), 2, steps=20_000)
+    assert np.all(np.abs(rates.mean(axis=0) - 0.5) < 0.01)
+    assert abs(np.corrcoef(rates[:, 0], rates[:, 1])[0, 1]) < 0.03
+
+
+def test_independent_uniform_values_reach_the_log():
+    config = SimConfig(
+        bidders=[BidderSpec(name, Truthful, 1e9, 1.0) for name in ("a", "b")],
+        market=IndependentValues(stats.uniform(0, 1)),
+        episodes=2,
+        steps=10_000,
+    )
+    values = run(config).values.reshape(-1, 2)
+    assert np.all(np.abs(values.mean(axis=0) - 0.5) < 0.01)
+    assert abs(np.corrcoef(values[:, 0], values[:, 1])[0, 1]) < 0.03
+
+
+def test_independent_values_clipped():
+    rates = probabilities(IndependentValues(stats.norm(0.5, 1)), 3, steps=3000)
+    assert rates.min() == 0.0
+    assert rates.max() == 1.0
+    assert np.all((rates >= 0.0) & (rates <= 1.0))
+
+
+def test_independent_rejects_non_distribution():
+    with pytest.raises(TypeError, match="rvs"):
+        IndependentValues(0.5)
+
+
+@pytest.mark.parametrize(("fewer", "more"), [(1, 2), (2, 5), (1, 8)])
+def test_independent_adding_bidder_keeps_values(fewer, more):
+    market = IndependentValues(stats.beta(2, 5))
+    for seed in range(3):
+        small = probabilities(market, fewer, steps=3000, seed=seed)
+        large = probabilities(market, more, steps=3000, seed=seed)
+        np.testing.assert_array_equal(small, large[:, :fewer])
