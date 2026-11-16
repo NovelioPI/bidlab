@@ -164,6 +164,30 @@ class Bidder(ABC):
             yield path, bidder
 
 
+def bind_tree(bidder: Bidder, rng: np.random.Generator) -> None:
+    """Bind every bidder in ``bidder``'s tree to its own stream; the simulator calls this.
+
+    ``bidder`` gets ``rng``. Each bidder's stream spawns one stream per new
+    child, in tree order, before the bidder's `Bidder.bind` runs. So a
+    `bind` override that spawns its own streams cannot shift the children's.
+
+    Parameters
+    ----------
+    bidder : Bidder
+        The top bidder of the tree.
+    rng : numpy.random.Generator
+        The top bidder's random stream for the run.
+    """
+    streams = {id(bidder): rng}
+    for _, node, children in _walk(bidder, "", {id(bidder)}):
+        stream = streams[id(node)]
+        for child, child_stream in zip(
+            children, stream.spawn(len(children)), strict=True
+        ):
+            streams[id(child)] = child_stream
+        node.bind(stream)
+
+
 def _walk(
     node: Bidder, path: str, claimed: set[int]
 ) -> Iterator[tuple[str, Bidder, list[Bidder]]]:
