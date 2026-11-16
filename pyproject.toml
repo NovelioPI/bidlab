@@ -4,6 +4,20 @@ version = "0.1.0"
 description = "Bidder-side ad auction simulator for research on bidding methods"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "NovelioPI", email = "novelioputra99@gmail.com" },
+]
+keywords = ["ad auction", "bidding", "simulation", "online advertising"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
 dependencies = [
     "cloudpickle>=3.0",
     "numpy>=2.0",
@@ -14,6 +28,11 @@ dependencies = [
 pandas = [
     "pandas>=2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/NovelioPI/bidlab"
+Source = "https://github.com/NovelioPI/bidlab"
+Issues = "https://github.com/NovelioPI/bidlab/issues"
 
 [dependency-groups]
 dev = [
