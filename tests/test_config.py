@@ -5,6 +5,7 @@ from bidlab import rewards
 from bidlab.auctions import FirstPrice, SecondPrice
 from bidlab.bidders import Bidder, PidPacing, Truthful
 from bidlab.config import BidderSpec, SimConfig
+from bidlab.markets import LogisticContext, Segment, Segmented
 from bidlab.rewards import cpa_score_of
 from bidlab.simulator import run
 
@@ -184,6 +185,20 @@ def test_sim_config_rejects_unknown_auction():
         SimConfig(bidders=[other()], auction="second")
 
 
+def test_default_market_is_logistic_context():
+    assert SimConfig(bidders=[other()]).market == LogisticContext()
+
+
+def test_world_argument_rejected():
+    with pytest.raises(TypeError, match="world"):
+        SimConfig(bidders=[other()], world=LogisticContext())
+
+
+def test_non_market_rejected():
+    with pytest.raises(TypeError, match="Market"):
+        SimConfig(bidders=[other()], market="logistic")
+
+
 def test_bidders_list_stored_as_tuple():
     specs = [other(), BidderSpec("b", Truthful, 1, 1)]
     config = SimConfig(bidders=specs)
@@ -211,3 +226,23 @@ def test_bidder_without_bid_fails_on_creation():
         Forgot({}, np.random.default_rng(0))
     with pytest.raises(TypeError, match="abstract method 'bid'"):
         run(small_config(BidderSpec("forgot", Forgot, 50, 5)))
+
+
+def test_unknown_segment_rejected():
+    market = Segmented((Segment("news", 0.5), Segment("sports", 0.5)))
+    spec = BidderSpec("b", Truthful, 1, 1, segments=("news", "games"))
+    with pytest.raises(ValueError, match=r"bidder 'b'.*'games'"):
+        SimConfig(bidders=[spec], market=market)
+    with pytest.raises(ValueError, match=r"bidder 'b'.*'news'"):
+        SimConfig(bidders=[BidderSpec("b", Truthful, 1, 1, segments=("news",))])
+
+
+@pytest.mark.parametrize(("segments", "error"), [((), ValueError), ("news", TypeError)])
+def test_bad_segments_rejected(segments, error):
+    with pytest.raises(error, match="bidder 'b': segments"):
+        BidderSpec("b", Truthful, 1, 1, segments=segments)
+
+
+def test_segments_list_stored_as_tuple():
+    spec = BidderSpec("b", Truthful, 1, 1, segments=["news"])
+    assert spec.segments == ("news",)

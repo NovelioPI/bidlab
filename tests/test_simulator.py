@@ -2,11 +2,13 @@ import dataclasses
 from typing import ClassVar
 
 import numpy as np
+import pytest
 
 from bidlab import rewards
-from bidlab.auctions import FirstPrice
+from bidlab.auctions import NO_WINNER, FirstPrice
 from bidlab.bidders import Bidder
 from bidlab.config import BidderSpec, SimConfig
+from bidlab.markets import Market, MarketDraw, Segment, Segmented
 from bidlab.simulator import run
 from bidlab.types import EpisodeStats, Feedback, Observation
 
@@ -92,6 +94,7 @@ def test_feedback_fields_are_only_own_outcome():
         "value",
         "value_per_conversion",
         "budget_left",
+        "features",
     }
 
 
@@ -180,3 +183,136 @@ def test_reserve_above_all_bids_gives_no_sales():
     log = run(config(spec("a"), auction=FirstPrice(reserve=1e6)))
     assert np.all(log.winner == -1)
     assert np.all(log.price == 0)
+
+
+class FixedMarket(Market):
+    """Yields the given probabilities and features at every step."""
+
+    def __init__(self, probabilities, features=None):
+        self.probabilities = probabilities
+        self.features = features or {}
+
+    def draws(self, bidders, rng):
+        while True:
+            yield MarketDraw(self.features, np.array(self.probabilities))
+
+
+class CountingMarket(Market):
+    """Step k gives bidder i probability (k mod 10 + i) / 20."""
+
+    def draws(self, bidders, rng):
+        step = 0
+        while True:
+            yield MarketDraw({}, (step % 10 + np.arange(bidders)) / 20)
+            step += 1
+
+
+def test_custom_market_values_are_weight_times_probability():
+    cfg = config(
+        spec("a", value_per_conversion=2.0),
+        spec("b", value_per_conversion=4.0),
+        market=CountingMarket(),
+        steps=30,
+    )
+    log = run(cfg)
+    step = np.arange(cfg.episodes * cfg.steps).reshape(cfg.episodes, cfg.steps)
+    expected = (step[..., None] % 10 + np.arange(2)) / 20 * np.array([2.0, 4.0])
+    np.testing.assert_array_equal(log.values, expected)
+
+
+@pytest.mark.parametrize(
+    "probabilities",
+    [[0.5], [0.5, 1.2], [0.5, -0.1], [0.5, np.nan]],
+    ids=["wrong-length", "above-one", "below-zero", "nan"],
+)
+def test_bad_market_draw_rejected(probabilities):
+    cfg = config(spec("a"), spec("b"), market=FixedMarket(probabilities))
+    with pytest.raises(ValueError, match="FixedMarket at episode 0, step 0"):
+        run(cfg)
+
+
+def test_market_that_stops_names_the_market():
+    class Short(Market):
+        def draws(self, bidders, rng):
+            yield MarketDraw({}, np.full(bidders, 0.5))
+
+    with pytest.raises(RuntimeError, match="Short at episode 0, step 1"):
+        run(config(spec("a"), market=Short()))
+
+
+def test_features_reach_every_bidder_read_only():
+    market = FixedMarket([0.5, 0.5], features={"hour": 3})
+    _, spies = run_spies(config(spec("a"), spec("b"), market=market, steps=5))
+    for spy in spies:
+        for observation in spy.observations:
+            assert observation.features["hour"] == 3
+            with pytest.raises(TypeError):
+                observation.features["hour"] = 4
+
+
+def test_no_features_gives_empty_mapping():
+    _, spies = run_spies(config(spec("a"), market=FixedMarket([0.5]), steps=5))
+    for observation in spies[0].observations:
+        assert dict(observation.features) == {}
+        with pytest.raises(TypeError):
+            observation.features["hour"] = 4
+
+
+NEWS_AND_SPORTS = Segmented((Segment("news", 0.5), Segment("sports", 0.5)))
+
+
+def test_targeted_bidder_skips_other_segments():
+    cfg = config(
+        spec("news_only", segments=("news",)),
+        spec("everywhere"),
+        market=NEWS_AND_SPORTS,
+    )
+    log, (news_only, _) = run_spies(cfg)
+    sports = log.segment == NEWS_AND_SPORTS.segment_names.index("sports")
+    assert sports.any() and (~sports).any()
+    assert np.all(log.bids[sports][:, 0] == 0.0)
+    assert not np.any(log.winner[sports] == 0)
+    assert len(news_only.observations) == np.sum(~sports)
+    assert len(news_only.feedback) == np.sum(~sports)
+    assert {o.features["segment"] for o in news_only.observations} == {"news"}
+
+
+def test_lone_targeted_bidder_never_wins_outside_its_segments():
+    cfg = config(spec("news_only", segments=("news",)), market=NEWS_AND_SPORTS)
+    log = run(cfg)
+    sports = log.segment == NEWS_AND_SPORTS.segment_names.index("sports")
+    assert np.all(log.winner[sports] == NO_WINNER)
+    assert np.all(log.price[sports] == 0.0)
+
+
+def test_untargeted_bidder_takes_every_step():
+    cfg = config(spec("a"), spec("b", segments=("sports",)), market=NEWS_AND_SPORTS)
+    _, (everywhere, _) = run_spies(cfg)
+    assert len(everywhere.observations) == cfg.episodes * cfg.steps
+    assert len(everywhere.feedback) == cfg.episodes * cfg.steps
+
+
+class DayAndNight(Market):
+    """First 6 of every 10 steps are "day", the rest "night"."""
+
+    @property
+    def segment_names(self):
+        return ("day", "night")
+
+    def draws(self, bidders, rng):
+        step = 0
+        while True:
+            name = "day" if step % 10 < 6 else "night"
+            yield MarketDraw({"segment": name}, np.full(bidders, 0.1), name)
+            step += 1
+
+
+def test_custom_market_segments_drive_targeting_and_log():
+    cfg = config(
+        spec("night_only", segments=("night",)), spec("a"), market=DayAndNight()
+    )
+    log, (night_only, _) = run_spies(cfg)
+    step = np.arange(cfg.episodes * cfg.steps).reshape(cfg.episodes, cfg.steps)
+    np.testing.assert_array_equal(log.segment, (step % 10 >= 6).astype(int))
+    assert len(night_only.observations) == np.sum(step % 10 >= 6)
+    assert not np.any(log.winner[log.segment == 0] == 0)
