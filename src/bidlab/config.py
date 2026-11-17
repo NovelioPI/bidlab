@@ -8,7 +8,7 @@ import numpy as np
 
 from bidlab import rewards
 from bidlab.auctions import Auction, FirstPrice, SecondPrice
-from bidlab.bidders.base import Bidder
+from bidlab.bidders.base import Bidder, bind_tree
 from bidlab.markets import LogisticContext, Market
 from bidlab.rewards import EpisodeReward, StepReward
 from bidlab.types import HOURS_PER_DAY, Campaign
@@ -101,7 +101,8 @@ class BidderSpec:
         Returns
         -------
         Bidder
-            A deep copy of ``bidder``, bound to ``rng``.
+            A deep copy of ``bidder``. It is bound to ``rng``, and each
+            bidder in its tree to its own stream split from it.
 
         Raises
         ------
@@ -116,7 +117,7 @@ class BidderSpec:
                 "Create objects such as open files or locks in on_episode_start"
             ) from error
 
-        bidder.bind(rng)
+        bind_tree(bidder, rng)
         return bidder
 
     def merged_reward_params(self) -> dict[str, float]:

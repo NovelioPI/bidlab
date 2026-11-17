@@ -67,7 +67,9 @@ class RunLog:
 
 @dataclass(frozen=True)
 class _Participant:
+    name: str
     bidder: Bidder
+    nodes: tuple[Bidder, ...]
     campaign: Campaign
     step_reward: StepReward
     episode_reward: EpisodeReward | None
@@ -76,6 +78,17 @@ class _Participant:
     def takes_part_in(self, segment: str) -> bool:
         segments = self.campaign.segments
         return segments is None or segment in segments
+
+    def check_tree(self) -> None:
+        # Risk: if a late child were bound here, then its stream would depend on timing.
+        known = {id(node) for node in self.nodes}
+        for path, node in self.bidder.named_bidders():
+            if id(node) not in known:
+                raise ValueError(
+                    f"bidder {self.name!r}: child bidder at {path!r} appeared after "
+                    "the run started; create child bidders in __init__ and reset "
+                    "their state in on_episode_start"
+                )
 
 
 def run(config: SimConfig) -> RunLog:
@@ -163,8 +176,11 @@ class _Simulation:
             horizon_hours=self.config.horizon_hours,
             start_hour=self.config.start_hour,
         )
+        bidder = spec.build(np.random.default_rng(seed))
         return _Participant(
-            bidder=spec.build(np.random.default_rng(seed)),
+            name=spec.name,
+            bidder=bidder,
+            nodes=tuple(node for _, node in bidder.named_bidders()),
             campaign=campaign,
             step_reward=spec.reward,
             episode_reward=spec.episode_reward,
@@ -191,7 +207,9 @@ class _Simulation:
     def _run_episode(self, episode: int) -> None:
         budget_left = np.array([p.campaign.budget for p in self.participants])
         for participant in self.participants:
-            participant.bidder.on_episode_start(participant.campaign)
+            for node in participant.nodes:
+                node.on_episode_start(participant.campaign)
+            participant.check_tree()
 
         for step in range(self.config.steps):
             self._run_step(episode, step, budget_left)
@@ -246,7 +264,9 @@ class _Simulation:
             reward = participant.step_reward(
                 observation, feedback, participant.reward_params
             )
-            participant.bidder.update_batch([replace(feedback, reward=reward)])
+            batch = [replace(feedback, reward=reward)]
+            for node in participant.nodes:
+                node.update_batch(batch)
             self.log.rewards[episode, step, i] = reward
 
         self.log.bids[episode, step] = bids
@@ -318,4 +338,6 @@ class _Simulation:
                 )
                 self.log.episode_rewards[episode, i] = episode_reward
 
-            participant.bidder.on_episode_end(stats, episode_reward)
+            for node in participant.nodes:
+                node.on_episode_end(stats, episode_reward)
+            participant.check_tree()
