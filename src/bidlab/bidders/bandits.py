@@ -29,6 +29,8 @@ class UcbMultiplier(Bidder):
         The grid's spacing. Must be > 0.
     exploration : float, optional
         Scales the exploration bonus. Must be >= 0.
+    log_state : bool, optional
+        Log the chosen arm's multiplier as ``"multiplier"`` once per episode.
 
     Raises
     ------
@@ -48,6 +50,7 @@ class UcbMultiplier(Bidder):
         max_multiplier: float = 2.0,
         multiplier_step: float = 0.2,
         exploration: float = 1.0,
+        log_state: bool = True,
     ):
         if not 0 <= min_multiplier <= max_multiplier:
             raise ValueError(
@@ -65,6 +68,7 @@ class UcbMultiplier(Bidder):
             min_multiplier, max_multiplier + ARM_GRID_END_MARGIN, multiplier_step
         )
         self.exploration = exploration
+        self.log_state = log_state
         self.pulls = np.zeros(self.arms.size)
         self.reward_sums = np.zeros(self.arms.size)
         self.arm = 0
@@ -74,6 +78,8 @@ class UcbMultiplier(Bidder):
     def on_episode_start(self, campaign: Campaign) -> None:
         self.arm = self._choose_arm()
         self.episode_step_rewards = 0.0
+        if self.log_state:
+            self.log("multiplier", float(self.arms[self.arm]))
 
     @override
     def forward(self, value: float, observation: Observation) -> float:

@@ -20,6 +20,7 @@ Examples
 from bidlab import bidders, markets, rewards
 from bidlab.auctions import FirstPrice, SecondPrice
 from bidlab.bidders import Bidder, PidPacing, Stack, Truthful, UcbMultiplier
+from bidlab.callbacks import Callback
 from bidlab.config import BidderSpec, SimConfig
 from bidlab.metrics import bidder_metrics, platform_metrics, regret, segment_metrics
 from bidlab.results import Results
@@ -30,6 +31,7 @@ from bidlab.types import Campaign, EpisodeStats, Feedback, Observation
 __all__ = [
     "Bidder",
     "BidderSpec",
+    "Callback",
     "Campaign",
     "EpisodeStats",
     "Feedback",

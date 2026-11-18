@@ -1,15 +1,18 @@
 """Run one simulation per seed and collect the metrics in a table."""
 
 import dataclasses
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from itertools import repeat
 from multiprocessing import get_context
 
 import cloudpickle
 import numpy as np
+import numpy.typing as npt
 
+from bidlab.callbacks import Callback, checked_callbacks
 from bidlab.config import SimConfig
+from bidlab.logs import Logs
 from bidlab.metrics import (
     BidderEpisodeMetrics,
     bidder_metrics,
@@ -35,9 +38,16 @@ RowBuilder = dict[str, str | int | float]
 class _SeedRows:
     main: list[ResultRow]
     segments: list[ResultRow]
+    # Plain dicts, since a worker cannot pickle the run log's read-only mappings.
+    logs: dict[str, dict[str, npt.NDArray[np.float64]]]
 
 
-def run_many(config: SimConfig, seeds: Iterable[int], workers: int = 1) -> Results:
+def run_many(
+    config: SimConfig,
+    seeds: Iterable[int],
+    workers: int = 1,
+    callbacks: Sequence[Callback] = (),
+) -> Results:
     """Run each seed; rows are ordered by seed, then bidder.
 
     Each row holds one bidder's metrics for one seed, averaged over the
@@ -52,6 +62,9 @@ def run_many(config: SimConfig, seeds: Iterable[int], workers: int = 1) -> Resul
         One run per seed.
     workers : int, optional
         Number of processes.
+    callbacks : Sequence[Callback], optional
+        Read-only hooks; each gets `Callback.on_seed_end` in the main process
+        after each seed, in seed order.
 
     Returns
     -------
@@ -63,7 +76,8 @@ def run_many(config: SimConfig, seeds: Iterable[int], workers: int = 1) -> Resul
     ValueError
         If ``workers`` is below 1.
     TypeError
-        If ``workers > 1`` and a bidder cannot be pickled with cloudpickle.
+        If ``workers > 1`` and a bidder cannot be pickled with cloudpickle, or
+        a callback is not a `Callback` instance.
 
     Examples
     --------
@@ -83,23 +97,65 @@ def run_many(config: SimConfig, seeds: Iterable[int], workers: int = 1) -> Resul
     if workers < 1:
         raise ValueError(f"workers must be >= 1, got {workers}")
 
+    checked = checked_callbacks(callbacks)
     seed_list = list(seeds)
     if workers == 1:
-        per_seed = [_seed_rows(config, seed) for seed in seed_list]
+        computed = (_seed_rows(config, seed) for seed in seed_list)
+        per_seed = _collect(seed_list, computed, checked)
     else:
         payload = _pickle_config(config)
         # spawn behaves the same on every OS and avoids forking PyTorch threads.
         context = get_context("spawn")
         with ProcessPoolExecutor(max_workers=workers, mp_context=context) as pool:
-            per_seed = list(pool.map(_run_seed, repeat(payload), seed_list))
+            computed = pool.map(_run_seed, repeat(payload), seed_list)
+            per_seed = _collect(seed_list, computed, checked)
 
+    return _results(per_seed)
+
+
+def _collect(
+    seeds: list[int], computed: Iterator[_SeedRows], callbacks: tuple[Callback, ...]
+) -> list[_SeedRows]:
+    per_seed: list[_SeedRows] = []
+    for seed, seed_rows in zip(seeds, computed, strict=True):
+        per_seed.append(seed_rows)
+        for callback in callbacks:
+            callback.on_seed_end(seed, _results([seed_rows]))
+    return per_seed
+
+
+def _results(per_seed: list[_SeedRows]) -> Results:
     rows = tuple(row for seed_rows in per_seed for row in seed_rows.main)
     segment_rows = tuple(row for seed_rows in per_seed for row in seed_rows.segments)
     return Results(
         columns=COLUMNS,
         rows=rows,
         segments=Results(columns=SEGMENT_COLUMNS, rows=segment_rows),
+        logs=_stacked_logs([seed_rows.logs for seed_rows in per_seed]),
     )
+
+
+def _stacked_logs(
+    per_seed: list[dict[str, dict[str, npt.NDArray[np.float64]]]],
+) -> Logs:
+    shapes: dict[str, dict[str, tuple[int, ...]]] = {}
+    for logs in per_seed:
+        for name, arrays in logs.items():
+            for spec, array in arrays.items():
+                shapes.setdefault(name, {})[spec] = array.shape
+
+    return {
+        name: {
+            spec: np.stack(
+                [
+                    logs.get(name, {}).get(spec, np.full(shape, np.nan))
+                    for logs in per_seed
+                ]
+            )
+            for spec, shape in specs.items()
+        }
+        for name, specs in shapes.items()
+    }
 
 
 def _pickle_config(config: SimConfig) -> bytes:
@@ -150,4 +206,5 @@ def _seed_rows(config: SimConfig, seed: int) -> _SeedRows:
                 segment_row[column] = float(np.mean([getattr(m, column) for m in own]))
             segment_rows.append(segment_row)
 
-    return _SeedRows(main=rows, segments=segment_rows)
+    logs = {name: dict(arrays) for name, arrays in log.logs.items()}
+    return _SeedRows(main=rows, segments=segment_rows, logs=logs)

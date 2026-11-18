@@ -134,7 +134,9 @@ def test_to_pandas_matches_rows():
     frame = results.to_pandas()
     assert isinstance(frame, pandas.DataFrame)
     assert tuple(frame.columns) == COLUMNS
-    round_trip = Results(columns=COLUMNS, rows=tuple(frame.to_dict("records")))
+    # to_pandas exports rows only, so the logs come from the original.
+    rows = tuple(frame.to_dict("records"))
+    round_trip = Results(columns=COLUMNS, rows=rows, logs=results.logs)
     assert round_trip.equals(results)
 
 
