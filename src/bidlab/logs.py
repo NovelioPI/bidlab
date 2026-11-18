@@ -30,7 +30,7 @@ class LogBook:
         self.steps = steps
         self.episode = 0
         self.step: int | None = None
-        self.active = False
+        self.closed = False
         self.step_values: _Store = {}
         self.episode_values: _Store = {}
         self.owners: dict[tuple[str, str], str] = {}
@@ -41,19 +41,17 @@ class LogBook:
 
     def at_episode(self, episode: int) -> None:
         """Point the clock at an episode hook of ``episode``."""
-        self.active = True
         self.episode = episode
         self.step = None
 
     def at_step(self, episode: int, step: int) -> None:
         """Point the clock at auction ``step`` of ``episode``."""
-        self.active = True
         self.episode = episode
         self.step = step
 
     def close(self) -> None:
-        """Ignore every later write, so a bidder kept after the run logs nothing."""
-        self.active = False
+        """Ignore later writes, from a bidder copy kept after its run ended."""
+        self.closed = True
 
     def write(self, spec: str, path: str, name: str, value: float) -> None:
         """Store ``value`` under ``name`` for spec ``spec`` at the clock.
@@ -64,7 +62,7 @@ class LogBook:
             If another bidder in the tree already stored ``name``, or
             ``name`` was stored in the other shape.
         """
-        if not self.active:
+        if self.closed:
             return
 
         owner = self.owners.setdefault((spec, name), path)

@@ -187,7 +187,8 @@ def test_callback_error_reaches_caller(hook: str):
     "bad", [Record, "progress", print], ids=["class", "str", "function"]
 )
 def test_callback_type_checked(bad: object):
-    match = "pass an instance" if isinstance(bad, type) else "Callback instances"
+    instances = f"Callback instances, got {type(bad).__name__}"
+    match = "pass an instance" if isinstance(bad, type) else instances
     with pytest.raises(TypeError, match=match):
         run(config(*two()), callbacks=[bad])  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
 

@@ -1,6 +1,6 @@
 import math
 from collections.abc import Callable, Sequence
-from typing import Any, override
+from typing import Any, ClassVar, override
 
 import numpy as np
 import pytest
@@ -148,9 +148,26 @@ class Both(Bidder):
         self.log("x", 2.0)
 
 
-def test_step_and_episode_name_raises():
-    with pytest.raises(ValueError, match=r"'both'.*'x'.*per step and per episode"):
-        run(config(BidderSpec("both", Both(), CAMPAIGN)))
+class EpisodeFirst(Bidder):
+    """Logs one name per episode, then per step."""
+
+    @override
+    def on_episode_start(self, campaign: Campaign) -> None:
+        self.log("x", 2.0)
+
+    @override
+    def forward(self, value: float, observation: Observation) -> float:
+        self.log("x", 1.0)
+        return value
+
+
+@pytest.mark.parametrize(
+    ("bidder", "second"), [(Both(), "episode"), (EpisodeFirst(), "step")]
+)
+def test_step_and_episode_name_raises(bidder: Bidder, second: str):
+    pattern = rf"'both'.*'x'.*per step and per episode; this {second} log"
+    with pytest.raises(ValueError, match=pattern):
+        run(config(BidderSpec("both", bidder, CAMPAIGN)))
 
 
 @pytest.mark.parametrize(
@@ -225,6 +242,28 @@ def test_log_outside_run_does_nothing():
     assert "bound" not in log.logs
 
 
+class Keeps(Bidder):
+    """Keeps a reference to its run's copy, as a user's bidder might."""
+
+    kept: ClassVar[list[Bidder]] = []
+
+    @override
+    def forward(self, value: float, observation: Observation) -> float:
+        Keeps.kept.append(self)
+        self.log("x", 1.0)
+        return value
+
+
+def test_log_after_run_does_nothing():
+    Keeps.kept.clear()
+    log = run(config(BidderSpec("k", Keeps(), CAMPAIGN)))
+    copy = Keeps.kept[-1]
+    copy.log("x", 99.0)
+    copy.log("fresh", 5.0)
+    assert set(log.logs) == {"x"}
+    assert (log.logs["x"]["k"] == 1.0).all()
+
+
 def test_specs_keep_own_arrays():
     first = BidderSpec("one", Logs("forward", lambda b, _: b.log("x", 1.0)), CAMPAIGN)
     second = BidderSpec("two", Logs("forward", lambda b, _: b.log("x", 2.0)), CAMPAIGN)
@@ -281,6 +320,23 @@ class TopLogs(Holder):
     def forward(self, value: float, observation: Observation) -> float:
         self.log("lam", 1.0)
         return super().forward(value, observation)
+
+
+class TopAndChild(Holder):
+    """Logs ``a`` itself and holds a child that logs ``b``."""
+
+    def __init__(self):
+        super().__init__(Logs("forward", lambda b, _: b.log("b", 2.0)))
+
+    @override
+    def forward(self, value: float, observation: Observation) -> float:
+        self.log("a", 1.0)
+        return super().forward(value, observation)
+
+
+def test_different_names_in_tree_allowed():
+    log = run(config(BidderSpec("t", TopAndChild(), CAMPAIGN)))
+    assert set(log.logs) == {"a", "child.b"}
 
 
 def test_name_clash_raises():
