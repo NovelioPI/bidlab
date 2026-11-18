@@ -154,8 +154,8 @@ print(
 | Class | Family | Behavior | Arguments |
 |---|---|---|---|
 | `Truthful` | `bl.bidders.baselines` | Outputs `multiplier` × value | `multiplier` (1.0) |
-| `PidPacing` | `bl.bidders.pacing` | A PID loop moves a multiplier so spend tracks the budget evenly over the horizon | `initial_multiplier` (1.0), `kp` (20), `ki` (2), `kd` (0), `multiplier_range` ((0, 10)) |
-| `UcbMultiplier` | `bl.bidders.bandits` | UCB1 over a grid of multipliers; one arm per episode | `min_multiplier` (0.2), `max_multiplier` (2.0), `multiplier_step` (0.2), `exploration` (1.0) |
+| `PidPacing` | `bl.bidders.pacing` | A PID loop moves a multiplier so spend tracks the budget evenly over the horizon; logs `"multiplier"` per auction | `initial_multiplier` (1.0), `kp` (20), `ki` (2), `kd` (0), `multiplier_range` ((0, 10)), `log_state` (True) |
+| `UcbMultiplier` | `bl.bidders.bandits` | UCB1 over a grid of multipliers; one arm per episode; logs its arm as `"multiplier"` per episode | `min_multiplier` (0.2), `max_multiplier` (2.0), `multiplier_step` (0.2), `exploration` (1.0), `log_state` (True) |
 
 ## Rewards
 
@@ -269,8 +269,59 @@ Each script in `examples/` runs on its own and prints a summary table. Scripts a
 | `results.save_csv(path)` | A CSV file with one row per seed and bidder |
 | `results.to_pandas()` | A DataFrame; needs `pip install bidlab[pandas]` |
 | `results.rows`, `results.columns` | The raw rows as dicts |
-| `results.equals(other)` | `True` when two runs gave the same rows. Use it, not `==`: some metrics are NaN by definition, and NaN never equals NaN |
+| `results.equals(other)` | `True` when two runs gave the same rows and logs. Use it, not `==`: some metrics are NaN by definition, and NaN never equals NaN |
+| `results.logs` | Values bidders logged, per seed; see below |
 | `results.segments` | The per-segment table, also a `Results`; `equals` on the main table does not compare it |
+
+## Log and watch a run
+
+Call `self.log(name, value)`, or `self.log({name: value, ...})`, in any bidder hook. The run saves it automatically.
+
+| Logged in | Saved in `log.logs[name][spec]` as | In `results.logs[name][spec]` as |
+|---|---|---|
+| `forward`, `update_batch`, `update` | (episodes, steps), one cell per auction | (seeds, episodes, steps) |
+| `on_episode_start`, `on_episode_end` | (episodes,) | (seeds, episodes) |
+
+Cells nobody logged are NaN. A child bidder's names carry its path, such as `"bidders.1.multiplier"`; pass `log_prefix=False` to keep the plain name. Outside a run, `self.log` does nothing. The built-in `PidPacing` and `UcbMultiplier` log their multiplier unless built with `log_state=False`.
+
+A `bl.Callback` watches a run as it goes, without changing it. `run` calls `on_run_start`, `on_episode_end` and `on_run_end`. `run_many` calls `on_seed_end` after each seed, in seed order. Callbacks always run in the main process, also with workers.
+
+```python
+class Shaded(bl.Bidder):
+    def __init__(self, factor=0.8):
+        self.factor = factor
+
+    def forward(self, value, observation):
+        self.log({"factor": self.factor, "value_seen": value})
+        return self.factor * value
+
+
+class Progress(bl.Callback):
+    def on_episode_end(self, episode, stats):
+        print(f"episode {episode}: paced spent {stats['paced'].spend:.2f}")
+
+    def on_seed_end(self, seed, results):
+        print(f"seed {seed} done")
+
+
+watched = bl.SimConfig(
+    bidders=[
+        bl.BidderSpec("paced", bl.PidPacing(), bl.Campaign(budget=10, value=5)),
+        bl.BidderSpec(
+            "shaded",
+            bl.Stack(Shaded(), bl.PidPacing(log_state=False)),
+            bl.Campaign(budget=10, value=5),
+        ),
+    ],
+    episodes=3,
+    steps=200,
+)
+log = bl.run(watched, callbacks=[Progress()])
+print(log.logs["multiplier"]["paced"].shape)  # (3, 200)
+print(log.logs["bidders.0.factor"]["shaded"][0, :3])  # [0.8 0.8 0.8]
+results = bl.run_many(watched, seeds=range(4), callbacks=[Progress()])
+print(results.logs["multiplier"]["paced"].shape)  # (4, 3, 200)
+```
 
 ## Parallel runs
 

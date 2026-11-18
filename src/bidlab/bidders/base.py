@@ -51,6 +51,9 @@ class Bidder(ABC):
     raises `ValueError`. Outside a run, `BidderSpec.build` binds the whole
     tree, and `bind` binds only this bidder.
 
+    Save any number with `log`, such as a learned multiplier. The run keeps
+    it in `RunLog.logs`, and `run_many` in `Results.logs`.
+
     Attributes
     ----------
     rng : numpy.random.Generator
