@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-from bidlab import rewards
+from bidlab import bidders, rewards
 from bidlab.auctions import FirstPrice
-from bidlab.bidders import PidGains, PidPacing, Truthful, UcbMultiplier
+from bidlab.bidders import PidPacing, Truthful, UcbMultiplier
 from bidlab.config import BidderSpec, SimConfig
 from bidlab.simulator import run
 from bidlab.types import Campaign
@@ -85,9 +85,9 @@ def test_pid_spends_evenly_alone():
 @pytest.mark.parametrize(
     ("build", "argument"),
     [
-        (lambda: PidGains(kp=-1), "kp"),
-        (lambda: PidGains(ki=-1), "ki"),
-        (lambda: PidGains(kd=-1), "kd"),
+        (lambda: PidPacing(kp=-1), "kp"),
+        (lambda: PidPacing(ki=-1), "ki"),
+        (lambda: PidPacing(kd=-1), "kd"),
         (lambda: PidPacing(initial_multiplier=0), "initial_multiplier"),
         (lambda: PidPacing(multiplier_range=(2, 1)), "multiplier_range"),
         (lambda: PidPacing(multiplier_range=(-1, 1)), "multiplier_range"),
@@ -100,3 +100,17 @@ def test_pid_spends_evenly_alone():
 def test_stage_arguments_validated(build, argument):
     with pytest.raises(ValueError, match=argument):
         build()
+
+
+def test_pid_gains_as_arguments():
+    pid = PidPacing(kp=30, ki=1, kd=0.5)
+    assert (pid.kp, pid.ki, pid.kd) == (30.0, 1.0, 0.5)
+    spec = BidderSpec("pid", pid, Campaign(budget=10.0, value=5.0))
+    log = run(SimConfig(bidders=[spec], episodes=1, steps=50))
+    assert log.bids.shape == (1, 50, 1)
+
+
+def test_pid_gains_removed():
+    assert not hasattr(bidders, "PidGains")
+    with pytest.raises(TypeError, match="gains"):
+        PidPacing(gains=None)  # pyright: ignore[reportCallIssue]  Reason: the test checks the removed argument fails at run time.

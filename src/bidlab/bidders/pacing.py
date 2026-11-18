@@ -1,50 +1,11 @@
 """Budget pacing bidders that steer spend toward a plan."""
 
-from dataclasses import dataclass
 from typing import override
 
 import numpy as np
 
 from bidlab.bidders.base import Bidder
 from bidlab.types import Campaign, Feedback, Observation
-
-
-@dataclass(frozen=True)
-class PidGains:
-    """The three gains of a PID loop.
-
-    Parameters
-    ----------
-    kp, ki, kd : float, optional
-        Proportional, integral and derivative gains. Must be >= 0.
-
-    Raises
-    ------
-    ValueError
-        If a gain is negative.
-
-    Examples
-    --------
-    >>> import bidlab as bl
-    >>> bl.PidPacing(gains=bl.bidders.PidGains(kp=30, ki=1)).gains.kd
-    0.0
-    """
-
-    kp: float = 20.0
-    ki: float = 2.0
-    kd: float = 0.0
-
-    def __post_init__(self) -> None:
-        for name in ("kp", "ki", "kd"):
-            gain = getattr(self, name)
-            if gain < 0:
-                raise ValueError(f"{name} must be >= 0, got {gain}")
-
-            object.__setattr__(self, name, float(gain))
-
-
-# PidGains is frozen, so one shared default is safe.
-DEFAULT_GAINS = PidGains()
 
 
 class PidPacing(Bidder):
@@ -60,8 +21,8 @@ class PidPacing(Bidder):
     ----------
     initial_multiplier : float, optional
         λ at the start of each episode. Must be > 0.
-    gains : PidGains, optional
-        The PID gains; kp 20, ki 2 and kd 0 by default.
+    kp, ki, kd : float, optional
+        Proportional, integral and derivative gains. Must be >= 0.
     multiplier_range : tuple[float, float], optional
         Lowest and highest λ, with 0 <= lowest <= highest.
 
@@ -88,13 +49,19 @@ class PidPacing(Bidder):
     def __init__(
         self,
         initial_multiplier: float = 1.0,
-        gains: PidGains = DEFAULT_GAINS,
+        kp: float = 20.0,
+        ki: float = 2.0,
+        kd: float = 0.0,
         multiplier_range: tuple[float, float] = (0.0, 10.0),
     ):
         if initial_multiplier <= 0:
             raise ValueError(
                 f"initial_multiplier must be > 0, got {initial_multiplier}"
             )
+
+        for name, gain in (("kp", kp), ("ki", ki), ("kd", kd)):
+            if gain < 0:
+                raise ValueError(f"{name} must be >= 0, got {gain}")
 
         lowest, highest = multiplier_range
         if not 0 <= lowest <= highest:
@@ -103,7 +70,9 @@ class PidPacing(Bidder):
             )
 
         self.initial_multiplier = initial_multiplier
-        self.gains = gains
+        self.kp = float(kp)
+        self.ki = float(ki)
+        self.kd = float(kd)
         self.multiplier_range = multiplier_range
 
     @override
@@ -131,8 +100,7 @@ class PidPacing(Bidder):
         self.integral += (error - self.integral) / self.updates
         derivative = error - self.previous_error
         self.previous_error = error
-        gains = self.gains
-        control = gains.kp * error + gains.ki * self.integral + gains.kd * derivative
+        control = self.kp * error + self.ki * self.integral + self.kd * derivative
         lowest, highest = self.multiplier_range
         self.multiplier = float(
             np.clip(self.initial_multiplier * np.exp(control), lowest, highest)

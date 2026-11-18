@@ -154,7 +154,7 @@ print(
 | Class | Family | Behavior | Arguments |
 |---|---|---|---|
 | `Truthful` | `bl.bidders.baselines` | Outputs `multiplier` × value | `multiplier` (1.0) |
-| `PidPacing` | `bl.bidders.pacing` | A PID loop moves a multiplier so spend tracks the budget evenly over the horizon | `initial_multiplier` (1.0), `gains` (`bl.bidders.PidGains(kp=20, ki=2, kd=0)`), `multiplier_range` ((0, 10)) |
+| `PidPacing` | `bl.bidders.pacing` | A PID loop moves a multiplier so spend tracks the budget evenly over the horizon | `initial_multiplier` (1.0), `kp` (20), `ki` (2), `kd` (0), `multiplier_range` ((0, 10)) |
 | `UcbMultiplier` | `bl.bidders.bandits` | UCB1 over a grid of multipliers; one arm per episode | `min_multiplier` (0.2), `max_multiplier` (2.0), `multiplier_step` (0.2), `exploration` (1.0) |
 
 ## Rewards
