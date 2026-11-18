@@ -1,6 +1,7 @@
 """The core loop: `run` simulates every auction and records a `RunLog`."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 
 import numpy as np
 import numpy.typing as npt
@@ -8,7 +9,9 @@ from scipy.special import expit, logit
 
 from bidlab.auctions import NO_WINNER
 from bidlab.bidders import Bidder
+from bidlab.bidders.base import attach_logger
 from bidlab.config import BidderSpec, SimConfig
+from bidlab.logs import LogBook, Logs
 from bidlab.markets import MarketDraw
 from bidlab.rewards import EpisodeReward, StepReward
 from bidlab.types import SECONDS_PER_HOUR, Campaign, EpisodeStats, Feedback, Observation
@@ -41,6 +44,10 @@ class RunLog:
         Each bidder's episode reward; NaN when the spec sets none.
     segment : numpy.ndarray
         Index into ``config.market.segment_names`` per step.
+    logs : Mapping[str, Mapping[str, numpy.ndarray]]
+        Values bidders saved with `Bidder.log`: stored name, then spec name,
+        to an (episodes, steps) array, or (episodes,) for values logged in an
+        episode hook. NaN where nothing was logged.
 
     Examples
     --------
@@ -63,6 +70,7 @@ class RunLog:
     rewards: npt.NDArray[np.float64]
     episode_rewards: npt.NDArray[np.float64]
     segment: npt.NDArray[np.int64]
+    logs: Logs = field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True)
@@ -142,6 +150,7 @@ class _Simulation:
         self.tie_rng = np.random.default_rng(tie_seed)
         self.conversion_rng = np.random.default_rng(conversion_seed)
         self.estimate_seeds: list[np.random.SeedSequence] = []
+        self.book = LogBook(config.episodes, config.steps)
         self.participants = [
             self._participant(spec, seed)
             for spec, seed in zip(config.bidders, bidder_seeds, strict=True)
@@ -177,10 +186,13 @@ class _Simulation:
             start_hour=self.config.start_hour,
         )
         bidder = spec.build(np.random.default_rng(seed))
+        nodes = tuple(bidder.named_bidders())
+        for path, node in nodes:
+            attach_logger(node, self.book.logger(spec.name, path))
         return _Participant(
             name=spec.name,
             bidder=bidder,
-            nodes=tuple(node for _, node in bidder.named_bidders()),
+            nodes=tuple(node for _, node in nodes),
             campaign=campaign,
             step_reward=spec.reward,
             episode_reward=spec.episode_reward,
@@ -190,6 +202,8 @@ class _Simulation:
     def run_all(self) -> None:
         for episode in range(self.config.episodes):
             self._run_episode(episode)
+        self.book.close()
+        self.log = replace(self.log, logs=self.book.result())
         # Callers must not change the log, or later metrics silently disagree.
 
         for array in (
@@ -206,6 +220,7 @@ class _Simulation:
 
     def _run_episode(self, episode: int) -> None:
         budget_left = np.array([p.campaign.budget for p in self.participants])
+        self.book.at_episode(episode)
         for participant in self.participants:
             for node in participant.nodes:
                 node.on_episode_start(participant.campaign)
@@ -220,6 +235,7 @@ class _Simulation:
         self, episode: int, step: int, budget_left: npt.NDArray[np.float64]
     ) -> None:
         draw = self._next_draw(episode, step)
+        self.book.at_step(episode, step)
         probabilities = draw.probabilities
         values = self.weights * probabilities
         observed = self._observed_values(values, probabilities)
@@ -320,6 +336,7 @@ class _Simulation:
         return draw
 
     def _end_episode(self, episode: int) -> None:
+        self.book.at_episode(episode)
         winner = self.log.winner[episode]
         for i, participant in enumerate(self.participants):
             won = winner == i
