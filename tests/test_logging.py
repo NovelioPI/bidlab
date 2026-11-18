@@ -8,6 +8,8 @@ import pytest
 from bidlab.auctions import FirstPrice
 from bidlab.bidders import Bidder, PidPacing, Stack, Truthful, UcbMultiplier
 from bidlab.config import BidderSpec, SimConfig
+from bidlab.results import Results
+from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import Campaign, EpisodeStats, Feedback, Observation
 
@@ -335,3 +337,68 @@ def test_logging_leaves_run_unchanged():
     on, off = (run(config(*specs(state), episodes=4)) for state in (True, False))
     for name in ("bids", "price", "winner", "rewards"):
         np.testing.assert_array_equal(getattr(on, name), getattr(off, name))
+
+
+class Sometimes(Bidder):
+    """Logs only in runs whose first draw from its stream is below one half."""
+
+    @override
+    def on_episode_start(self, campaign: Campaign) -> None:
+        self.logging = self.rng.random() < 0.5
+
+    @override
+    def forward(self, value: float, observation: Observation) -> float:
+        if self.logging:
+            self.log("x", observation.value)
+        return value
+
+
+def per_auction() -> BidderSpec:
+    return BidderSpec("a", Logs("forward", lambda b, a: b.log("lam", a * 2)), CAMPAIGN)
+
+
+def test_run_many_stacks_seeds():
+    results = run_many(config(per_auction(), episodes=2), seeds=range(3))
+    stacked = results.logs["lam"]["a"]
+    assert stacked.shape == (3, 2, 50)
+    for seed in range(3):
+        single = run(config(per_auction(), episodes=2, seed=seed))
+        np.testing.assert_array_equal(stacked[seed], single.logs["lam"]["a"])
+
+
+def test_run_many_episode_values():
+    spec = BidderSpec("ucb", UcbMultiplier(), CAMPAIGN)
+    results = run_many(config(spec, episodes=4), seeds=range(3))
+    assert results.logs["multiplier"]["ucb"].shape == (3, 4)
+
+
+def test_run_many_missing_seed_nan():
+    spec = BidderSpec("s", Sometimes(), CAMPAIGN)
+    stacked = run_many(config(spec, episodes=1), seeds=range(8)).logs["x"]["s"]
+    logged = ["x" in run(config(spec, episodes=1, seed=seed)).logs for seed in range(8)]
+    assert any(logged) and not all(logged)
+    for seed, did_log in enumerate(logged):
+        assert np.isnan(stacked[seed]).all() != did_log
+
+
+def test_run_many_workers_logs_equal():
+    pid = BidderSpec("pid", PidPacing(), Campaign(3.0, 5.0))
+    serial = run_many(config(pid, per_auction()), seeds=range(3))
+    parallel = run_many(config(pid, per_auction()), seeds=range(3), workers=2)
+    assert parallel.equals(serial)
+    assert set(parallel.logs) == {"multiplier", "lam"}
+    for name in parallel.logs:
+        for spec in parallel.logs[name]:
+            np.testing.assert_array_equal(
+                parallel.logs[name][spec], serial.logs[name][spec]
+            )
+
+
+def test_equals_compares_logs():
+    results = run_many(config(per_auction()), seeds=range(2))
+    changed = {"lam": {"a": results.logs["lam"]["a"] + 1.0}}
+    other = Results(columns=results.columns, rows=results.rows, logs=changed)
+    same = Results(columns=results.columns, rows=results.rows, logs=results.logs)
+    assert same.equals(results)
+    assert not other.equals(results)
+    assert not Results(columns=results.columns, rows=results.rows).equals(results)

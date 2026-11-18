@@ -2,7 +2,7 @@
 
 import csv
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import numpy.typing as npt
 from scipy import stats
+
+from bidlab.logs import Logs
 
 if TYPE_CHECKING:
     import pandas
@@ -37,6 +39,10 @@ class Results:
         Read-only rows, ordered by seed, then bidder.
     segments : Results or None
         One row per seed, bidder and market segment; None inside that table.
+    logs : Mapping[str, Mapping[str, numpy.ndarray]]
+        Values bidders saved with `Bidder.log`, as in `RunLog.logs` with a
+        leading seeds axis, in row order. NaN for a seed that never logged
+        the name. Read-only.
 
     Examples
     --------
@@ -56,17 +62,28 @@ class Results:
     columns: tuple[str, ...]
     rows: tuple[ResultRow, ...]
     segments: "Results | None" = None
+    logs: Logs = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:
         read_only = tuple(MappingProxyType(dict(row)) for row in self.rows)
         object.__setattr__(self, "rows", read_only)
+        for arrays in self.logs.values():
+            for array in arrays.values():
+                array.flags.writeable = False
+        logs = {
+            name: MappingProxyType(dict(arrays)) for name, arrays in self.logs.items()
+        }
+        object.__setattr__(self, "logs", MappingProxyType(logs))
 
     def __len__(self) -> int:
         return len(self.rows)
 
     def equals(self, other: "Results") -> bool:
-        """Exact equality of this table's columns and rows; NaN equals NaN."""
+        """Exact equality of this table's columns, rows and logs; NaN equals NaN."""
         if self.columns != other.columns or len(self.rows) != len(other.rows):
+            return False
+
+        if not _same_logs(self.logs, other.logs):
             return False
 
         return all(
@@ -143,6 +160,20 @@ def _mean_and_interval(values: npt.NDArray[np.float64]) -> str:
     standard_error = values.std(ddof=1) / np.sqrt(values.size)
     quantile = stats.t.ppf((1 + CONFIDENCE) / 2, values.size - 1)
     return f"{mean:.3f} ± {quantile * standard_error:.3f}"
+
+
+def _same_logs(mine: Logs, theirs: Logs) -> bool:
+    if mine.keys() != theirs.keys():
+        return False
+
+    return all(
+        mine[name].keys() == theirs[name].keys()
+        and all(
+            np.array_equal(mine[name][spec], theirs[name][spec], equal_nan=True)
+            for spec in mine[name]
+        )
+        for name in mine
+    )
 
 
 def _same_value(mine: str | float, theirs: str | float) -> bool:
