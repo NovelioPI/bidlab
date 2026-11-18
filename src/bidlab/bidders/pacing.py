@@ -25,6 +25,8 @@ class PidPacing(Bidder):
         Proportional, integral and derivative gains. Must be >= 0.
     multiplier_range : tuple[float, float], optional
         Lowest and highest λ, with 0 <= lowest <= highest.
+    log_state : bool, optional
+        Log λ as ``"multiplier"`` at every auction, the value the bid used.
 
     Raises
     ------
@@ -53,6 +55,7 @@ class PidPacing(Bidder):
         ki: float = 2.0,
         kd: float = 0.0,
         multiplier_range: tuple[float, float] = (0.0, 10.0),
+        log_state: bool = True,
     ):
         if initial_multiplier <= 0:
             raise ValueError(
@@ -74,6 +77,7 @@ class PidPacing(Bidder):
         self.ki = float(ki)
         self.kd = float(kd)
         self.multiplier_range = multiplier_range
+        self.log_state = log_state
 
     @override
     def on_episode_start(self, campaign: Campaign) -> None:
@@ -87,6 +91,9 @@ class PidPacing(Bidder):
 
     @override
     def forward(self, value: float, observation: Observation) -> float:
+        if self.log_state:
+            self.log("multiplier", self.multiplier)
+
         return self.multiplier * value
 
     @override

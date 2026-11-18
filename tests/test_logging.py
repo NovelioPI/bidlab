@@ -5,7 +5,8 @@ from typing import Any, override
 import numpy as np
 import pytest
 
-from bidlab.bidders import Bidder, Stack, Truthful
+from bidlab.auctions import FirstPrice
+from bidlab.bidders import Bidder, PidPacing, Stack, Truthful, UcbMultiplier
 from bidlab.config import BidderSpec, SimConfig
 from bidlab.simulator import RunLog, run
 from bidlab.types import Campaign, EpisodeStats, Feedback, Observation
@@ -283,3 +284,54 @@ class TopLogs(Holder):
 def test_name_clash_raises():
     with pytest.raises(ValueError, match=r"'clash'.*'lam'.*'' and 'child'"):
         run(config(BidderSpec("clash", TopLogs(), CAMPAIGN)))
+
+
+def test_pid_logs_bid_multiplier():
+    spec = BidderSpec("pid", PidPacing(), Campaign(budget=3.0, value=5.0))
+    log = run(config(spec, auction=FirstPrice()))
+    multiplier = log.logs["multiplier"]["pid"]
+    assert multiplier.shape == (2, 50)
+    assert len(np.unique(multiplier)) > 1
+    budget_left = 3.0 - np.cumsum(np.where(log.winner == 0, log.price, 0.0), axis=1)
+    before = np.concatenate([np.full((2, 1), 3.0), budget_left[:, :-1]], axis=1)
+    # cumsum rounds differently from the simulator's running subtraction.
+    uncapped = log.bids[:, :, 0] < before - 1e-9
+    assert uncapped.sum() > 50
+    np.testing.assert_allclose(
+        log.bids[:, :, 0][uncapped], (multiplier * log.values[:, :, 0])[uncapped]
+    )
+
+
+def test_ucb_logs_arm():
+    bandit = UcbMultiplier()
+    log = run(config(BidderSpec("ucb", bandit, CAMPAIGN), episodes=4))
+    arms = log.logs["multiplier"]["ucb"]
+    assert arms.shape == (4,)
+    assert all(np.isclose(bandit.arms, arm).any() for arm in arms)
+    np.testing.assert_allclose(log.bids[:, :, 0], arms[:, None] * log.values[:, :, 0])
+
+
+def test_log_state_off():
+    specs = (
+        BidderSpec("pid", PidPacing(log_state=False), CAMPAIGN),
+        BidderSpec("ucb", UcbMultiplier(log_state=False), CAMPAIGN),
+    )
+    assert dict(run(config(*specs)).logs) == {}
+
+
+def test_stacked_pid_prefixed():
+    log = run(config(BidderSpec("s", Stack(Truthful(), PidPacing()), CAMPAIGN)))
+    assert set(log.logs) == {"bidders.1.multiplier"}
+
+
+def test_logging_leaves_run_unchanged():
+    def specs(log_state: bool) -> tuple[BidderSpec, ...]:
+        return (
+            BidderSpec("pid", PidPacing(log_state=log_state), Campaign(3.0, 5.0)),
+            BidderSpec("ucb", UcbMultiplier(log_state=log_state), Campaign(5.0, 4.0)),
+            BidderSpec("logs", Logs("forward", lambda b, a: b.log("a", a)), CAMPAIGN),
+        )
+
+    on, off = (run(config(*specs(state), episodes=4)) for state in (True, False))
+    for name in ("bids", "price", "winner", "rewards"):
+        np.testing.assert_array_equal(getattr(on, name), getattr(off, name))
