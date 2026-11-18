@@ -114,6 +114,7 @@ def test_run_log_without_pid_matches_main(kind):
 
 
 PUBLIC_NAMES = {
+    "Callback",
     "SimConfig",
     "Stack",
     "BidderSpec",

@@ -1,7 +1,7 @@
 """Run one simulation per seed and collect the metrics in a table."""
 
 import dataclasses
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from itertools import repeat
 from multiprocessing import get_context
@@ -10,6 +10,7 @@ import cloudpickle
 import numpy as np
 import numpy.typing as npt
 
+from bidlab.callbacks import Callback, checked_callbacks
 from bidlab.config import SimConfig
 from bidlab.logs import Logs
 from bidlab.metrics import (
@@ -41,7 +42,12 @@ class _SeedRows:
     logs: dict[str, dict[str, npt.NDArray[np.float64]]]
 
 
-def run_many(config: SimConfig, seeds: Iterable[int], workers: int = 1) -> Results:
+def run_many(
+    config: SimConfig,
+    seeds: Iterable[int],
+    workers: int = 1,
+    callbacks: Sequence[Callback] = (),
+) -> Results:
     """Run each seed; rows are ordered by seed, then bidder.
 
     Each row holds one bidder's metrics for one seed, averaged over the
@@ -56,6 +62,9 @@ def run_many(config: SimConfig, seeds: Iterable[int], workers: int = 1) -> Resul
         One run per seed.
     workers : int, optional
         Number of processes.
+    callbacks : Sequence[Callback], optional
+        Read-only hooks; each gets `Callback.on_seed_end` in the main process
+        after each seed, in seed order.
 
     Returns
     -------
@@ -67,7 +76,8 @@ def run_many(config: SimConfig, seeds: Iterable[int], workers: int = 1) -> Resul
     ValueError
         If ``workers`` is below 1.
     TypeError
-        If ``workers > 1`` and a bidder cannot be pickled with cloudpickle.
+        If ``workers > 1`` and a bidder cannot be pickled with cloudpickle, or
+        a callback is not a `Callback` instance.
 
     Examples
     --------
@@ -87,17 +97,31 @@ def run_many(config: SimConfig, seeds: Iterable[int], workers: int = 1) -> Resul
     if workers < 1:
         raise ValueError(f"workers must be >= 1, got {workers}")
 
+    checked = checked_callbacks(callbacks)
     seed_list = list(seeds)
     if workers == 1:
-        per_seed = [_seed_rows(config, seed) for seed in seed_list]
+        computed = (_seed_rows(config, seed) for seed in seed_list)
+        per_seed = _collect(seed_list, computed, checked)
     else:
         payload = _pickle_config(config)
         # spawn behaves the same on every OS and avoids forking PyTorch threads.
         context = get_context("spawn")
         with ProcessPoolExecutor(max_workers=workers, mp_context=context) as pool:
-            per_seed = list(pool.map(_run_seed, repeat(payload), seed_list))
+            computed = pool.map(_run_seed, repeat(payload), seed_list)
+            per_seed = _collect(seed_list, computed, checked)
 
     return _results(per_seed)
+
+
+def _collect(
+    seeds: list[int], computed: Iterator[_SeedRows], callbacks: tuple[Callback, ...]
+) -> list[_SeedRows]:
+    per_seed: list[_SeedRows] = []
+    for seed, seed_rows in zip(seeds, computed, strict=True):
+        per_seed.append(seed_rows)
+        for callback in callbacks:
+            callback.on_seed_end(seed, _results([seed_rows]))
+    return per_seed
 
 
 def _results(per_seed: list[_SeedRows]) -> Results:
