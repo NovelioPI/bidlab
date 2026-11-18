@@ -1,14 +1,28 @@
 """The `Bidder` base class that every bidding method builds on."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from numbers import Real
+from typing import Any, Protocol, overload
 
 import numpy as np
 
 from bidlab.types import Campaign, EpisodeStats, Feedback, Observation
 
+_LOGGER = "_bidlab_logger"
+
+LogValue = float | np.floating[Any] | np.integer[Any]
+"""A number `Bidder.log` accepts: a Python number or a numpy scalar."""
 _SEQUENCES = (list, tuple)
 _HIDDEN = (list, tuple, dict, set, frozenset)
+
+
+class Logger(Protocol):
+    """Where a bidder's logged values go during a run; the simulator makes one."""
+
+    def write(self, name: str, value: float, log_prefix: bool) -> None:
+        """Store one value."""
+        ...
 
 
 class Bidder(ABC):
@@ -36,6 +50,9 @@ class Bidder(ABC):
     runs twice. Create children in ``__init__``: a child added during a run
     raises `ValueError`. Outside a run, `BidderSpec.build` binds the whole
     tree, and `bind` binds only this bidder.
+
+    Save any number with `log`, such as a learned multiplier. The run keeps
+    it in `RunLog.logs`, and `run_many` in `Results.logs`.
 
     Attributes
     ----------
@@ -141,6 +158,67 @@ class Bidder(ABC):
             spec sets none.
         """
 
+    @overload
+    def log(
+        self, name: str, value: LogValue, /, *, log_prefix: bool = True
+    ) -> None: ...
+
+    @overload
+    def log(
+        self, values: Mapping[str, LogValue], /, *, log_prefix: bool = True
+    ) -> None: ...
+
+    def log(
+        self,
+        name_or_values: str | Mapping[str, LogValue],
+        value: LogValue | None = None,
+        /,
+        *,
+        log_prefix: bool = True,
+    ) -> None:
+        """Save a number, or a dict of numbers, in the run's `RunLog.logs`.
+
+        A value logged in `forward`, `update_batch` or `update` is saved at
+        the current auction step; one logged in `on_episode_start` or
+        `on_episode_end` is saved per episode. Logging one name twice in one
+        step keeps the last value. Outside a run, such as in a unit test or in
+        `bind`, nothing is saved.
+
+        Parameters
+        ----------
+        name_or_values : str or Mapping[str, LogValue]
+            A name, or a dict of names to values.
+        value : LogValue, optional
+            The value, when ``name_or_values`` is a name.
+        log_prefix : bool, optional
+            Save a child bidder's names under its path, such as
+            ``"bidders.1.lam"``. False saves the plain name.
+
+        Raises
+        ------
+        TypeError
+            If a name is not a non-empty str, or a value is not a real number.
+
+        Examples
+        --------
+        >>> import bidlab as bl
+        >>> class Half(bl.Bidder):
+        ...     def forward(self, value, observation):
+        ...         self.log("factor", 0.5)
+        ...         return value / 2
+        >>> spec = bl.BidderSpec("half", Half(), bl.Campaign(budget=10, value=5))
+        >>> log = bl.run(bl.SimConfig(bidders=[spec], episodes=2, steps=50))
+        >>> log.logs["factor"]["half"].shape, float(log.logs["factor"]["half"][1, 49])
+        ((2, 50), 0.5)
+        """
+        values = _checked_values(name_or_values, value)
+        logger: Logger | None = vars(self).get(_LOGGER)
+        if logger is None:
+            return
+
+        for name, number in values.items():
+            logger.write(name, number, log_prefix)
+
     def named_bidders(self) -> Iterator[tuple[str, "Bidder"]]:
         """Yield every bidder in this bidder's tree, with its path.
 
@@ -197,6 +275,44 @@ def bind_tree(bidder: Bidder, rng: np.random.Generator) -> None:
             streams[id(child)] = child_stream
 
         node.bind(stream)
+
+
+def attach_logger(bidder: Bidder, logger: Logger) -> None:
+    """Send ``bidder``'s logged values to ``logger``; the simulator calls this.
+
+    Parameters
+    ----------
+    bidder : Bidder
+        One bidder of a tree built for a run.
+    logger : Logger
+        Where its values go.
+    """
+    vars(bidder)[_LOGGER] = logger
+
+
+def _checked_values(
+    name_or_values: str | Mapping[str, LogValue], value: LogValue | None
+) -> dict[str, float]:
+    if isinstance(name_or_values, Mapping):
+        if value is not None:
+            raise TypeError("pass a dict alone, or a name and a value")
+        pairs = list(name_or_values.items())
+    else:
+        pairs = [(name_or_values, value)]
+
+    checked: dict[str, float] = {}
+    for name, number in pairs:
+        if not isinstance(name, str) or not name:
+            raise TypeError(f"a logged name must be a non-empty str, got {name!r}")
+        # Real covers bool, int, float and numpy numbers, and rejects arrays.
+        if not isinstance(number, Real):
+            raise TypeError(
+                f"logged value {name!r} must be a real number, "
+                f"got {type(number).__name__}"
+            )
+        checked[name] = float(number)
+
+    return checked
 
 
 def _walk(

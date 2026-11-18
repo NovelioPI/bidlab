@@ -1,6 +1,8 @@
 """The core loop: `run` simulates every auction and records a `RunLog`."""
 
-from dataclasses import dataclass, replace
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
+from types import MappingProxyType
 
 import numpy as np
 import numpy.typing as npt
@@ -8,7 +10,10 @@ from scipy.special import expit, logit
 
 from bidlab.auctions import NO_WINNER
 from bidlab.bidders import Bidder
+from bidlab.bidders.base import attach_logger
+from bidlab.callbacks import Callback, checked_callbacks
 from bidlab.config import BidderSpec, SimConfig
+from bidlab.logs import LogBook, Logs
 from bidlab.markets import MarketDraw
 from bidlab.rewards import EpisodeReward, StepReward
 from bidlab.types import SECONDS_PER_HOUR, Campaign, EpisodeStats, Feedback, Observation
@@ -41,6 +46,10 @@ class RunLog:
         Each bidder's episode reward; NaN when the spec sets none.
     segment : numpy.ndarray
         Index into ``config.market.segment_names`` per step.
+    logs : Mapping[str, Mapping[str, numpy.ndarray]]
+        Values bidders saved with `Bidder.log`: stored name, then spec name,
+        to an (episodes, steps) array, or (episodes,) for values logged in an
+        episode hook. NaN where nothing was logged.
 
     Examples
     --------
@@ -63,6 +72,7 @@ class RunLog:
     rewards: npt.NDArray[np.float64]
     episode_rewards: npt.NDArray[np.float64]
     segment: npt.NDArray[np.int64]
+    logs: Logs = field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True)
@@ -91,16 +101,25 @@ class _Participant:
                 )
 
 
-def run(config: SimConfig) -> RunLog:
+def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
     """Simulate every episode of ``config`` and return the full log.
 
     On one OS and CPU type, the same config and seed give a bit-identical
     log. Each bidder sees only its own observation and feedback.
 
+    Parameters
+    ----------
+    config : SimConfig
+        The simulation.
+    callbacks : Sequence[Callback], optional
+        Read-only hooks called at run start, at each episode end and at run
+        end, in this order.
+
     Raises
     ------
     TypeError
-        If a bidder cannot be copied for a fresh run.
+        If a bidder cannot be copied for a fresh run, or a callback is not a
+        `Callback` instance.
     ValueError
         If the market yields a draw with the wrong shape, a probability
         outside [0, 1], or an unknown segment.
@@ -121,19 +140,25 @@ def run(config: SimConfig) -> RunLog:
     >>> bool((bl.run(config).bids == log.bids).all())
     True
     """
-    simulation = _Simulation(config)
+    checked = checked_callbacks(callbacks)
+    simulation = _Simulation(config, checked)
+    for callback in checked:
+        callback.on_run_start(config)
     simulation.run_all()
+    for callback in checked:
+        callback.on_run_end(simulation.log)
     return simulation.log
 
 
 class _Simulation:
-    def __init__(self, config: SimConfig):
+    def __init__(self, config: SimConfig, callbacks: tuple[Callback, ...]):
         count = len(config.bidders)
         # One stream per role, so adding a bidder keeps the market's draws equal.
         market_seed, tie_seed, conversion_seed, *bidder_seeds = np.random.SeedSequence(
             config.seed
         ).spawn(3 + count)
         self.config = config
+        self.callbacks = callbacks
         self.weights = np.array([spec.campaign.value for spec in config.bidders])
         self.seconds_per_step = config.horizon_hours * SECONDS_PER_HOUR / config.steps
         self.market_draws = config.market.draws(
@@ -142,6 +167,7 @@ class _Simulation:
         self.tie_rng = np.random.default_rng(tie_seed)
         self.conversion_rng = np.random.default_rng(conversion_seed)
         self.estimate_seeds: list[np.random.SeedSequence] = []
+        self.book = LogBook(config.episodes, config.steps)
         self.participants = [
             self._participant(spec, seed)
             for spec, seed in zip(config.bidders, bidder_seeds, strict=True)
@@ -177,10 +203,13 @@ class _Simulation:
             start_hour=self.config.start_hour,
         )
         bidder = spec.build(np.random.default_rng(seed))
+        nodes = tuple(bidder.named_bidders())
+        for path, node in nodes:
+            attach_logger(node, self.book.logger(spec.name, path))
         return _Participant(
             name=spec.name,
             bidder=bidder,
-            nodes=tuple(node for _, node in bidder.named_bidders()),
+            nodes=tuple(node for _, node in nodes),
             campaign=campaign,
             step_reward=spec.reward,
             episode_reward=spec.episode_reward,
@@ -190,6 +219,8 @@ class _Simulation:
     def run_all(self) -> None:
         for episode in range(self.config.episodes):
             self._run_episode(episode)
+        self.book.close()
+        self.log = replace(self.log, logs=self.book.result())
         # Callers must not change the log, or later metrics silently disagree.
 
         for array in (
@@ -206,6 +237,7 @@ class _Simulation:
 
     def _run_episode(self, episode: int) -> None:
         budget_left = np.array([p.campaign.budget for p in self.participants])
+        self.book.at_episode(episode)
         for participant in self.participants:
             for node in participant.nodes:
                 node.on_episode_start(participant.campaign)
@@ -220,6 +252,7 @@ class _Simulation:
         self, episode: int, step: int, budget_left: npt.NDArray[np.float64]
     ) -> None:
         draw = self._next_draw(episode, step)
+        self.book.at_step(episode, step)
         probabilities = draw.probabilities
         values = self.weights * probabilities
         observed = self._observed_values(values, probabilities)
@@ -320,7 +353,9 @@ class _Simulation:
         return draw
 
     def _end_episode(self, episode: int) -> None:
+        self.book.at_episode(episode)
         winner = self.log.winner[episode]
+        stats_by_bidder: dict[str, EpisodeStats] = {}
         for i, participant in enumerate(self.participants):
             won = winner == i
             conversions = int(np.sum(self.log.converted[episode] & won))
@@ -341,3 +376,8 @@ class _Simulation:
             for node in participant.nodes:
                 node.on_episode_end(stats, episode_reward)
             participant.check_tree()
+            stats_by_bidder[participant.name] = stats
+
+        read_only = MappingProxyType(stats_by_bidder)
+        for callback in self.callbacks:
+            callback.on_episode_end(episode, read_only)

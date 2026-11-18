@@ -80,6 +80,28 @@ def test_readme_shows_value_stage_before_pacing():
     assert "bl.Stack(SegmentRate(), bl.PidPacing())" in blocks
 
 
+def test_readme_shows_logging():
+    readme = (ROOT / "README.md").read_text()
+    blocks = "\n".join(re.findall(r"```python\n(.*?)```", readme, flags=re.DOTALL))
+    assert 'self.log({"factor": self.factor' in blocks
+    assert "class Progress(bl.Callback):" in blocks
+    assert 'log.logs["multiplier"]["paced"]' in blocks
+    assert 'results.logs["multiplier"]["paced"]' in blocks
+    assert "callbacks=[Progress()]" in blocks
+
+
+def test_readme_bidder_table_arguments():
+    readme = (ROOT / "README.md").read_text()
+    rows = {
+        line.split("|")[1].strip(): line
+        for line in readme.splitlines()
+        if line.startswith("| `")
+    }
+    for gain in ("`kp` (20)", "`ki` (2)", "`kd` (0)", "`log_state` (True)"):
+        assert gain in rows["`PidPacing`"]
+    assert "`log_state` (True)" in rows["`UcbMultiplier`"]
+
+
 def test_readme_shows_composite_bidder():
     readme = (ROOT / "README.md").read_text()
     blocks = "\n".join(re.findall(r"```python\n(.*?)```", readme, flags=re.DOTALL))

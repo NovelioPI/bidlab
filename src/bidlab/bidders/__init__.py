@@ -11,12 +11,11 @@ from bidlab.bidders import bandits, baselines, pacing
 from bidlab.bidders.bandits import UcbMultiplier
 from bidlab.bidders.base import Bidder
 from bidlab.bidders.baselines import Truthful
-from bidlab.bidders.pacing import PidGains, PidPacing
+from bidlab.bidders.pacing import PidPacing
 from bidlab.bidders.stack import Stack
 
 __all__ = [
     "Bidder",
-    "PidGains",
     "PidPacing",
     "Stack",
     "Truthful",
