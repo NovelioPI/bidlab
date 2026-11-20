@@ -27,6 +27,7 @@ class EvenSpend(bl.Bidder):
         return value if self.spent <= elapsed * self.campaign.budget else 0.0
 
     def update(self, feedback):
+        self.log({"bid": feedback.bid, "reward": feedback.reward})
         if feedback.won:
             self.spent += feedback.price
 
@@ -58,6 +59,11 @@ if __name__ == "__main__":
     for seed in range(5):
         log = bl.run(dataclasses.replace(config, seed=seed))
         hours = log.logs["hour"]["even"]
+        paused = (log.logs["bid"]["even"] == 0).mean()
+        reward = log.logs["reward"]["even"].sum(axis=1).mean()
+        print(
+            f"seed {seed}: even paused in {paused:.0%} of auctions, reward {reward:.1f} per day"
+        )
         even = hour_out_of_budget(log, 0, hours)
         truthful = hour_out_of_budget(log, 1, hours)
         print(

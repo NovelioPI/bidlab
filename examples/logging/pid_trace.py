@@ -18,7 +18,8 @@ class SpendShare(bl.Callback):
         self.shares = []
 
     def on_run_start(self, config):
-        print(f"run: {config.episodes} episodes of {config.steps} auctions")
+        names = [spec.name for spec in config.bidders]
+        print(f"run: {names}, {config.episodes} episodes of {config.steps} auctions")
 
     def on_episode_end(self, episode, stats):
         pid = stats["pid"]
@@ -28,10 +29,10 @@ class SpendShare(bl.Callback):
             f" {pid.wins} wins, {pid.conversions} conversions worth {pid.value:.1f}"
         )
 
-    def on_run_end(self, log):
+    def on_run_end(self, log: bl.RunLog):
         print(f"stored names: {sorted(log.logs)}")
 
-    def on_seed_end(self, seed, results):
+    def on_seed_end(self, seed: int, results: bl.Results):
         print(f"seed {seed} done")
 
 

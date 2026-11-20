@@ -13,7 +13,7 @@ VALUE = 5
 SAFETY = 0.8
 
 
-def strict_cpa_score(stats, params):
+def strict_cpa_score(stats: bl.EpisodeStats, params: dict[str, float]) -> float:
     """`cpa_score` against a target lowered by the spec's safety factor."""
     target = params["cpa_target"] * params["safety"]
     return bl.rewards.cpa_score_of(stats.value, stats.spend, stats.conversions, target)
