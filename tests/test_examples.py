@@ -1,3 +1,4 @@
+import ast
 import re
 import subprocess
 import sys
@@ -8,30 +9,31 @@ import pytest
 ROOT = Path(__file__).parent.parent
 
 
-EXAMPLE_LABELS = {
-    "getting_started/basic.py": [("truthful",), ("shaded",), ("pid",), ("bandit",)],
-    "markets/segments.py": [
-        (bidder, segment)
-        for bidder in ("everywhere", "sports_only", "pid")
-        for segment in ("news", "sports", "games")
-    ],
-    "markets/custom_market.py": [
-        (bidder, segment)
-        for bidder in ("truthful", "night_only", "bandit")
-        for segment in ("day", "night")
-    ],
-    "markets/independent_values.py": [("truthful",), ("equilibrium",), ("low",)],
+# Script: (expected answer, guides that must link it).
+EXAMPLES = {
+    "getting_started/basic.py": ("yes", ("results.md", "simulation.md")),
+    "markets/segments.py": ("no", ("markets.md",)),
+    "markets/custom_market.py": ("yes", ("markets.md",)),
+    "markets/independent_values.py": ("yes", ("markets.md",)),
 }
 
 
 def test_every_example_is_listed():
     examples = ROOT / "examples"
     scripts = {path.relative_to(examples).as_posix() for path in examples.rglob("*.py")}
-    assert scripts == set(EXAMPLE_LABELS)
+    assert scripts == set(EXAMPLES)
 
 
-@pytest.mark.parametrize("name", sorted(EXAMPLE_LABELS))
-def test_example_runs(name):
+@pytest.mark.parametrize("name", sorted(EXAMPLES))
+def test_example_states_question(name):
+    tree = ast.parse((ROOT / "examples" / name).read_text())
+    docstring = ast.get_docstring(tree)
+    assert docstring is not None
+    assert docstring.splitlines()[0].endswith("?")
+
+
+@pytest.mark.parametrize("name", sorted(EXAMPLES))
+def test_example_answers(name):
     result = subprocess.run(
         [sys.executable, str(ROOT / "examples" / name)],
         check=False,
@@ -40,10 +42,9 @@ def test_example_runs(name):
         timeout=300,
     )
     assert result.returncode == 0, result.stderr
-    lines = result.stdout.strip().splitlines()
-    assert lines[0].split()[0] == "bidder"
-    width = len(EXAMPLE_LABELS[name][0])
-    assert [tuple(line.split()[:width]) for line in lines[1:]] == EXAMPLE_LABELS[name]
+    last = result.stdout.strip().splitlines()[-1]
+    expected, _ = EXAMPLES[name]
+    assert last.startswith(f"Answer: {expected},"), f"{name} printed: {last}"
 
 
 def test_readme_code_runs(tmp_path):

@@ -1,4 +1,8 @@
-"""A segmented market: one bidder bids everywhere, one only in sports."""
+"""Does a sports-only bidder win any auction outside sports?
+
+A campaign with `segments` bids only there. Elsewhere its bidder is not called
+and bids -inf, so it cannot win even at a reserve of 0.
+"""
 
 import bidlab as bl
 
@@ -30,3 +34,14 @@ if __name__ == "__main__":
     results = bl.run_many(config, seeds=range(5))
     assert results.segments is not None
     print(results.segments.summary())
+    wins = {"sports": 0.0, "other": 0.0}
+    for row in results.segments.rows:
+        if row["bidder"] == "sports_only":
+            where = "sports" if row["segment"] == "sports" else "other"
+            wins[where] += float(row["wins"])
+
+    answer = "yes" if wins["other"] > 0 else "no"
+    print(
+        f"Answer: {answer}, {wins['other']:.0f} wins outside sports"
+        f" and {wins['sports']:.0f} in sports"
+    )
