@@ -1,6 +1,6 @@
 # Logging and callbacks
 
-This guide shows how a bidder logs its own values during a run, and how a callback watches a run as it goes.
+This guide shows how a bidder logs its own values, and how a callback watches a run.
 
 ## Log from a bidder
 

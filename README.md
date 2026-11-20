@@ -38,11 +38,11 @@ print(results.summary())
 ## How one step works
 
 1. The market draws the impression's public features and each bidder's conversion probability pᵢ. The default market, `LogisticContext`, uses pᵢ = σ(x · φᵢ + βᵢ) for a random context x.
-2. Each bidder sees its own `Observation`: the `time` in seconds since the episode start, the platform's `value` of the impression, w × pᵢ, and the public `features`.
+2. Each bidder sees its own `Observation`. It holds the `time` in seconds since the episode start and the public `features`. Its `value` is the platform's value of the impression, w × pᵢ.
 3. Each bid is capped at the bidder's remaining budget. The bidder does not see that amount; it tracks its own spend.
 4. The auction picks a winner: `FirstPrice` or `SecondPrice`, with an optional reserve price.
 5. The winner converts with probability p of the winner.
-6. Each bidder gets its own `Feedback`: the auction's `time`, its bid, whether it won, the price it paid, whether it converted, the realized `value`, and its reward. A loser never sees the winning price.
+6. Each bidder gets its own `Feedback`: the auction's `time`, its bid, and whether it won. It also holds the price it paid, whether it converted, the realized `value`, and its reward. A loser never sees the winning price.
 
 `observation.value` is exact by default. [Simulation](docs/guides/simulation.md) covers the clock, noise in that value, and reproducibility.
 
