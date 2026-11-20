@@ -25,7 +25,7 @@ class Shaded(bl.Bidder):
     def __init__(self, factor=0.8):
         self.factor = factor
 
-    def forward(self, value, request):
+    def forward(self, value):
         self.log({"factor": self.factor, "value_seen": value})
         return self.factor * value
 

@@ -40,10 +40,9 @@ print(results.columns[:4])  # ('seed', 'campaign', 'spend', 'wins')
 
 | Field | Shape | Holds |
 |---|---|---|
-| `bids`, `true_values`, `rewards` | (episodes, steps, campaigns) | Bids after capping, true values, step rewards |
+| `bids`, `true_values` | (episodes, steps, campaigns) | Bids after capping, true values |
 | `winner`, `price`, `converted`, `segment` | (episodes, steps) | The winner's index or -1, the price paid, the conversion, the segment index |
-| `episode_rewards` | (episodes, bidders) | Episode rewards, NaN without an `episode_reward` |
-| `logged` | per name and campaign | Values bidders logged |
+| `logged` | per name and campaign | Values bidders logged, such as their own rewards |
 | `config` | | The `SimConfig` that made it |
 
 Four functions turn a `RunLog` into metrics, one row per episode:

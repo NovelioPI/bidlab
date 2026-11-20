@@ -4,7 +4,7 @@ This guide shows how to write a bidder, stack bidders, and use the built-in ones
 
 ## The idea
 
-A bidder turns a value into another value. Alone, it gets the platform's value, `request.value`, and its output is the bid.
+A bidder turns a value into another value. Alone, it gets the platform's value as its `value` input, and its output is the bid.
 
 Combine bidders with `bl.Stack`: each gets the previous one's output, and the last one's output is the bid. Two kinds of bidder fit together this way:
 
@@ -21,24 +21,58 @@ Subclass `bl.Bidder` and implement `forward`. Every other hook is optional.
 
 | Hook | Called |
 |---|---|
-| `on_episode_start(brief)` | At the start of each episode, with the campaign's `Brief` and its clock |
-| `forward(value, request)` | At each auction the bidder takes part in; returns the bid or value |
+| `on_episode_start(campaign)` | At the start of each episode, with the `Campaign`: budget, event value, CPA target, segments |
+| `forward(value, ...)` | At each auction the bidder takes part in, with the inputs it names; returns the bid or value |
 | `update_batch(results)` | After each step, with that step's `BidResult` list |
 | `update(result)` | Once per result, if you do not override `update_batch` |
-| `on_episode_end(report, episode_reward)` | At the end of each episode |
+| `on_episode_end(report)` | At the end of each episode, with its `EpisodeReport` |
 
 A bidder keeps what it learns on `self`. Take settings as constructor arguments. Each bidder gets its own random stream as `self.rng`.
 
-The simulator deep-copies the bidder for each run. Every seed starts from the bidder as you built it, and a pretrained model passes in as is.
+The simulator deep-copies the bidder for each run. Every seed starts from the bidder as you built it, and a pretrained model passes in as is. The `campaign.bidder` passed to `on_episode_start` is that running copy, not your object.
 
-## A value model before pacing
+A bidder defines its own reward. Compute it in `update` or `on_episode_end` and record it with `self.log`; see [Rewards](rewards.md).
 
-`BidResult` carries the auction's `time` but not its features. To learn from features, keep them by time in `forward`, then read them back in `update_batch`.
+## Inputs
+
+Like a PyTorch module, `forward` declares the inputs it needs as parameters. The simulator passes the top bidder only those, by name.
+
+| Input | Meaning |
+|---|---|
+| `value` | The platform's value of the impression; in a `Stack`, the previous bidder's output |
+| `time` | Seconds since the episode start |
+| `time_left` | Seconds left in the episode |
+| `horizon` | Episode length in seconds |
+| `hour_of_day` | Hour of day at `time`, in [0, 24) |
+| `budget_left` | The campaign's budget left before this auction |
+| `segment` | The auction's market segment; `"all"` without segments |
+| a feature name | Each public feature from the market, such as `country` |
 
 ```python
 import bidlab as bl
 
 
+class EvenPacer(bl.Bidder):
+    def on_episode_start(self, campaign):
+        self.budget = campaign.budget
+
+    def forward(self, value, time_left, horizon, budget_left):
+        # Bid only while spend is behind an even plan over the episode.
+        behind = budget_left / self.budget >= time_left / horizon
+        return value if behind else 0.0
+```
+
+- A `forward` with `**inputs` gets every input.
+- A parameter with a default gets its default when the input is missing.
+- A parameter without a default and without an input raises `TypeError` at that auction, listing the inputs offered.
+- A market feature with the name of a built-in input raises `ValueError`.
+- A `Stack` passes each of its bidders the inputs it names, with `value` set to the previous output.
+
+## A value model before pacing
+
+`BidResult` carries the auction's `time` but not its inputs. To learn from an input, keep it by time in `forward`, then read it back in `update_batch`.
+
+```python
 class SegmentRate(bl.Bidder):
     def __init__(self, prior=0.05):
         self.prior = prior
@@ -46,15 +80,14 @@ class SegmentRate(bl.Bidder):
         self.conversions = {}
         self.pending = {}
 
-    def on_episode_start(self, brief):
-        self.brief = brief
+    def on_episode_start(self, campaign):
+        self.event_value = campaign.event_value
 
-    def forward(self, value, request):
-        segment = request.features["segment"]
-        self.pending[request.time] = segment
+    def forward(self, value, segment, time):
+        self.pending[time] = segment
         wins = self.wins.get(segment, 0)
         rate = (self.conversions.get(segment, 0) + self.prior) / (wins + 1)
-        return rate * self.brief.event_value
+        return rate * self.event_value
 
     def update_batch(self, bid_results):
         for result in bid_results:
@@ -95,7 +128,7 @@ class Jitter(bl.Bidder):
     def __init__(self, spread=0.1):
         self.spread = spread
 
-    def forward(self, value, request):
+    def forward(self, value):
         return value * self.rng.uniform(1 - self.spread, 1 + self.spread)
 
 
@@ -110,7 +143,7 @@ jitter = bl.Campaign(
 |---|---|---|
 | `Linear` | Outputs `multiplier` × value | `multiplier` (1.0) |
 | `PidPacing` | A PID loop moves a multiplier so spend tracks the budget evenly over the horizon; logs `"multiplier"` per auction | `initial_multiplier` (1.0), `kp` (20), `ki` (2), `kd` (0), `multiplier_range` ((0, 10)), `log_state` (True) |
-| `UcbMultiplier` | UCB1 over a grid of multipliers; one arm per episode; logs its arm as `"multiplier"` per episode | `min_multiplier` (0.2), `max_multiplier` (2.0), `multiplier_step` (0.2), `exploration` (1.0), `log_state` (True) |
+| `UcbMultiplier` | UCB1 over a grid of multipliers; one arm per episode, rewarded by the episode's surplus; override `update` for another reward; logs its arm as `"multiplier"` per episode | `min_multiplier` (0.2), `max_multiplier` (2.0), `multiplier_step` (0.2), `exploration` (1.0), `log_state` (True) |
 
 They live in `bl.bidders.baselines`, `bl.bidders.pacing` and `bl.bidders.bandits`, and `bl` exports each one.
 

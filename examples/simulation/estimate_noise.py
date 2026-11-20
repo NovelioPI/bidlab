@@ -1,6 +1,6 @@
 """Does noise in the platform's value cost a truthful bidder surplus?
 
-`request.value` is the platform's estimate of the value. With
+The `value` input is the platform's estimate of the value. With
 `estimate_noise` above 0 the estimate is wrong, so a truthful bidder overbids on
 some impressions and underbids on others. Metrics always use the true value.
 """

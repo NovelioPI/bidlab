@@ -54,7 +54,7 @@ def test_lambdas_and_closures_run_in_parallel():
     fraction = 0.7
 
     class Closure(Bidder):
-        def forward(self, value, request):
+        def forward(self, value):
             return fraction * value
 
     extra = Campaign(
@@ -62,7 +62,6 @@ def test_lambdas_and_closures_run_in_parallel():
         Closure(),
         budget=20.0,
         event_value=5.0,
-        step_reward=lambda request, result, params: 2 * result.price,
     )
     serial = run_many(config(extra), seeds=range(3))
     parallel = run_many(config(extra), seeds=range(3), workers=2)
@@ -74,7 +73,7 @@ def test_unpicklable_spec_fails_before_runs(monkeypatch):
         def __init__(self):
             self.lock = threading.Lock()
 
-        def forward(self, value, request):
+        def forward(self, value):
             return value
 
     pools = []
@@ -110,7 +109,7 @@ def test_summary_one_seed_shows_na():
     summary = hand_results([4.0]).summary()
     row = summary.splitlines()[1]
     assert "4.000 ± n/a" in row
-    assert row.count("n/a") == 6
+    assert row.count("n/a") == 5
 
 
 def test_save_csv_round_trip(tmp_path):
@@ -328,3 +327,11 @@ def test_noisy_parallel_equals_serial():
     parallel = run_many(cfg, seeds=range(3), workers=2)
     assert parallel.equals(serial)
     assert not serial.equals(run_many(config(), seeds=range(3)))
+
+
+def test_no_reward_columns():
+    results = run_many(segmented_config(), seeds=range(2))
+    segments = segments_table(results)
+    for columns in (results.columns, segments.columns, results.summary().split()):
+        assert "reward" not in columns and "episode_reward" not in columns
+    assert {"surplus", "cpa_score"} <= set(results.columns)

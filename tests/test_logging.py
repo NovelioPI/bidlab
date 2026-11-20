@@ -11,9 +11,7 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
-from bidlab.types import BidRequest, BidResult, Brief, EpisodeReport
-
-CAMPAIGN = Brief(budget=1e6, event_value=5.0)
+from bidlab.types import BidResult, EpisodeReport
 
 Action = Callable[[Bidder, int], None]
 
@@ -31,12 +29,12 @@ class Logs(Bidder):
             self.action(self, self.auction)
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
+    def on_episode_start(self, campaign: Campaign) -> None:
         self.auction = 0
         self.act("on_episode_start")
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.act("forward")
         return value
 
@@ -51,9 +49,7 @@ class Logs(Bidder):
         self.act("update")
 
     @override
-    def on_episode_end(
-        self, report: EpisodeReport, episode_reward: float | None
-    ) -> None:
+    def on_episode_end(self, report: EpisodeReport) -> None:
         self.act("on_episode_end")
 
 
@@ -64,8 +60,8 @@ class Holder(Bidder):
         self.child = child
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
-        return self.child.forward(value, request)
+    def forward(self, value: float) -> float:
+        return self.child.forward(value)
 
 
 def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
@@ -148,14 +144,12 @@ class Both(Bidder):
     """Logs one name per step and per episode."""
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.log("x", 1.0)
         return value
 
     @override
-    def on_episode_end(
-        self, report: EpisodeReport, episode_reward: float | None
-    ) -> None:
+    def on_episode_end(self, report: EpisodeReport) -> None:
         self.log("x", 2.0)
 
 
@@ -163,11 +157,11 @@ class EpisodeFirst(Bidder):
     """Logs one name per episode, then per step."""
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
+    def on_episode_start(self, campaign: Campaign) -> None:
         self.log("x", 2.0)
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.log("x", 1.0)
         return value
 
@@ -248,7 +242,7 @@ def test_log_outside_run_does_nothing():
     bidder = Linear()
     bidder.log("x", 1.0)
     bidder.log({"y": 2.0})
-    assert bidder.forward(2.0, BidRequest(time=0.0, value=2.0)) == 2.0
+    assert bidder.forward(2.0) == 2.0
     log = run(config(Campaign("bind", LogsInBind(), budget=1e6, event_value=5.0)))
     assert "bound" not in log.logged
 
@@ -259,7 +253,7 @@ class Keeps(Bidder):
     kept: ClassVar[list[Bidder]] = []
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         Keeps.kept.append(self)
         self.log("x", 1.0)
         return value
@@ -347,9 +341,9 @@ class TopLogs(Holder):
         )
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.log("lam", 1.0)
-        return super().forward(value, request)
+        return super().forward(value)
 
 
 class TopAndChild(Holder):
@@ -359,9 +353,9 @@ class TopAndChild(Holder):
         super().__init__(Logs("forward", lambda b, _: b.log("b", 2.0)))
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.log("a", 1.0)
-        return super().forward(value, request)
+        return super().forward(value)
 
 
 def test_different_names_in_tree_allowed():
@@ -437,7 +431,7 @@ def test_logging_leaves_run_unchanged():
         )
 
     on, off = (run(config(*campaigns(state), episodes=4)) for state in (True, False))
-    for name in ("bids", "price", "winner", "rewards"):
+    for name in ("bids", "price", "winner", "converted"):
         np.testing.assert_array_equal(getattr(on, name), getattr(off, name))
 
 
@@ -445,13 +439,13 @@ class Sometimes(Bidder):
     """Logs only in runs whose first draw from its stream is below one half."""
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
+    def on_episode_start(self, campaign: Campaign) -> None:
         self.logging = self.rng.random() < 0.5
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         if self.logging:
-            self.log("x", request.value)
+            self.log("x", value)
         return value
 
 
@@ -511,3 +505,26 @@ def test_equals_compares_logs():
     assert same.equals(results)
     assert not other.equals(results)
     assert not Results(columns=results.columns, rows=results.rows).equals(results)
+
+
+class SurplusLogger(Bidder):
+    """Logs its own surplus reward in update."""
+
+    @override
+    def forward(self, value: float) -> float:
+        return value
+
+    @override
+    def update(self, result: BidResult) -> None:
+        self.log("reward", result.realized_value - result.price)
+
+
+def test_reward_logged_in_update():
+    campaign = Campaign("s", SurplusLogger(), budget=1e6, event_value=5.0)
+    config = SimConfig(campaigns=[campaign], episodes=2, steps=20, auction=FirstPrice())
+    log = run(config)
+    won = log.winner == 0
+    expected = np.where(won & log.converted, 5.0, 0.0) - np.where(won, log.price, 0.0)
+    np.testing.assert_array_equal(log.logged["reward"]["s"], expected)
+    results = run_many(config, seeds=range(2))
+    assert results.logged["reward"]["s"].shape == (2, 2, 20)

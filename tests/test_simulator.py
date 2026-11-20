@@ -4,13 +4,12 @@ from typing import Any, ClassVar
 import numpy as np
 import pytest
 
-from bidlab import rewards
 from bidlab.auctions import NO_WINNER, FirstPrice
 from bidlab.bidders import Bidder
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import Market, MarketDraw, Segment, Segmented
-from bidlab.simulator import run
-from bidlab.types import BidRequest, BidResult, Brief, EpisodeReport
+from bidlab.simulator import BUILT_IN_INPUTS, run
+from bidlab.types import BidResult, EpisodeReport
 
 
 class Spy(Bidder):
@@ -21,35 +20,27 @@ class Spy(Bidder):
     def __init__(self, multiplier=1.0):
         self.multiplier = multiplier
         self.results: list[BidResult] = []
-        self.requests: list[BidRequest] = []
-        self.starts: list[Brief] = []
-        self.ends: list[tuple[EpisodeReport, float | None]] = []
+        self.requests: list[dict[str, object]] = []
+        self.starts: list[Campaign] = []
+        self.ends: list[EpisodeReport] = []
 
     def bind(self, rng):
         # Each run binds a fresh copy, so this lists the copies the run used.
         super().bind(rng)
         Spy.instances.append(self)
 
-    def on_episode_start(self, brief):
-        self.starts.append(brief)
+    def on_episode_start(self, campaign):
+        self.starts.append(campaign)
 
-    def forward(self, value, request):
-        self.requests.append(request)
+    def forward(self, value, **inputs):
+        self.requests.append({"value": value, **inputs})
         return self.multiplier * value
 
     def update(self, result):
         self.results.append(result)
 
-    def on_episode_end(self, report, episode_reward):
-        self.ends.append((report, episode_reward))
-
-
-def double_price(request, result, params):
-    return 2 * result.price
-
-
-def total_spend(report, params):
-    return report.spend
+    def on_episode_end(self, report):
+        self.ends.append(report)
 
 
 class BatchSpy(Spy):
@@ -86,9 +77,8 @@ def run_spies(cfg):
 
 def test_log_shapes():
     log = run(config(campaign("a"), campaign("b"), episodes=2, steps=50))
-    assert log.bids.shape == log.true_values.shape == log.rewards.shape == (2, 50, 2)
+    assert log.bids.shape == log.true_values.shape == (2, 50, 2)
     assert log.winner.shape == log.price.shape == log.converted.shape == (2, 50)
-    assert log.episode_rewards.shape == (2, 2)
 
 
 def test_loser_result_has_no_price():
@@ -107,47 +97,39 @@ def test_result_fields_are_only_own_outcome():
         "price",
         "converted",
         "realized_value",
-        "reward",
     ]
 
 
-def test_request_fields():
-    assert [f.name for f in dataclasses.fields(BidRequest)] == [
-        "time",
-        "value",
-        "features",
-    ]
+def test_episode_start_gets_campaign_with_running_bidder():
+    a = campaign("a", cpa_target=2.0, segments=("all",))
+    _, spies = run_spies(config(a, campaign("b")))
+    assert spies[0].starts == [dataclasses.replace(a, bidder=spies[0])] * 3
+    assert all(start.bidder is spies[0] for start in spies[0].starts)
+    assert a.bidder is not spies[0]
 
 
-def test_episode_start_gets_campaign_with_schedule():
-    a = campaign("a", cpa_target=2.0)
-    _, spies = run_spies(config(a, campaign("b"), horizon_hours=12, start_hour=6))
-    expected = a.brief(horizon_hours=12.0, start_hour=6.0)
-    assert spies[0].starts == [expected] * 3
-
-
-def test_request_value_is_true_value_without_noise():
+def test_value_input_is_true_value_without_noise():
     log, spies = run_spies(
         config(campaign("a"), campaign("b", event_value=3.0), episodes=2)
     )
     for i, spy in enumerate(spies):
-        seen = np.array([o.value for o in spy.requests]).reshape(2, 200)
+        seen = np.array([o["value"] for o in spy.requests]).reshape(2, 200)
         assert seen.tobytes() == log.true_values[:, :, i].tobytes()
 
 
-def test_request_time_spaced_over_horizon():
+def test_time_input_spaced_over_horizon():
     _, spies = run_spies(
         config(campaign("a"), episodes=1, steps=1000, horizon_hours=24)
     )
-    times = np.array([o.time for o in spies[0].requests])
+    times = np.array([o["time"] for o in spies[0].requests])
     assert times[0] == 0.0
     np.testing.assert_allclose(times, np.arange(1000) * 86.4, rtol=0, atol=1e-9)
 
 
-def test_result_time_matches_request():
+def test_result_time_matches_time_input():
     _, spies = run_spies(config(campaign("a"), campaign("b", multiplier=0.9)))
     for spy in spies:
-        assert [f.time for f in spy.results] == [o.time for o in spy.requests]
+        assert [f.time for f in spy.results] == [o["time"] for o in spy.requests]
 
 
 def test_result_value_is_realized():
@@ -226,40 +208,10 @@ def test_adding_bidder_keeps_world_draws():
     np.testing.assert_array_equal(two.true_values, three.true_values[:, :, :2])
 
 
-def test_result_reward_equals_function_output():
-    log, spies = run_spies(
-        config(campaign("a", step_reward=double_price), campaign("b"))
-    )
-    rewards = [fb.reward for fb in spies[0].results]
-    expected = [2 * fb.price for fb in spies[0].results]
-    assert rewards == expected
-    np.testing.assert_array_equal(log.rewards[:, :, 0].ravel(), expected)
-
-
-def test_episode_reward_called_once_per_episode():
-    log, spies = run_spies(
-        config(campaign("a", episode_reward=total_spend), campaign("b"))
-    )
-    ends = spies[0].ends
-    assert len(ends) == 3
-    assert all(reward == report.spend for report, reward in ends)
-    np.testing.assert_array_equal(log.episode_rewards[:, 0], [s.spend for s, _ in ends])
-
-
-def test_no_episode_reward_passes_none():
-    log, spies = run_spies(config(campaign("a"), campaign("b")))
-    assert all(reward is None for _, reward in spies[0].ends)
-    assert np.all(np.isnan(log.episode_rewards))
-
-
-def test_cpa_target_reaches_reward_params():
-    _, spies = run_spies(
-        config(
-            campaign("a", cpa_target=0.5, episode_reward=rewards.cpa_score),
-            campaign("b"),
-        )
-    )
-    assert all(reward is not None for _, reward in spies[0].ends)
+def test_episode_end_gets_report_only():
+    _, spies = run_spies(config(campaign("a"), campaign("b")))
+    assert len(spies[0].ends) == 3
+    assert all(isinstance(report, EpisodeReport) for report in spies[0].ends)
 
 
 def test_reserve_above_all_bids_gives_no_sales():
@@ -323,22 +275,17 @@ def test_market_that_stops_names_the_market():
         run(config(campaign("a"), market=Short()))
 
 
-def test_features_reach_every_bidder_read_only():
+def test_features_reach_every_bidder():
     market = FixedMarket([0.5, 0.5], features={"hour": 3})
     _, spies = run_spies(config(campaign("a"), campaign("b"), market=market, steps=5))
     for spy in spies:
-        for request in spy.requests:
-            assert request.features["hour"] == 3
-            with pytest.raises(TypeError):
-                request.features["hour"] = 4  # pyright: ignore[reportIndexIssue]  Reason: the test checks that features are read-only.
+        assert [request["hour"] for request in spy.requests] == [3] * 15
 
 
-def test_no_features_gives_empty_mapping():
+def test_no_features_gives_only_built_in_inputs():
     _, spies = run_spies(config(campaign("a"), market=FixedMarket([0.5]), steps=5))
     for request in spies[0].requests:
-        assert dict(request.features) == {}
-        with pytest.raises(TypeError):
-            request.features["hour"] = 4  # pyright: ignore[reportIndexIssue]  Reason: the test checks that features are read-only.
+        assert request.keys() == BUILT_IN_INPUTS
 
 
 NEWS_AND_SPORTS = Segmented((Segment("news", 0.5), Segment("sports", 0.5)))
@@ -360,7 +307,7 @@ def test_targeted_bidder_skips_other_segments():
     assert len(news_only.results) == np.sum(~sports)
     assert isinstance(news_batches, BatchSpy)
     assert len(news_batches.batches) == np.sum(~sports)
-    assert {o.features["segment"] for o in news_only.requests} == {"news"}
+    assert {o["segment"] for o in news_only.requests} == {"news"}
 
 
 def test_lone_targeted_bidder_never_wins_outside_its_segments():
@@ -391,7 +338,7 @@ class DayAndNight(Market):
         step = 0
         while True:
             name = "day" if step % 10 < 6 else "night"
-            yield MarketDraw({"segment": name}, np.full(count, 0.1), name)
+            yield MarketDraw({}, np.full(count, 0.1), name)
             step += 1
 
 
@@ -410,7 +357,7 @@ def test_estimate_noise_has_set_spread():
     log, (spy,) = run_spies(
         config(campaign("a"), episodes=1, steps=20_000, estimate_noise=0.5)
     )
-    estimated = np.array([o.value for o in spy.requests]) / 5.0
+    estimated = np.array([o["value"] for o in spy.requests]) / 5.0
     true = log.true_values[0, :, 0] / 5.0
     errors = np.log(estimated / (1 - estimated)) - np.log(true / (1 - true))
     assert abs(errors.mean()) < 0.02
@@ -429,7 +376,9 @@ def test_adding_bidder_keeps_noisy_values():
         config(campaign("a"), campaign("b"), campaign("c"), estimate_noise=0.5)
     )
     for before, after in zip(two, three[:2], strict=True):
-        assert [o.value for o in before.requests] == [o.value for o in after.requests]
+        assert [o["value"] for o in before.requests] == [
+            o["value"] for o in after.requests
+        ]
 
 
 def test_estimate_noise_at_zero_and_one():
@@ -437,5 +386,5 @@ def test_estimate_noise_at_zero_and_one():
     _, spies = run_spies(
         config(campaign("a"), campaign("b"), market=market, estimate_noise=2.0)
     )
-    assert {o.value for o in spies[0].requests} == {0.0}
-    assert {o.value for o in spies[1].requests} == {5.0}
+    assert {o["value"] for o in spies[0].requests} == {0.0}
+    assert {o["value"] for o in spies[1].requests} == {5.0}

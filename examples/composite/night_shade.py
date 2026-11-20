@@ -1,8 +1,9 @@
 """When a parent shades harder at night, does its child PID raise its multiplier at night?
 
-`NightShade` holds two child bidders and calls their `forward` itself. The
-simulator gives each child its own random stream and every other hook, so the
-PID child keeps pacing while its parent changes the value it receives.
+`NightShade` holds two child bidders and calls their `forward` itself, with
+the arguments each one takes. The simulator gives each child its own random
+stream and every other hook, so the PID child keeps pacing while its parent
+changes the value it receives.
 """
 
 import dataclasses
@@ -15,7 +16,7 @@ NIGHT_END_HOUR = 6
 
 
 class Shade(bl.Bidder):
-    def forward(self, value, request, factor=1.0):
+    def forward(self, value, factor=1.0):
         return value * factor
 
 
@@ -26,14 +27,11 @@ class NightShade(bl.Bidder):
         self.shade = Shade()
         self.pacing = bl.PidPacing()
 
-    def on_episode_start(self, brief):
-        self.brief = brief
-
-    def forward(self, value, request):
-        night = self.brief.hour_of_day(request.time) < NIGHT_END_HOUR
+    def forward(self, value, hour_of_day, horizon):
+        night = hour_of_day < NIGHT_END_HOUR
         factor = self.night_factor if night else self.day_factor
-        shaded = self.shade.forward(value, request, factor=factor)
-        return self.pacing.forward(shaded, request)
+        shaded = self.shade.forward(value, factor=factor)
+        return self.pacing.forward(shaded, horizon=horizon)
 
 
 config = bl.SimConfig(

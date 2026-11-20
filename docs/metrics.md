@@ -31,8 +31,6 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | cpa_violation | max(0, cpa / targetᵢ − 1) | 0 when spend = 0. +inf when spend > 0 and conversions = 0. NaN with no target |
 | cpa_score | realized_value × min((targetᵢ / cpa)³, 1) | AuctionNet score. Equals realized_value when spend = 0. 0 when spend > 0 and conversions = 0. NaN with no target |
 | regret | See below | Uses expected value, not realized |
-| reward | Σ of the bidder's step rewards | Uses the campaign's `step_reward` |
-| episode_reward | The configured `episode_reward` | NaN when none is set |
 
 ## Platform metrics
 

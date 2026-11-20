@@ -9,16 +9,14 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.markets import Segment, Segmented
 from bidlab.runner import run_many
 from bidlab.simulator import run
-from bidlab.types import BidRequest, BidResult, Brief, EpisodeReport
-
-CAMPAIGN = Brief(budget=1e6, event_value=5.0)
+from bidlab.types import BidResult, EpisodeReport
 
 
 class Pass(Bidder):
     """Passes the value through."""
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         return value
 
 
@@ -29,7 +27,7 @@ class Holder(Bidder):
         self.held = held
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         return value
 
 
@@ -42,7 +40,7 @@ class Parent(Bidder):
         self.parts = [Linear(), "x", PidPacing()]
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         return value
 
 
@@ -130,12 +128,12 @@ class Log(Bidder):
         self.name = name
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
-        Log.calls.append((self.name, "start", brief))
+    def on_episode_start(self, campaign: Campaign) -> None:
+        Log.calls.append((self.name, "start", campaign))
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
-        Log.calls.append((self.name, "forward", request))
+    def forward(self, value: float, **inputs: object) -> float:
+        Log.calls.append((self.name, "forward", inputs))
         return value
 
     @override
@@ -143,9 +141,7 @@ class Log(Bidder):
         Log.calls.append((self.name, "batch", bid_results))
 
     @override
-    def on_episode_end(
-        self, report: EpisodeReport, episode_reward: float | None
-    ) -> None:
+    def on_episode_end(self, report: EpisodeReport) -> None:
         Log.calls.append((self.name, "end", report))
 
 
@@ -170,21 +166,19 @@ class QuietParent(Bidder):
         self.rng = rng
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
+    def on_episode_start(self, campaign: Campaign) -> None:
         pass
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
-        return self.b.forward(self.a.forward(value, request), request)
+    def forward(self, value: float) -> float:
+        return self.b.forward(self.a.forward(value))
 
     @override
     def update_batch(self, bid_results: Sequence[BidResult]) -> None:
         pass
 
     @override
-    def on_episode_end(
-        self, report: EpisodeReport, episode_reward: float | None
-    ) -> None:
+    def on_episode_end(self, report: EpisodeReport) -> None:
         pass
 
 
@@ -198,7 +192,7 @@ class Draws(Bidder):
         self.draw = draw
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         if self.draw:
             Draws.draws.setdefault(self.name, []).append(self.rng.random())
 
@@ -206,13 +200,13 @@ class Draws(Bidder):
 
 
 class Watch(Bidder):
-    """Records each request's value."""
+    """Records each value it gets."""
 
     values: ClassVar[list[float]] = []
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
-        Watch.values.append(request.value)
+    def forward(self, value: float) -> float:
+        Watch.values.append(value)
         return value
 
 
@@ -220,9 +214,7 @@ class Shade(Bidder):
     """Multiplies the value by ``factor``, which its parent may pass."""
 
     @override
-    def forward(
-        self, value: float, request: BidRequest, *, factor: float = 1.0
-    ) -> float:
+    def forward(self, value: float, *, factor: float = 1.0) -> float:
         return value * factor
 
 
@@ -233,8 +225,8 @@ class HalfShade(Bidder):
         self.shade = Shade()
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
-        return self.shade.forward(value, request, factor=0.5)
+    def forward(self, value: float) -> float:
+        return self.shade.forward(value, factor=0.5)
 
 
 class Fan(Bidder):
@@ -244,9 +236,9 @@ class Fan(Bidder):
         self.children = children
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         for child in self.children:
-            child.forward(value, request)
+            child.forward(value)
 
         return value
 
@@ -255,7 +247,7 @@ class Jitter(Bidder):
     """Multiplies the value by a random factor from its own stream."""
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         return value * self.rng.uniform(0.5, 1.5)
 
 
@@ -267,9 +259,9 @@ class Mixer(Bidder):
         self.forwards = 0
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.forwards += 1
-        first, second = (part.forward(value, request) for part in self.parts)
+        first, second = (part.forward(value) for part in self.parts)
         return (first + second) / 2
 
 
@@ -282,7 +274,7 @@ class Counts(Bidder):
         self.name = name
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         Counts.counts.setdefault(self.name, [0, 0])[0] += 1
         return value
 
@@ -305,7 +297,7 @@ class Bids(Bidder):
     bids: ClassVar[list[float]] = []
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         return value
 
     @override
@@ -320,8 +312,8 @@ class HalfOfChild(Bidder):
         self.child = Bids()
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
-        return self.child.forward(value, request) / 2
+    def forward(self, value: float) -> float:
+        return self.child.forward(value) / 2
 
 
 class Spawning(Draws):
@@ -348,11 +340,11 @@ class Grows(Bidder):
             self.late = Pass()
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
+    def on_episode_start(self, campaign: Campaign) -> None:
         self.grow("on_episode_start")
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.grow("forward")
         return value
 
@@ -361,9 +353,7 @@ class Grows(Bidder):
         self.grow("update_batch")
 
     @override
-    def on_episode_end(
-        self, report: EpisodeReport, episode_reward: float | None
-    ) -> None:
+    def on_episode_end(self, report: EpisodeReport) -> None:
         self.grow("on_episode_end")
 
 
@@ -375,10 +365,9 @@ class Tally(Bidder):
         self.history: list[float] = []
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.seen += 1
         self.history.append(value)
-        self.last = request
         return value
 
 
@@ -442,6 +431,28 @@ def test_user_tree_unchanged():
     )
     assert mixer.forwards == 0
     assert not any(hasattr(node, "rng") for _, node in mixer.named_bidders())
+
+
+class ResetsThroughCampaign(Bidder):
+    """Resets a counter through ``campaign.bidder``, the trap a user might write."""
+
+    def __init__(self):
+        self.wins = 99
+
+    @override
+    def on_episode_start(self, campaign: Campaign) -> None:
+        assert isinstance(campaign.bidder, ResetsThroughCampaign)
+        campaign.bidder.wins = 0
+
+    @override
+    def forward(self, value: float) -> float:
+        return value
+
+
+def test_user_bidder_unchanged_through_campaign():
+    bidder = ResetsThroughCampaign()
+    run(config(Campaign("r", bidder, budget=1e6, event_value=5.0)))
+    assert bidder.wins == 99
 
 
 def test_tree_hook_order():
@@ -533,7 +544,7 @@ def test_bind_override_keeps_child_streams():
         )
         child = next(node for path, node in built.named_bidders() if path)
         assert isinstance(child, Draws)
-        child.forward(1.0, BidRequest(time=0.0, value=1.0))
+        child.forward(1.0)
         seen.append(Draws.draws["child"])
     assert seen[0] == seen[1]
 

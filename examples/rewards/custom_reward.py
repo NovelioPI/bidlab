@@ -1,9 +1,9 @@
 """Does a bandit rewarded for conversions pick a higher multiplier than one rewarded for surplus?
 
-`UcbMultiplier` picks one multiplier per episode and learns from the episode's
-reward. With no episode reward, that is the sum of its step rewards. A
-conversion reward ignores the price, so a higher multiplier always looks
-better.
+`UcbMultiplier` picks one multiplier per episode and learns from the reward it
+sums in `update`: the surplus, by default. A subclass changes the reward by
+overriding `update`. A conversion reward ignores the price, so a higher
+multiplier always looks better.
 """
 
 import dataclasses
@@ -13,31 +13,38 @@ import bidlab as bl
 LAST_EPISODES = 10
 
 
-def cheap_conversions(
-    request: bl.BidRequest, result: bl.BidResult, params: dict[str, float]
-) -> float:
+class ConversionBandit(bl.UcbMultiplier):
+    def update(self, result):
+        self.arm_reward += float(result.converted)
+
+
+class ValueBandit(bl.UcbMultiplier):
+    def update(self, result):
+        self.arm_reward += result.realized_value
+
+
+class CheapConversionBandit(bl.UcbMultiplier):
     """A conversion counts 1; each unit of price costs `cost_weight`."""
-    return float(result.converted) - params["cost_weight"] * result.price
+
+    def __init__(self, cost_weight, **settings):
+        super().__init__(**settings)
+        self.cost_weight = cost_weight
+
+    def update(self, result):
+        self.arm_reward += float(result.converted) - self.cost_weight * result.price
 
 
-def bandit(**rewards):
-    return bl.Campaign(
-        "bandit",
-        bl.UcbMultiplier(multiplier_step=0.6),
-        budget=1e9,
-        event_value=5,
-        **rewards,
-    )
+def bandit(bidder):
+    return bl.Campaign("bandit", bidder, budget=1e9, event_value=5)
 
 
 BANDITS = {
-    "surplus": bandit(step_reward=bl.rewards.surplus),
-    "conversions": bandit(step_reward=bl.rewards.conversions),
-    "realized_value": bandit(step_reward=bl.rewards.realized_value),
+    "surplus": bandit(bl.UcbMultiplier(multiplier_step=0.6)),
+    "conversions": bandit(ConversionBandit(multiplier_step=0.6)),
+    "realized_value": bandit(ValueBandit(multiplier_step=0.6)),
     "cheap_conversions": bandit(
-        step_reward=cheap_conversions, reward_params={"cost_weight": 0.5}
+        CheapConversionBandit(cost_weight=0.5, multiplier_step=0.6)
     ),
-    "total_surplus": bandit(episode_reward=bl.rewards.total_surplus),
 }
 
 base = bl.SimConfig(

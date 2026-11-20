@@ -11,30 +11,28 @@ The README lists the six parts of a step. These rules hold on top of them.
 - One conversion draw happens at every step, even when nobody wins. This keeps runs repeatable when bidders change.
 - Each bidder gets only its own `BidResult`. A loser never sees the winning price.
 
-Budgets reset at the start of each episode, and each episode starts with `on_episode_start(brief)`. Bidder objects persist for the whole run, so a learning bidder keeps what it learned.
+Budgets reset at the start of each episode, and each episode starts with `on_episode_start(campaign)`. Bidder objects persist for the whole run, so a learning bidder keeps what it learned.
 
 ## The clock
 
-Auctions are spaced evenly over `SimConfig.horizon_hours`, 24 by default, from `SimConfig.start_hour`, 0 by default. `request.time` is the number of seconds since the episode start.
+Auctions are spaced evenly over `SimConfig.horizon_hours`, 24 by default, from `SimConfig.start_hour`, 0 by default.
 
-Set the clock on `SimConfig`. The simulator copies it into each campaign's `Brief` before `on_episode_start`, so a bidder can ask its brief:
+Set the clock on `SimConfig`. A bidder reads it through the `forward` inputs it names:
 
-| Method | Returns |
+| Input | Meaning |
 |---|---|
-| `brief.hour_of_day(time)` | The hour in [0, 24) at `time` |
-| `brief.time_left(time)` | Seconds left in the episode at `time` |
+| `time` | Seconds since the episode start |
+| `time_left` | Seconds left in the episode |
+| `horizon` | Episode length in seconds |
+| `hour_of_day` | The hour in [0, 24) at `time` |
 
 ```python
 import bidlab as bl
 
 
 class OfficeHours(bl.Bidder):
-    def on_episode_start(self, brief):
-        self.brief = brief
-
-    def forward(self, value, request):
-        hour = self.brief.hour_of_day(request.time)
-        return value if 9 <= hour < 17 else 0.0
+    def forward(self, value, hour_of_day):
+        return value if 9 <= hour_of_day < 17 else 0.0
 
 
 office = bl.SimConfig(
@@ -50,7 +48,7 @@ print(log.bids[0, :12, 0])  # 0 until 9:00, which is step 24
 
 ## Estimate noise
 
-`request.value` is the platform's value: w times its estimate of p. The estimate is exact by default.
+The `value` input is the platform's value: w times its estimate of p. The estimate is exact by default.
 
 `SimConfig(estimate_noise=0.5)` adds normal noise with that standard deviation to logit(p). Use it to test how a bidder copes with a wrong value. Metrics always use the true value, in `RunLog.true_values`.
 

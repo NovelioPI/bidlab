@@ -56,15 +56,14 @@ do_not_mutate = [
     "src/bidlab/__init__.py",
     "src/bidlab/config.py",
     "src/bidlab/results.py",
-    "src/bidlab/rewards.py",
     "src/bidlab/runner.py",
     "src/bidlab/simulator.py",
     "src/bidlab/types.py",
     "src/bidlab/bidders/*",
 ]
 pytest_add_cli_args_test_selection = ["tests/"]
-# The docs test reads docs/metrics.md from the mutants copy.
-also_copy = ["docs/"]
+# The docs and API tests read these files from the mutants copy.
+also_copy = ["docs/", "README.md", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
