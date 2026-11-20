@@ -74,6 +74,14 @@ def test_cpa_violation_infinite_when_spend_without_conversions():
     assert a.cpa_score == 0.0
 
 
+def test_cpa_score_is_value_when_conversions_cost_nothing():
+    log = hand_log(cpa_target=1.0)
+    free = RunLog(**{**log.__dict__, "price": np.zeros((1, 3))})
+    a, _ = campaign_metrics(free)
+    assert (a.spend, a.conversions) == (0.0, 1)
+    assert a.cpa_score == 4.0
+
+
 def test_regret_on_hand_built_log():
     # Second price, others' bids (0.5, 0.6, 0.3). Own surplus: (1-0.5)+(0.8-0.3) = 1.0.
     # Multiplier 3 wins all three: (1-0.5)+(0.2-0.6)+(0.8-0.3) = 0.6. Best is 1.0.
