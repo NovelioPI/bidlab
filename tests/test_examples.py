@@ -22,6 +22,8 @@ EXAMPLES = {
     "rewards/custom_reward.py": ("yes", ("rewards.md",)),
     "simulation/estimate_noise.py": ("yes", ("simulation.md",)),
     "simulation/clock.py": ("yes", ("simulation.md",)),
+    "results/regret.py": ("yes", ("results.md",)),
+    "results/reserve.py": ("yes", ("results.md",)),
 }
 
 
@@ -52,6 +54,25 @@ def test_example_answers(name):
     last = result.stdout.strip().splitlines()[-1]
     expected, _ = EXAMPLES[name]
     assert last.startswith(f"Answer: {expected},"), f"{name} printed: {last}"
+
+
+def test_reserve_runs_without_pandas():
+    script = ROOT / "examples" / "results" / "reserve.py"
+    hide_pandas = (
+        "import runpy, sys; sys.modules['pandas'] = None; "
+        f"runpy.run_path({str(script)!r}, run_name='__main__')"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", hide_pandas],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.strip().splitlines()
+    assert "to_pandas skipped: pandas is not installed" in lines
+    assert lines[-1].startswith("Answer: yes,")
 
 
 def test_readme_code_runs(tmp_path):
