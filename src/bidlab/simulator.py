@@ -12,16 +12,16 @@ from bidlab.auctions import NO_WINNER
 from bidlab.bidders import Bidder
 from bidlab.bidders.base import attach_logger
 from bidlab.callbacks import Callback, checked_callbacks
-from bidlab.config import BidderSpec, SimConfig
+from bidlab.config import Campaign, SimConfig
 from bidlab.logs import LogBook, Logs
 from bidlab.markets import MarketDraw
 from bidlab.rewards import EpisodeReward, StepReward
-from bidlab.types import SECONDS_PER_HOUR, Campaign, EpisodeStats, Feedback, Observation
+from bidlab.types import SECONDS_PER_HOUR, BidRequest, BidResult, Brief, EpisodeReport
 
 
 @dataclass(frozen=True)
 class RunLog:
-    """Arrays are (episodes, steps[, bidders]); episode_rewards is (episodes, bidders).
+    """Arrays are (episodes, steps[, campaigns]); episode_rewards is (episodes, campaigns).
 
     Every array is read-only, so metrics computed from it always agree.
 
@@ -31,8 +31,8 @@ class RunLog:
         The config that made this log.
     bids : numpy.ndarray
         Bids after cleaning and capping; 0 for a bidder outside its segments.
-    values : numpy.ndarray
-        Each bidder's true expected value per step: `Campaign.value` × the
+    true_values : numpy.ndarray
+        Each bidder's true expected value per step: `Campaign.event_value` × the
         true conversion probability.
     winner : numpy.ndarray
         Index of the winning bidder per step; -1 when nobody won.
@@ -43,21 +43,21 @@ class RunLog:
     rewards : numpy.ndarray
         Each bidder's step reward; 0 outside its segments.
     episode_rewards : numpy.ndarray
-        Each bidder's episode reward; NaN when the spec sets none.
+        Each bidder's episode reward; NaN when the campaign sets none.
     segment : numpy.ndarray
         Index into ``config.market.segment_names`` per step.
-    logs : Mapping[str, Mapping[str, numpy.ndarray]]
-        Values bidders saved with `Bidder.log`: stored name, then spec name,
+    logged : Mapping[str, Mapping[str, numpy.ndarray]]
+        Values bidders saved with `Bidder.log`: stored name, then campaign name,
         to an (episodes, steps) array, or (episodes,) for values logged in an
         episode hook. NaN where nothing was logged.
 
     Examples
     --------
     >>> import bidlab as bl
-    >>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))
-    >>> log = bl.run(bl.SimConfig(bidders=[spec], episodes=2, steps=50))
+    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
+    >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=2, steps=50))
     >>> won = log.winner[0] == 0
-    >>> bool(log.price[0][won].sum() <= spec.campaign.budget)
+    >>> bool(log.price[0][won].sum() <= campaign.budget)
     True
     >>> log.bids.flags.writeable
     False
@@ -65,14 +65,14 @@ class RunLog:
 
     config: SimConfig
     bids: npt.NDArray[np.float64]
-    values: npt.NDArray[np.float64]
+    true_values: npt.NDArray[np.float64]
     winner: npt.NDArray[np.int64]
     price: npt.NDArray[np.float64]
     converted: npt.NDArray[np.bool_]
     rewards: npt.NDArray[np.float64]
     episode_rewards: npt.NDArray[np.float64]
     segment: npt.NDArray[np.int64]
-    logs: Logs = field(default_factory=lambda: MappingProxyType({}))
+    logged: Logs = field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True)
@@ -80,13 +80,13 @@ class _Participant:
     name: str
     bidder: Bidder
     nodes: tuple[Bidder, ...]
-    campaign: Campaign
+    brief: Brief
     step_reward: StepReward
     episode_reward: EpisodeReward | None
     reward_params: dict[str, float]
 
     def takes_part_in(self, segment: str) -> bool:
-        segments = self.campaign.segments
+        segments = self.brief.segments
         return segments is None or segment in segments
 
     def check_tree(self) -> None:
@@ -95,7 +95,7 @@ class _Participant:
         for path, node in self.bidder.named_bidders():
             if id(node) not in known:
                 raise ValueError(
-                    f"bidder {self.name!r}: child bidder at {path!r} appeared after "
+                    f"campaign {self.name!r}: child bidder at {path!r} appeared after "
                     "the run started; create child bidders in __init__ and reset "
                     "their state in on_episode_start"
                 )
@@ -105,7 +105,7 @@ def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
     """Simulate every episode of ``config`` and return the full log.
 
     On one OS and CPU type, the same config and seed give a bit-identical
-    log. Each bidder sees only its own observation and feedback.
+    log. Each bidder sees only its own request and result.
 
     Parameters
     ----------
@@ -130,7 +130,7 @@ def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
     --------
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
-    ...     bidders=[bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))],
+    ...     campaigns=[bl.Campaign("t", bl.Linear(), budget=10, event_value=5)],
     ...     episodes=2,
     ...     steps=50,
     ... )
@@ -152,14 +152,16 @@ def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
 
 class _Simulation:
     def __init__(self, config: SimConfig, callbacks: tuple[Callback, ...]):
-        count = len(config.bidders)
+        count = len(config.campaigns)
         # One stream per role, so adding a bidder keeps the market's draws equal.
         market_seed, tie_seed, conversion_seed, *bidder_seeds = np.random.SeedSequence(
             config.seed
         ).spawn(3 + count)
         self.config = config
         self.callbacks = callbacks
-        self.weights = np.array([spec.campaign.value for spec in config.bidders])
+        self.event_values = np.array(
+            [campaign.event_value for campaign in config.campaigns]
+        )
         self.seconds_per_step = config.horizon_hours * SECONDS_PER_HOUR / config.steps
         self.market_draws = config.market.draws(
             count, np.random.default_rng(market_seed)
@@ -169,8 +171,8 @@ class _Simulation:
         self.estimate_seeds: list[np.random.SeedSequence] = []
         self.book = LogBook(config.episodes, config.steps)
         self.participants = [
-            self._participant(spec, seed)
-            for spec, seed in zip(config.bidders, bidder_seeds, strict=True)
+            self._participant(campaign, seed)
+            for campaign, seed in zip(config.campaigns, bidder_seeds, strict=True)
         ]
         self.estimate_rngs = [
             np.random.default_rng(seed) for seed in self.estimate_seeds
@@ -182,7 +184,7 @@ class _Simulation:
         self.log = RunLog(
             config=config,
             bids=np.zeros((*shape, count)),
-            values=np.zeros((*shape, count)),
+            true_values=np.zeros((*shape, count)),
             winner=np.full(shape, NO_WINNER),
             price=np.zeros(shape),
             converted=np.zeros(shape, dtype=bool),
@@ -192,40 +194,36 @@ class _Simulation:
         )
 
     def _participant(
-        self, spec: BidderSpec, seed: np.random.SeedSequence
+        self, campaign: Campaign, seed: np.random.SeedSequence
     ) -> _Participant:
         # Risk: if this child is spawned after the bidder is bound, then a stack's
         # inner bidders take it and the platform-estimate stream shifts.
         self.estimate_seeds.append(seed.spawn(1)[0])
-        campaign = replace(
-            spec.campaign,
-            horizon_hours=self.config.horizon_hours,
-            start_hour=self.config.start_hour,
-        )
-        bidder = spec.build(np.random.default_rng(seed))
+        brief = campaign.brief(self.config.horizon_hours, self.config.start_hour)
+        bidder = campaign.build(np.random.default_rng(seed))
         nodes = tuple(bidder.named_bidders())
         for path, node in nodes:
-            attach_logger(node, self.book.logger(spec.name, path))
+            attach_logger(node, self.book.logger(campaign.name, path))
         return _Participant(
-            name=spec.name,
+            name=campaign.name,
             bidder=bidder,
             nodes=tuple(node for _, node in nodes),
-            campaign=campaign,
-            step_reward=spec.reward,
-            episode_reward=spec.episode_reward,
-            reward_params=spec.merged_reward_params(),
+            brief=brief,
+            step_reward=campaign.step_reward,
+            episode_reward=campaign.episode_reward,
+            reward_params=campaign.merged_reward_params(),
         )
 
     def run_all(self) -> None:
         for episode in range(self.config.episodes):
             self._run_episode(episode)
         self.book.close()
-        self.log = replace(self.log, logs=self.book.result())
+        self.log = replace(self.log, logged=self.book.result())
         # Callers must not change the log, or later metrics silently disagree.
 
         for array in (
             self.log.bids,
-            self.log.values,
+            self.log.true_values,
             self.log.winner,
             self.log.price,
             self.log.converted,
@@ -236,11 +234,11 @@ class _Simulation:
             array.flags.writeable = False
 
     def _run_episode(self, episode: int) -> None:
-        budget_left = np.array([p.campaign.budget for p in self.participants])
+        budget_left = np.array([p.brief.budget for p in self.participants])
         self.book.at_episode(episode)
         for participant in self.participants:
             for node in participant.nodes:
-                node.on_episode_start(participant.campaign)
+                node.on_episode_start(participant.brief)
             participant.check_tree()
 
         for step in range(self.config.steps):
@@ -254,19 +252,19 @@ class _Simulation:
         draw = self._next_draw(episode, step)
         self.book.at_step(episode, step)
         probabilities = draw.probabilities
-        values = self.weights * probabilities
-        observed = self._observed_values(values, probabilities)
+        values = self.event_values * probabilities
+        estimated = self._estimated_values(values, probabilities)
         time = step * self.seconds_per_step
         # Bidders outside their segments are not asked to bid, so they cannot learn from it.
-        observations = {
-            i: Observation(time=time, value=float(observed[i]), features=draw.features)
+        requests = {
+            i: BidRequest(time=time, value=float(estimated[i]), features=draw.features)
             for i, p in enumerate(self.participants)
             if p.takes_part_in(draw.segment)
         }
         bids = np.zeros(len(self.participants))
-        for i, observation in observations.items():
+        for i, request in requests.items():
             bidder = self.participants[i].bidder
-            bids[i] = bidder.forward(observation.value, observation)
+            bids[i] = bidder.forward(request.value, request)
         # Risk: if bids are not capped at the remaining budget, then spend can exceed it.
 
         bids = np.clip(
@@ -274,7 +272,7 @@ class _Simulation:
         )
         # A logged bid of 0 would win at reserve 0, so absent bidders bid -inf.
         auction_bids = np.full(len(self.participants), -np.inf)
-        active = list(observations)
+        active = list(requests)
         auction_bids[active] = bids[active]
         winner, price = self.config.auction.run(auction_bids, self.tie_rng)
         # One draw every step keeps the conversion stream aligned across runs.
@@ -283,33 +281,33 @@ class _Simulation:
         if winner != NO_WINNER:
             budget_left[winner] -= price
 
-        for i, observation in observations.items():
+        for i, request in requests.items():
             participant = self.participants[i]
             won = i == winner
-            feedback = Feedback(
+            result = BidResult(
                 time=time,
                 bid=float(bids[i]),
                 won=won,
                 price=price if won else 0.0,
                 converted=converted and won,
-                value=participant.campaign.value if converted and won else 0.0,
+                realized_value=participant.brief.event_value
+                if converted and won
+                else 0.0,
             )
-            reward = participant.step_reward(
-                observation, feedback, participant.reward_params
-            )
-            batch = [replace(feedback, reward=reward)]
+            reward = participant.step_reward(request, result, participant.reward_params)
+            batch = [replace(result, reward=reward)]
             for node in participant.nodes:
                 node.update_batch(batch)
             self.log.rewards[episode, step, i] = reward
 
         self.log.bids[episode, step] = bids
-        self.log.values[episode, step] = values
+        self.log.true_values[episode, step] = values
         self.log.winner[episode, step] = winner
         self.log.price[episode, step] = price
         self.log.converted[episode, step] = converted
         self.log.segment[episode, step] = self.segment_index[draw.segment]
 
-    def _observed_values(
+    def _estimated_values(
         self,
         values: npt.NDArray[np.float64],
         probabilities: npt.NDArray[np.float64],
@@ -323,7 +321,7 @@ class _Simulation:
         errors = np.array([rng.standard_normal() for rng in self.estimate_rngs])
         # logit(0) and logit(1) are infinite, so p = 0 and p = 1 stay exact.
         estimates = expit(logit(probabilities) + noise * errors)
-        return self.weights * estimates
+        return self.event_values * estimates
 
     def _next_draw(self, episode: int, step: int) -> MarketDraw:
         market = type(self.config.market).__name__
@@ -355,29 +353,29 @@ class _Simulation:
     def _end_episode(self, episode: int) -> None:
         self.book.at_episode(episode)
         winner = self.log.winner[episode]
-        stats_by_bidder: dict[str, EpisodeStats] = {}
+        reports: dict[str, EpisodeReport] = {}
         for i, participant in enumerate(self.participants):
             won = winner == i
             conversions = int(np.sum(self.log.converted[episode] & won))
-            stats = EpisodeStats(
-                budget=participant.campaign.budget,
+            report = EpisodeReport(
+                budget=participant.brief.budget,
                 spend=float(np.sum(self.log.price[episode][won])),
                 wins=int(np.sum(won)),
                 conversions=conversions,
-                value=conversions * participant.campaign.value,
+                realized_value=conversions * participant.brief.event_value,
             )
             episode_reward = None
             if participant.episode_reward is not None:
                 episode_reward = participant.episode_reward(
-                    stats, participant.reward_params
+                    report, participant.reward_params
                 )
                 self.log.episode_rewards[episode, i] = episode_reward
 
             for node in participant.nodes:
-                node.on_episode_end(stats, episode_reward)
+                node.on_episode_end(report, episode_reward)
             participant.check_tree()
-            stats_by_bidder[participant.name] = stats
+            reports[participant.name] = report
 
-        read_only = MappingProxyType(stats_by_bidder)
+        read_only = MappingProxyType(reports)
         for callback in self.callbacks:
             callback.on_episode_end(episode, read_only)

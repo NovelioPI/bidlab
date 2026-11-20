@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from bidlab.bidders import Truthful
-from bidlab.config import BidderSpec, SimConfig
+from bidlab.bidders import Linear
+from bidlab.config import Campaign, SimConfig
 from bidlab.markets import (
     IndependentValues,
     LogisticContext,
@@ -14,16 +14,15 @@ from bidlab.markets import (
     Segmented,
 )
 from bidlab.simulator import run
-from bidlab.types import Campaign
 
 
-def probabilities(market, bidders, steps, seed=0):
-    draws = market.draws(bidders, np.random.default_rng(seed))
+def probabilities(market, count, steps, seed=0):
+    draws = market.draws(count, np.random.default_rng(seed))
     return np.array([draw.probabilities for draw in islice(draws, steps)])
 
 
 def test_logistic_probabilities_inside_unit_interval():
-    rates = probabilities(LogisticContext(context_dim=4), bidders=3, steps=50, seed=1)
+    rates = probabilities(LogisticContext(context_size=4), count=3, steps=50, seed=1)
     assert rates.shape == (50, 3)
     assert np.all((rates > 0) & (rates < 1))
 
@@ -37,20 +36,18 @@ def test_logistic_adding_bidder_keeps_draws(fewer, more):
 
 
 def test_bias_mean_sets_typical_conversion_rate():
-    rates = probabilities(
-        LogisticContext(bias_mean=-3.0), bidders=20, steps=2000, seed=2
-    )
+    rates = probabilities(LogisticContext(bias_mean=-3.0), count=20, steps=2000, seed=2)
     # σ(-3) ≈ 0.047; context noise spreads it, so the mean sits near 5-10%.
     assert 0.03 < rates.mean() < 0.12
 
 
-def segment_draws(market, bidders, steps, seed=0):
-    return list(islice(market.draws(bidders, np.random.default_rng(seed)), steps))
+def segment_draws(market, count, steps, seed=0):
+    return list(islice(market.draws(count, np.random.default_rng(seed)), steps))
 
 
 def test_segment_shares_and_feature():
     market = Segmented((Segment("news", 0.7), Segment("sports", 0.3)))
-    draws = segment_draws(market, bidders=2, steps=20_000)
+    draws = segment_draws(market, count=2, steps=20_000)
     names = [draw.features["segment"] for draw in draws]
     assert set(names) == {"news", "sports"}
     assert [draw.segment for draw in draws] == names
@@ -60,8 +57,8 @@ def test_segment_shares_and_feature():
 def test_lift_shifts_logit():
     lifted = Segmented((Segment("plain", 0.5), Segment("lifted", 0.5, lift=2.0)))
     flat = Segmented((Segment("plain", 0.5), Segment("lifted", 0.5)))
-    lifted_draws = segment_draws(lifted, bidders=3, steps=4000, seed=5)
-    flat_draws = segment_draws(flat, bidders=3, steps=4000, seed=5)
+    lifted_draws = segment_draws(lifted, count=3, steps=4000, seed=5)
+    flat_draws = segment_draws(flat, count=3, steps=4000, seed=5)
     in_lifted = np.array([draw.segment == "lifted" for draw in flat_draws])
     lifted_rates = np.array([draw.probabilities for draw in lifted_draws])
     base_rates = np.array([draw.probabilities for draw in flat_draws])
@@ -94,8 +91,8 @@ def test_segmented_rejects_bad_segments(segments, message):
 def test_segmented_adding_bidder_keeps_draws(fewer, more):
     market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)))
     for seed in range(3):
-        small = segment_draws(market, bidders=fewer, steps=500, seed=seed)
-        large = segment_draws(market, bidders=more, steps=500, seed=seed)
+        small = segment_draws(market, count=fewer, steps=500, seed=seed)
+        large = segment_draws(market, count=more, steps=500, seed=seed)
         assert [d.segment for d in small] == [d.segment for d in large]
         np.testing.assert_array_equal(
             np.array([d.probabilities for d in small]),
@@ -111,14 +108,14 @@ def test_independent_uniform_mean_and_correlation():
 
 def test_independent_uniform_values_reach_the_log():
     config = SimConfig(
-        bidders=[
-            BidderSpec(name, Truthful(), Campaign(1e9, 1.0)) for name in ("a", "b")
+        campaigns=[
+            Campaign(name, Linear(), budget=1e9, event_value=1.0) for name in ("a", "b")
         ],
         market=IndependentValues(stats.uniform(0, 1)),
         episodes=2,
         steps=10_000,
     )
-    values = run(config).values.reshape(-1, 2)
+    values = run(config).true_values.reshape(-1, 2)
     assert np.all(np.abs(values.mean(axis=0) - 0.5) < 0.01)
     assert abs(np.corrcoef(values[:, 0], values[:, 1])[0, 1]) < 0.03
 

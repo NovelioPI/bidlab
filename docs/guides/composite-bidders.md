@@ -20,7 +20,7 @@ import bidlab as bl
 
 
 class Shade(bl.Bidder):
-    def forward(self, value, observation, factor=1.0):
+    def forward(self, value, request, factor=1.0):
         return value * factor
 
 
@@ -31,13 +31,13 @@ class NightShade(bl.Bidder):
         self.shade = Shade()
         self.pacing = bl.PidPacing()
 
-    def on_episode_start(self, campaign):
-        self.campaign = campaign
+    def on_episode_start(self, brief):
+        self.brief = brief
 
-    def forward(self, value, observation):
-        factor = 0.6 if self.campaign.hour_of_day(observation.time) < 6 else 0.9
-        shaded = self.shade.forward(value, observation, factor=factor)
-        return self.pacing.forward(shaded, observation)
+    def forward(self, value, request):
+        factor = 0.6 if self.brief.hour_of_day(request.time) < 6 else 0.9
+        shaded = self.shade.forward(value, request, factor=factor)
+        return self.pacing.forward(shaded, request)
 ```
 
 ## Paths
@@ -47,7 +47,7 @@ Each bidder in a tree has a path. `named_bidders()` lists them, parent first.
 ```python
 night = NightShade()
 print([path for path, _ in night.named_bidders()])  # ['', 'shade', 'pacing']
-print([path for path, _ in bl.Stack(bl.Truthful(), bl.PidPacing()).named_bidders()])
+print([path for path, _ in bl.Stack(bl.Linear(), bl.PidPacing()).named_bidders()])
 # ['', 'bidders.0', 'bidders.1']
 ```
 
@@ -55,11 +55,11 @@ A child's logged names carry its path, such as `"pacing.multiplier"`. See [Loggi
 
 ```python
 config = bl.SimConfig(
-    bidders=[bl.BidderSpec("night", night, bl.Campaign(budget=15, value=5))],
+    campaigns=[bl.Campaign("night", night, budget=15, event_value=5)],
     episodes=2,
     steps=200,
 )
-print(bl.run(config).logs["pacing.multiplier"]["night"].shape)  # (2, 200)
+print(bl.run(config).logged["pacing.multiplier"]["night"].shape)  # (2, 200)
 ```
 
 ## Examples

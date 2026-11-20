@@ -3,10 +3,10 @@
 from typing import override
 
 from bidlab.bidders.base import Bidder
-from bidlab.types import Observation
+from bidlab.types import BidRequest
 
 
-class Truthful(Bidder):
+class Linear(Bidder):
     """Bids `multiplier` × value; multiplier 1 is truthful.
 
     Truthful bidding is optimal in a second-price auction without a budget
@@ -25,11 +25,11 @@ class Truthful(Bidder):
     Examples
     --------
     >>> import bidlab as bl
-    >>> shaded = bl.BidderSpec(
-    ...     "shaded", bl.Truthful(multiplier=0.8), bl.Campaign(budget=10, value=5)
+    >>> shaded = bl.Campaign(
+    ...     "shaded", bl.Linear(multiplier=0.8), budget=10, event_value=5
     ... )
-    >>> log = bl.run(bl.SimConfig(bidders=[shaded], episodes=1, steps=20))
-    >>> bool((log.bids == 0.8 * log.values).all())
+    >>> log = bl.run(bl.SimConfig(campaigns=[shaded], episodes=1, steps=20))
+    >>> bool((log.bids == 0.8 * log.true_values).all())
     True
     """
 
@@ -40,5 +40,5 @@ class Truthful(Bidder):
         self.multiplier = multiplier
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         return self.multiplier * value

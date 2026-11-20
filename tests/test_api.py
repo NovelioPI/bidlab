@@ -1,6 +1,7 @@
 import hashlib
 import importlib
 import importlib.util
+import re
 import tomllib
 from pathlib import Path
 
@@ -8,11 +9,10 @@ import pytest
 
 from bidlab import rewards
 from bidlab.auctions import FirstPrice, SecondPrice
-from bidlab.bidders import PidPacing, Truthful, UcbMultiplier
-from bidlab.config import BidderSpec, SimConfig
+from bidlab.bidders import Linear, PidPacing, UcbMultiplier
+from bidlab.config import Campaign, SimConfig
 from bidlab.runner import run_many
 from bidlab.simulator import run
-from bidlab.types import Campaign
 
 ROOT = Path(__file__).parent.parent
 
@@ -23,25 +23,32 @@ RUN_LOG_HASHES = {
     "second": "d4da1e3bb9b8788845c833e0d13f4294fcbd0e43207c94bef87073305a1c28f9",
 }
 # Main results table CSV for seeds 0 and 1, recorded with the run-log hashes above.
-RESULTS_HASH = "4b6300a39837e77c144d1af327aab7ed8d5064f4e412b973838ba6a2c9bee51e"
+# Re-recorded after the campaign and realized_value column renames; data rows unchanged.
+RESULTS_HASH = "2c47a056dbe777b71967f58ac6b69835ddf8478a92d663ad90c008de775051cc"
 
 
 def fingerprint_config(kind):
-    bidders = (
-        BidderSpec("t", Truthful(), Campaign(40.0, 5.0)),
-        BidderSpec("p", PidPacing(), Campaign(10.0, 5.0)),
-        BidderSpec(
-            "b", UcbMultiplier(), Campaign(40.0, 4.0), reward=rewards.conversions
+    campaigns = (
+        Campaign("t", Linear(), budget=40.0, event_value=5.0),
+        Campaign("p", PidPacing(), budget=10.0, event_value=5.0),
+        Campaign(
+            "b",
+            UcbMultiplier(),
+            budget=40.0,
+            event_value=4.0,
+            step_reward=rewards.conversions,
         ),
-        BidderSpec(
+        Campaign(
             "s",
-            Truthful(multiplier=0.8),
-            Campaign(40.0, 6.0, cpa_target=3.0),
+            Linear(multiplier=0.8),
+            budget=40.0,
+            event_value=6.0,
+            cpa_target=3.0,
             episode_reward=rewards.cpa_score,
         ),
     )
     return SimConfig(
-        bidders=bidders,
+        campaigns=campaigns,
         episodes=3,
         steps=300,
         seed=12,
@@ -55,7 +62,7 @@ def test_run_log_fingerprint(kind):
     digest = hashlib.sha256()
     for array in (
         log.bids,
-        log.values,
+        log.true_values,
         log.winner,
         log.price,
         log.converted,
@@ -82,26 +89,32 @@ MAIN_HASHES_WITHOUT_PID = {
 
 @pytest.mark.parametrize("kind", ["first", "second"])
 def test_run_log_without_pid_matches_main(kind):
-    bidders = (
-        BidderSpec("t", Truthful(), Campaign(40.0, 5.0)),
-        BidderSpec(
-            "b", UcbMultiplier(), Campaign(40.0, 4.0), reward=rewards.conversions
+    campaigns = (
+        Campaign("t", Linear(), budget=40.0, event_value=5.0),
+        Campaign(
+            "b",
+            UcbMultiplier(),
+            budget=40.0,
+            event_value=4.0,
+            step_reward=rewards.conversions,
         ),
-        BidderSpec(
+        Campaign(
             "s",
-            Truthful(multiplier=0.8),
-            Campaign(40.0, 6.0, cpa_target=3.0),
+            Linear(multiplier=0.8),
+            budget=40.0,
+            event_value=6.0,
+            cpa_target=3.0,
             episode_reward=rewards.cpa_score,
         ),
     )
     auction = FirstPrice(0.01) if kind == "first" else SecondPrice(0.01)
     log = run(
-        SimConfig(bidders=bidders, episodes=3, steps=300, seed=12, auction=auction)
+        SimConfig(campaigns=campaigns, episodes=3, steps=300, seed=12, auction=auction)
     )
     digest = hashlib.sha256()
     for array in (
         log.bids,
-        log.values,
+        log.true_values,
         log.winner,
         log.price,
         log.converted,
@@ -117,23 +130,23 @@ PUBLIC_NAMES = {
     "Callback",
     "SimConfig",
     "Stack",
-    "BidderSpec",
     "Campaign",
+    "Brief",
     "markets",
     "FirstPrice",
     "SecondPrice",
     "Bidder",
-    "Truthful",
+    "Linear",
     "PidPacing",
     "UcbMultiplier",
-    "Observation",
-    "Feedback",
-    "EpisodeStats",
+    "BidRequest",
+    "BidResult",
+    "EpisodeReport",
     "RunLog",
     "run",
     "run_many",
     "Results",
-    "bidder_metrics",
+    "campaign_metrics",
     "platform_metrics",
     "regret",
     "rewards",
@@ -180,7 +193,7 @@ def test_metrics_doc_defines_segment_columns():
 def test_bidder_families_are_same_objects():
     import bidlab as bl
 
-    assert bl.bidders.baselines.Truthful is bl.Truthful
+    assert bl.bidders.baselines.Linear is bl.Linear
     assert bl.bidders.pacing.PidPacing is bl.PidPacing
     assert bl.bidders.bandits.UcbMultiplier is bl.UcbMultiplier
 
@@ -188,16 +201,18 @@ def test_bidder_families_are_same_objects():
 def test_builtin_rewards_are_callable():
     import bidlab as bl
 
-    observation = bl.Observation(time=0.0, value=0.2)
-    feedback = bl.Feedback(
-        time=0.0, bid=0.3, won=True, price=0.25, converted=True, value=4.0
+    request = bl.BidRequest(time=0.0, value=0.2)
+    result = bl.BidResult(
+        time=0.0, bid=0.3, won=True, price=0.25, converted=True, realized_value=4.0
     )
-    stats = bl.EpisodeStats(budget=10, spend=2, wins=3, conversions=1, value=4)
-    assert bl.rewards.surplus(observation, feedback, {}) == 3.75
-    assert bl.rewards.conversions(observation, feedback, {}) == 1.0
-    assert bl.rewards.value(observation, feedback, {}) == 4.0
-    assert bl.rewards.cpa_score(stats, {"cpa_target": 2.0}) == 4.0
-    assert bl.rewards.total_surplus(stats, {}) == 2.0
+    report = bl.EpisodeReport(
+        budget=10, spend=2, wins=3, conversions=1, realized_value=4
+    )
+    assert bl.rewards.surplus(request, result, {}) == 3.75
+    assert bl.rewards.conversions(request, result, {}) == 1.0
+    assert bl.rewards.realized_value(request, result, {}) == 4.0
+    assert bl.rewards.cpa_score(report, {"cpa_target": 2.0}) == 4.0
+    assert bl.rewards.total_surplus(report, {}) == 2.0
 
 
 def test_removed_interfaces():
@@ -214,3 +229,13 @@ def test_removed_interfaces():
     assert "yaml" not in dependencies
     assert "scripts" not in pyproject["project"]
     assert pyproject["project"]["name"] == "bidlab"
+
+
+def relative_links(markdown: str) -> list[str]:
+    targets = re.findall(r"\]\(([^)]+)\)", markdown)
+    return [target for target in targets if not target.startswith(("https://", "#"))]
+
+
+def test_readme_links_work_on_pypi():
+    # PyPI shows the README without the repo, so a relative link breaks there.
+    assert relative_links((ROOT / "README.md").read_text()) == []

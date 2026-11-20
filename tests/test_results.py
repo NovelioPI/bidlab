@@ -7,33 +7,32 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from bidlab.bidders import Bidder, PidPacing, Truthful
-from bidlab.config import BidderSpec, SimConfig
+from bidlab.bidders import Bidder, Linear, PidPacing
+from bidlab.config import Campaign, SimConfig
 from bidlab.markets import Market, MarketDraw, Segment, Segmented
 from bidlab.results import Results
 from bidlab.runner import COLUMNS, SEGMENT_COLUMNS, run_many
 from bidlab.simulator import run
-from bidlab.types import Campaign
 
 
 def segments_table(results: Results) -> Results:
-    assert results.segments is not None
-    return results.segments
+    assert results.segment_rows is not None
+    return results.segment_rows
 
 
 def config(*extra):
-    bidders = [
-        BidderSpec("t", Truthful(), Campaign(20.0, 5.0)),
-        BidderSpec("p", PidPacing(), Campaign(8.0, 5.0)),
+    campaigns = [
+        Campaign("t", Linear(), budget=20.0, event_value=5.0),
+        Campaign("p", PidPacing(), budget=8.0, event_value=5.0),
         *extra,
     ]
-    return SimConfig(bidders=bidders, episodes=2, steps=100)
+    return SimConfig(campaigns=campaigns, episodes=2, steps=100)
 
 
 def test_rows_ordered_by_seed_then_bidder():
     results = run_many(config(), seeds=range(3))
     assert len(results) == 3 * 2
-    assert [(row["seed"], row["bidder"]) for row in results.rows] == [
+    assert [(row["seed"], row["campaign"]) for row in results.rows] == [
         (0, "t"),
         (0, "p"),
         (1, "t"),
@@ -55,14 +54,15 @@ def test_lambdas_and_closures_run_in_parallel():
     fraction = 0.7
 
     class Closure(Bidder):
-        def forward(self, value, observation):
+        def forward(self, value, request):
             return fraction * value
 
-    extra = BidderSpec(
+    extra = Campaign(
         "closure",
         Closure(),
-        Campaign(20.0, 5.0),
-        reward=lambda observation, feedback, params: 2 * feedback.price,
+        budget=20.0,
+        event_value=5.0,
+        step_reward=lambda request, result, params: 2 * result.price,
     )
     serial = run_many(config(extra), seeds=range(3))
     parallel = run_many(config(extra), seeds=range(3), workers=2)
@@ -74,14 +74,14 @@ def test_unpicklable_spec_fails_before_runs(monkeypatch):
         def __init__(self):
             self.lock = threading.Lock()
 
-        def forward(self, value, observation):
+        def forward(self, value, request):
             return value
 
     pools = []
     monkeypatch.setattr(
         "bidlab.runner.ProcessPoolExecutor", lambda *args, **kwargs: pools.append(1)
     )
-    extra = BidderSpec("locked", Locked(), Campaign(20.0, 5.0))
+    extra = Campaign("locked", Locked(), budget=20.0, event_value=5.0)
     with pytest.raises(TypeError, match="'locked'.*workers=1"):
         run_many(config(extra), seeds=range(2), workers=2)
 
@@ -92,7 +92,7 @@ def hand_results(spends):
     rows = []
     for seed, spend in enumerate(spends):
         row: dict[str, str | float] = {column: 0.0 for column in COLUMNS}
-        row.update(seed=seed, bidder="a", spend=spend)
+        row.update(seed=seed, campaign="a", spend=spend)
         rows.append(row)
 
     return Results(columns=COLUMNS, rows=tuple(rows))
@@ -103,7 +103,7 @@ def test_summary_interval_matches_student_t():
     # mean 2, sample std 1, n 3: half-width = t(0.975, 2) / sqrt(3)
     half_width = stats.t.ppf(0.975, 2) / np.sqrt(3)
     assert f"2.000 ± {half_width:.3f}" in summary
-    assert summary.splitlines()[0].split()[:2] == ["bidder", "spend"]
+    assert summary.splitlines()[0].split()[:2] == ["campaign", "spend"]
 
 
 def test_summary_one_seed_shows_na():
@@ -136,7 +136,7 @@ def test_to_pandas_matches_rows():
     assert tuple(frame.columns) == COLUMNS
     # to_pandas exports rows only, so the logs come from the original.
     rows = tuple(frame.to_dict("records"))
-    round_trip = Results(columns=COLUMNS, rows=rows, logs=results.logs)
+    round_trip = Results(columns=COLUMNS, rows=rows, logged=results.logged)
     assert round_trip.equals(results)
 
 
@@ -177,16 +177,16 @@ def test_results_rows_are_read_only():
 
 def test_run_log_arrays_are_read_only():
     log = run(config())
-    for array in (log.bids, log.values, log.winner, log.price, log.converted):
+    for array in (log.bids, log.true_values, log.winner, log.price, log.converted):
         with pytest.raises(ValueError, match="read-only"):
             array[0, 0] = 0
 
 
 def test_custom_market_same_rows_in_parallel():
     class LowRates(Market):
-        def draws(self, bidders, rng):
+        def draws(self, count, rng):
             while True:
-                yield MarketDraw({}, rng.uniform(0.0, 0.2, size=bidders))
+                yield MarketDraw({}, rng.uniform(0.0, 0.2, size=count))
 
     cfg = dataclasses.replace(config(), market=LowRates())
     serial = run_many(cfg, seeds=range(3))
@@ -197,27 +197,27 @@ def test_custom_market_same_rows_in_parallel():
 
 def segmented_config():
     market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)))
-    targeted = BidderSpec("n", Truthful(), Campaign(20.0, 5.0, segments=("news",)))
+    targeted = Campaign("n", Linear(), budget=20.0, event_value=5.0, segments=("news",))
     return SimConfig(
-        bidders=[*config().bidders, targeted], episodes=2, steps=100, market=market
+        campaigns=[*config().campaigns, targeted], episodes=2, steps=100, market=market
     )
 
 
 def test_segments_table_columns():
     results = run_many(segmented_config(), seeds=range(2))
     assert results.columns == COLUMNS
-    assert isinstance(results.segments, Results)
-    assert results.segments.columns == SEGMENT_COLUMNS
+    assert isinstance(results.segment_rows, Results)
+    assert results.segment_rows.columns == SEGMENT_COLUMNS
     assert SEGMENT_COLUMNS == (
         "seed",
-        "bidder",
+        "campaign",
         "segment",
         "spend",
         "wins",
         "conversions",
         "surplus",
     )
-    assert len(results.segments) == 2 * 3 * 2
+    assert len(results.segment_rows) == 2 * 3 * 2
 
 
 def test_segment_sums_match_main_table():
@@ -226,7 +226,7 @@ def test_segment_sums_match_main_table():
         own = [
             segment
             for segment in segments_table(results).rows
-            if segment["seed"] == row["seed"] and segment["bidder"] == row["bidder"]
+            if segment["seed"] == row["seed"] and segment["campaign"] == row["campaign"]
         ]
         for column in ("spend", "wins", "conversions", "surplus"):
             total = sum(float(segment[column]) for segment in own)
@@ -238,7 +238,7 @@ def test_targeted_bidder_has_nothing_in_other_segments():
     sports = [
         row
         for row in segments_table(results).rows
-        if row["bidder"] == "n" and row["segment"] == "sports"
+        if row["campaign"] == "n" and row["segment"] == "sports"
     ]
     assert sports and all(row["wins"] == 0 and row["spend"] == 0 for row in sports)
 
@@ -246,7 +246,7 @@ def test_targeted_bidder_has_nothing_in_other_segments():
 def test_unsegmented_market_has_all_segment():
     results = run_many(config(), seeds=range(2))
     assert [
-        (row["seed"], row["bidder"], row["segment"])
+        (row["seed"], row["campaign"], row["segment"])
         for row in segments_table(results).rows
     ] == [
         (0, "t", "all"),
@@ -260,7 +260,7 @@ def test_segments_summary_and_csv(tmp_path):
     segments = segments_table(run_many(segmented_config(), seeds=range(3)))
     lines = segments.summary().splitlines()
     assert lines[0].split() == [
-        "bidder",
+        "campaign",
         "segment",
         "spend",
         "wins",
@@ -302,19 +302,22 @@ def test_custom_market_segments_reach_segments_table():
         def segment_names(self):
             return ("day", "night")
 
-        def draws(self, bidders, rng):
+        def draws(self, count, rng):
             while True:
                 name = "day" if rng.random() < 0.6 else "night"
-                yield MarketDraw({}, rng.uniform(0.0, 0.2, size=bidders), name)
+                yield MarketDraw({}, rng.uniform(0.0, 0.2, size=count), name)
 
-    night = BidderSpec("n", Truthful(), Campaign(20.0, 5.0, segments=("night",)))
+    night = Campaign("n", Linear(), budget=20.0, event_value=5.0, segments=("night",))
     cfg = SimConfig(
-        bidders=[*config().bidders, night], episodes=2, steps=100, market=DayAndNight()
+        campaigns=[*config().campaigns, night],
+        episodes=2,
+        steps=100,
+        market=DayAndNight(),
     )
     segments = segments_table(run_many(cfg, seeds=range(2)))
     assert {row["segment"] for row in segments.rows} == {"day", "night"}
     day_rows = [
-        r for r in segments.rows if r["bidder"] == "n" and r["segment"] == "day"
+        r for r in segments.rows if r["campaign"] == "n" and r["segment"] == "day"
     ]
     assert day_rows and all(row["wins"] == 0 for row in day_rows)
 

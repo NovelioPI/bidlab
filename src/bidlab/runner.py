@@ -14,8 +14,8 @@ from bidlab.callbacks import Callback, checked_callbacks
 from bidlab.config import SimConfig
 from bidlab.logs import Logs
 from bidlab.metrics import (
-    BidderEpisodeMetrics,
-    bidder_metrics,
+    CampaignEpisodeMetrics,
+    campaign_metrics,
     platform_metrics,
     segment_metrics,
 )
@@ -24,22 +24,22 @@ from bidlab.simulator import run
 
 BIDDER_COLUMNS = tuple(
     f.name
-    for f in dataclasses.fields(BidderEpisodeMetrics)
-    if f.name not in ("episode", "bidder")
+    for f in dataclasses.fields(CampaignEpisodeMetrics)
+    if f.name not in ("episode", "campaign")
 )
-COLUMNS = ("seed", "bidder", *BIDDER_COLUMNS, "revenue", "welfare")
+COLUMNS = ("seed", "campaign", *BIDDER_COLUMNS, "revenue", "welfare")
 SEGMENT_METRIC_COLUMNS = ("spend", "wins", "conversions", "surplus")
-SEGMENT_COLUMNS = ("seed", "bidder", "segment", *SEGMENT_METRIC_COLUMNS)
+SEGMENT_COLUMNS = ("seed", "campaign", "segment", *SEGMENT_METRIC_COLUMNS)
 
 RowBuilder = dict[str, str | int | float]
 
 
 @dataclasses.dataclass(frozen=True)
 class _SeedRows:
-    main: list[ResultRow]
-    segments: list[ResultRow]
+    rows: list[ResultRow]
+    segment_rows: list[ResultRow]
     # Plain dicts, since a worker cannot pickle the run log's read-only mappings.
-    logs: dict[str, dict[str, npt.NDArray[np.float64]]]
+    logged: dict[str, dict[str, npt.NDArray[np.float64]]]
 
 
 def run_many(
@@ -69,7 +69,7 @@ def run_many(
     Returns
     -------
     Results
-        The bidder table, with the per-segment table in ``.segments``.
+        The bidder table, with the per-segment table in ``.segment_rows``.
 
     Raises
     ------
@@ -83,15 +83,15 @@ def run_many(
     --------
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
-    ...     bidders=[
-    ...         bl.BidderSpec("a", bl.Truthful(), bl.Campaign(budget=10, value=5)),
-    ...         bl.BidderSpec("b", bl.PidPacing(), bl.Campaign(budget=10, value=5)),
+    ...     campaigns=[
+    ...         bl.Campaign("a", bl.Linear(), budget=10, event_value=5),
+    ...         bl.Campaign("b", bl.PidPacing(), budget=10, event_value=5),
     ...     ],
     ...     episodes=2,
     ...     steps=50,
     ... )
     >>> results = bl.run_many(config, seeds=[0, 1])
-    >>> [(row["seed"], row["bidder"]) for row in results.rows]
+    >>> [(row["seed"], row["campaign"]) for row in results.rows]
     [(0, 'a'), (0, 'b'), (1, 'a'), (1, 'b')]
     """
     if workers < 1:
@@ -125,13 +125,15 @@ def _collect(
 
 
 def _results(per_seed: list[_SeedRows]) -> Results:
-    rows = tuple(row for seed_rows in per_seed for row in seed_rows.main)
-    segment_rows = tuple(row for seed_rows in per_seed for row in seed_rows.segments)
+    rows = tuple(row for seed_rows in per_seed for row in seed_rows.rows)
+    segment_rows = tuple(
+        row for seed_rows in per_seed for row in seed_rows.segment_rows
+    )
     return Results(
         columns=COLUMNS,
         rows=rows,
-        segments=Results(columns=SEGMENT_COLUMNS, rows=segment_rows),
-        logs=_stacked_logs([seed_rows.logs for seed_rows in per_seed]),
+        segment_rows=Results(columns=SEGMENT_COLUMNS, rows=segment_rows),
+        logged=_stacked_logs([seed_rows.logged for seed_rows in per_seed]),
     )
 
 
@@ -141,30 +143,30 @@ def _stacked_logs(
     shapes: dict[str, dict[str, tuple[int, ...]]] = {}
     for logs in per_seed:
         for name, arrays in logs.items():
-            for spec, array in arrays.items():
-                shapes.setdefault(name, {})[spec] = array.shape
+            for campaign, array in arrays.items():
+                shapes.setdefault(name, {})[campaign] = array.shape
 
     return {
         name: {
-            spec: np.stack(
+            campaign: np.stack(
                 [
-                    logs.get(name, {}).get(spec, np.full(shape, np.nan))
+                    logs.get(name, {}).get(campaign, np.full(shape, np.nan))
                     for logs in per_seed
                 ]
             )
-            for spec, shape in specs.items()
+            for campaign, shape in campaigns.items()
         }
-        for name, specs in shapes.items()
+        for name, campaigns in shapes.items()
     }
 
 
 def _pickle_config(config: SimConfig) -> bytes:
-    for spec in config.bidders:
+    for campaign in config.campaigns:
         try:
-            cloudpickle.dumps(spec)
+            cloudpickle.dumps(campaign)
         except Exception as error:
             raise TypeError(
-                f"bidder {spec.name!r} cannot be sent to worker processes "
+                f"campaign {campaign.name!r} cannot be sent to worker processes "
                 f"({error}); use workers=1"
             ) from error
 
@@ -180,11 +182,11 @@ def _seed_rows(config: SimConfig, seed: int) -> _SeedRows:
     platform = platform_metrics(log)
     revenue = float(np.mean([p.revenue for p in platform]))
     welfare = float(np.mean([p.welfare for p in platform]))
-    episodes = bidder_metrics(log)
+    episodes = campaign_metrics(log)
     rows: list[ResultRow] = []
-    for spec in config.bidders:
-        own = [m for m in episodes if m.bidder == spec.name]
-        row: RowBuilder = {"seed": seed, "bidder": spec.name}
+    for campaign in config.campaigns:
+        own = [m for m in episodes if m.campaign == campaign.name]
+        row: RowBuilder = {"seed": seed, "campaign": campaign.name}
         for column in BIDDER_COLUMNS:
             row[column] = float(np.mean([getattr(m, column) for m in own]))
 
@@ -194,17 +196,19 @@ def _seed_rows(config: SimConfig, seed: int) -> _SeedRows:
 
     segments = segment_metrics(log)
     segment_rows: list[ResultRow] = []
-    for spec in config.bidders:
+    for campaign in config.campaigns:
         for name in config.market.segment_names:
-            own = [m for m in segments if m.bidder == spec.name and m.segment == name]
+            own = [
+                m for m in segments if m.campaign == campaign.name and m.segment == name
+            ]
             segment_row: RowBuilder = {
                 "seed": seed,
-                "bidder": spec.name,
+                "campaign": campaign.name,
                 "segment": name,
             }
             for column in SEGMENT_METRIC_COLUMNS:
                 segment_row[column] = float(np.mean([getattr(m, column) for m in own]))
             segment_rows.append(segment_row)
 
-    logs = {name: dict(arrays) for name, arrays in log.logs.items()}
-    return _SeedRows(main=rows, segments=segment_rows, logs=logs)
+    logs = {name: dict(arrays) for name, arrays in log.logged.items()}
+    return _SeedRows(rows=rows, segment_rows=segment_rows, logged=logs)

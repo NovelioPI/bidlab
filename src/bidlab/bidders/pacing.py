@@ -5,7 +5,7 @@ from typing import override
 import numpy as np
 
 from bidlab.bidders.base import Bidder
-from bidlab.types import Campaign, Feedback, Observation
+from bidlab.types import BidRequest, BidResult, Brief
 
 
 class PidPacing(Bidder):
@@ -39,9 +39,9 @@ class PidPacing(Bidder):
     in each half of the episode:
 
     >>> import bidlab as bl
-    >>> pid = bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=10, value=5))
+    >>> pid = bl.Campaign("pid", bl.PidPacing(), budget=10, event_value=5)
     >>> config = bl.SimConfig(
-    ...     bidders=[pid], auction=bl.FirstPrice(), episodes=1, steps=200
+    ...     campaigns=[pid], auction=bl.FirstPrice(), episodes=1, steps=200
     ... )
     >>> log = bl.run(config)
     >>> round(float(log.price[0, :100].sum()), 1), round(float(log.price[0, 100:].sum()), 1)
@@ -80,9 +80,9 @@ class PidPacing(Bidder):
         self.log_state = log_state
 
     @override
-    def on_episode_start(self, campaign: Campaign) -> None:
-        self.budget = campaign.budget
-        self.horizon = campaign.time_left(0.0)
+    def on_episode_start(self, brief: Brief) -> None:
+        self.budget = brief.budget
+        self.horizon = brief.time_left(0.0)
         self.updates = 0
         self.spent = 0.0
         self.integral = 0.0
@@ -90,17 +90,17 @@ class PidPacing(Bidder):
         self.multiplier = self.initial_multiplier
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         if self.log_state:
             self.log("multiplier", self.multiplier)
 
         return self.multiplier * value
 
     @override
-    def update(self, feedback: Feedback) -> None:
+    def update(self, result: BidResult) -> None:
         self.updates += 1
-        self.spent += feedback.price
-        planned = self.budget * feedback.time / self.horizon
+        self.spent += result.price
+        planned = self.budget * result.time / self.horizon
         # Dividing by budget makes the gains independent of budget size.
         error = (planned - self.spent) / self.budget
         # A per-update sum winds up over long episodes; the mean does not.
