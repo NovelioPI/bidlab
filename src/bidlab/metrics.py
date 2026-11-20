@@ -30,6 +30,9 @@ class CampaignEpisodeMetrics:
         Sum of prices paid.
     wins : int
         Impressions won.
+    clicks : int
+        Won impressions that were clicked; equals ``wins`` when the market
+        has no click stage.
     conversions : int
         Realized conversions on won impressions.
     realized_value : float
@@ -54,6 +57,7 @@ class CampaignEpisodeMetrics:
     campaign: str
     spend: float
     wins: int
+    clicks: int
     conversions: int
     realized_value: float
     surplus: float
@@ -80,6 +84,8 @@ class CampaignSegmentMetrics:
         Sum of prices paid in the segment.
     wins : int
         Impressions won in the segment.
+    clicks : int
+        Won impressions in the segment that were clicked.
     conversions : int
         Realized conversions in the segment.
     surplus : float
@@ -91,6 +97,7 @@ class CampaignSegmentMetrics:
     segment: str
     spend: float
     wins: int
+    clicks: int
     conversions: int
     surplus: float
 
@@ -172,6 +179,7 @@ def campaign_metrics(log: RunLog) -> list[CampaignEpisodeMetrics]:
                     campaign=campaign.name,
                     spend=spend,
                     wins=int(won.sum()),
+                    clicks=int((log.clicked[episode] & won).sum()),
                     conversions=conversions,
                     realized_value=value,
                     surplus=value - spend,
@@ -222,6 +230,7 @@ def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
                         segment=name,
                         spend=spend,
                         wins=int(won_here.sum()),
+                        clicks=int((log.clicked[episode] & won_here).sum()),
                         conversions=conversions,
                         surplus=conversions * campaign.event_value - spend,
                     )

@@ -9,9 +9,10 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | Symbol | Meaning | Unit |
 |---|---|---|
 | t | Step in the episode | step |
-| vᵢₜ | True expected value of campaign i at step t: wᵢ × pᵢₜ, as in `RunLog.true_values` | money |
+| vᵢₜ | True expected value of campaign i at step t: wᵢ × cᵢₜ × pᵢₜ, as in `RunLog.true_values` | money |
 | wᵢ | Value of one event to campaign i: `Campaign.event_value`. Today the event is a conversion | money |
-| pᵢₜ | True conversion probability of campaign i at step t, not the bidder's estimate | probability |
+| cᵢₜ | True click probability (pCTR) of campaign i at step t; 1 when the market has no click stage | probability |
+| pᵢₜ | True conversion probability after a click (pCVR) of campaign i at step t, not the bidder's estimate | probability |
 | Wᵢ | Steps that campaign i won | set of steps |
 | priceₜ | Price paid at step t | money |
 | Bᵢ | Budget of campaign i per episode | money |
@@ -23,7 +24,8 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 |---|---|---|
 | spend | Σ priceₜ over Wᵢ | |
 | wins | \|Wᵢ\| | |
-| conversions | Realized conversions over Wᵢ | |
+| clicks | Realized clicks over Wᵢ | Equals wins when the market has no click stage |
+| conversions | Realized conversions over Wᵢ | Only a click converts |
 | realized_value | conversions × wᵢ | Realized, so it includes luck |
 | surplus | realized_value − spend | |
 | budget_used | spend / Bᵢ | Never above 1 |
@@ -48,6 +50,7 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | segment | The segment name from `market.segment_names` | `"all"` for a market without segments |
 | spend | Σ priceₜ over Wᵢ in the segment | |
 | wins | \|Wᵢ\| in the segment | |
+| clicks | Realized clicks over Wᵢ in the segment | |
 | conversions | Realized conversions over Wᵢ in the segment | |
 | surplus | conversions × wᵢ − spend | |
 

@@ -43,7 +43,8 @@ jobs:
             uv run pytest -q \
               --deselect tests/test_api.py::test_run_log_fingerprint \
               --deselect tests/test_api.py::test_results_fingerprint \
-              --deselect tests/test_api.py::test_run_log_without_pid_matches_main
+              --deselect tests/test_api.py::test_run_log_without_pid_matches_main \
+              --deselect tests/test_api.py::test_no_click_stage_matches_main
           fi
 
   build:

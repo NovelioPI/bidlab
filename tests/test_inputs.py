@@ -19,7 +19,7 @@ class FeatureMarket(Market):
     @override
     def draws(self, count: int, rng: np.random.Generator):
         while True:
-            yield MarketDraw(self.features, np.full(count, 0.5))
+            yield MarketDraw(self.features, pcvr=np.full(count, 0.5))
 
 
 class Seen(Bidder):

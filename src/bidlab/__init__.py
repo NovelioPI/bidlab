@@ -26,7 +26,7 @@ from bidlab.metrics import campaign_metrics, platform_metrics, regret, segment_m
 from bidlab.results import Results
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
-from bidlab.types import BidResult, EpisodeReport
+from bidlab.types import BidResult, EpisodeReport, MarketTruth
 
 __all__ = [
     "BidResult",
@@ -36,6 +36,7 @@ __all__ = [
     "EpisodeReport",
     "FirstPrice",
     "Linear",
+    "MarketTruth",
     "PidPacing",
     "Results",
     "RunLog",

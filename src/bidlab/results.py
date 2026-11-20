@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 ResultRow = Mapping[str, str | int | float]
 
 SUMMARY_METRICS = ("spend", "conversions", "surplus", "budget_used", "regret")
-SEGMENT_SUMMARY_METRICS = ("spend", "wins", "conversions", "surplus")
+SEGMENT_SUMMARY_METRICS = ("spend", "wins", "clicks", "conversions", "surplus")
 SUMMARY_COLUMN_WIDTH = 22
 CONFIDENCE = 0.95
 

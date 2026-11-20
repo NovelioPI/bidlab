@@ -1,4 +1,4 @@
-"""Objects passed to a bidder: what it learns after each auction and episode."""
+"""Objects passed to a bidder: market facts, and what it learns after each auction and episode."""
 
 from dataclasses import dataclass
 
@@ -6,6 +6,38 @@ SECONDS_PER_HOUR = 3600.0
 HOURS_PER_DAY = 24.0
 
 # Bidders receive only these objects, so each holds one bidder's own data.
+
+
+@dataclass(frozen=True)
+class MarketTruth:
+    """The market's hidden facts for one campaign at one auction.
+
+    A bidder gets it as the ``market`` input of `Bidder.forward`, at every
+    auction. A fair benchmark bidder does not read it; an oracle bidder or
+    a test of an estimator can.
+
+    Parameters
+    ----------
+    pctr : float
+        True chance that this campaign's impression is clicked if won; 1.0
+        when the market has no click stage.
+    pcvr : float
+        True chance that a click converts.
+
+    Examples
+    --------
+    Pass one by hand to unit-test a bidder that reads ``market``:
+
+    >>> import bidlab as bl
+    >>> class Oracle(bl.Bidder):
+    ...     def forward(self, market):
+    ...         return 5.0 * market.pctr * market.pcvr
+    >>> Oracle().forward(bl.MarketTruth(pctr=0.2, pcvr=0.5))
+    0.5
+    """
+
+    pctr: float
+    pcvr: float
 
 
 @dataclass(frozen=True)
@@ -25,8 +57,12 @@ class BidResult:
         Whether this bidder won the impression.
     price : float
         Price this bidder paid; 0 when it lost.
+    clicked : bool
+        True only when this bidder won and the impression was clicked. In a
+        market without a click stage, every won impression is clicked.
     converted : bool
-        True only when this bidder won and the impression converted.
+        True only when this bidder won and the impression converted. A
+        conversion needs a click.
     realized_value : float, optional
         Realized value of this auction: `Campaign.event_value` when converted,
         else 0.
@@ -41,7 +77,13 @@ class BidResult:
 
     >>> import bidlab as bl
     >>> result = bl.BidResult(
-    ...     time=0.0, bid=0.6, won=True, price=0.5, converted=True, realized_value=5.0
+    ...     time=0.0,
+    ...     bid=0.6,
+    ...     won=True,
+    ...     price=0.5,
+    ...     clicked=True,
+    ...     converted=True,
+    ...     realized_value=5.0,
     ... )
     >>> result.realized_value - result.price
     4.5
@@ -51,6 +93,7 @@ class BidResult:
     bid: float
     won: bool
     price: float
+    clicked: bool
     converted: bool
     realized_value: float = 0.0
 

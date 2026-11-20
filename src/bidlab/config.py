@@ -8,7 +8,7 @@ import numpy as np
 
 from bidlab.auctions import Auction, FirstPrice, SecondPrice
 from bidlab.bidders.base import Bidder, bind_tree
-from bidlab.markets import LogisticContext, Market
+from bidlab.markets import LogisticMarket, Market
 from bidlab.types import HOURS_PER_DAY
 
 
@@ -156,8 +156,8 @@ class SimConfig:
     auction : FirstPrice or SecondPrice, optional
         The auction rule. Defaults to `SecondPrice` with no reserve.
     market : bidlab.markets.Market, optional
-        Draws features and conversion probabilities. Defaults to
-        `bidlab.markets.LogisticContext`.
+        Draws features, click and conversion probabilities. Defaults to
+        `bidlab.markets.LogisticMarket`.
     horizon_hours : float, optional
         Episode length in hours. Auctions are spaced evenly over it. Must be
         > 0.
@@ -198,7 +198,7 @@ class SimConfig:
     steps: int = 1000
     seed: int = 0
     auction: Auction = field(default_factory=SecondPrice)
-    market: Market = field(default_factory=LogisticContext)
+    market: Market = field(default_factory=LogisticMarket)
     horizon_hours: float = 24.0
     start_hour: float = 0.0
     estimate_noise: float = 0.0

@@ -13,7 +13,7 @@ config = bl.SimConfig(
         bl.Campaign("big", bl.Linear(), budget=50, event_value=5),
     ],
     auction=bl.SecondPrice(reserve=0.01),
-    market=bl.markets.LogisticContext(),
+    market=bl.markets.LogisticMarket(),
     episodes=10,
     steps=500,
 )
