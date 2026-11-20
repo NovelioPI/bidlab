@@ -44,7 +44,7 @@ print(results.summary())
 5. The winner converts with probability p of the winner.
 6. Each bidder gets its own `BidResult`: the auction's `time`, its bid, and whether it won. It also holds the price it paid, whether it converted, its `realized_value`, and its reward. A loser never sees the winning price.
 
-`request.value` is exact by default. [Simulation](docs/guides/simulation.md) covers the clock, noise in that value, and reproducibility.
+`request.value` is exact by default. [Simulation](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/simulation.md) covers the clock, noise in that value, and reproducibility.
 
 ## Write a bidder
 
@@ -70,21 +70,21 @@ flat = bl.SimConfig(
 print(bl.run_many(flat, seeds=range(2)).summary())
 ```
 
-[Bidders](docs/guides/bidders.md) covers the other hooks, learning from results, and stacking bidders with `bl.Stack`.
+[Bidders](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/bidders.md) covers the other hooks, learning from results, and stacking bidders with `bl.Stack`.
 
 ## Guides
 
 | Guide | Covers |
 |---|---|
-| [Simulation](docs/guides/simulation.md) | Each step in detail, the clock, estimate noise, parallel runs, reproducibility |
-| [Bidders](docs/guides/bidders.md) | Hooks, value models and bid control, `Stack`, built-in bidders |
-| [Composite bidders](docs/guides/composite-bidders.md) | Bidders that hold and call other bidders |
-| [Markets](docs/guides/markets.md) | Built-in markets, segments and targeting, custom markets |
-| [Rewards](docs/guides/rewards.md) | Step and episode rewards, CPA targets, your own reward |
-| [Logging and callbacks](docs/guides/logging.md) | `self.log` in a bidder, and watching a run |
-| [Results](docs/guides/results.md) | `Results`, `RunLog`, metric functions, regret |
+| [Simulation](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/simulation.md) | Each step in detail, the clock, estimate noise, parallel runs, reproducibility |
+| [Bidders](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/bidders.md) | Hooks, value models and bid control, `Stack`, built-in bidders |
+| [Composite bidders](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/composite-bidders.md) | Bidders that hold and call other bidders |
+| [Markets](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/markets.md) | Built-in markets, segments and targeting, custom markets |
+| [Rewards](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/rewards.md) | Step and episode rewards, CPA targets, your own reward |
+| [Logging and callbacks](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/logging.md) | `self.log` in a bidder, and watching a run |
+| [Results](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/results.md) | `Results`, `RunLog`, metric functions, regret |
 
-[Metrics](docs/metrics.md) defines every metric and its limits.
+[Metrics](https://github.com/NovelioPI/bidlab/blob/main/docs/metrics.md) defines every metric and its limits.
 
 ## Examples
 
@@ -92,16 +92,16 @@ Each script runs on its own, prints its results, and ends with the answer to its
 
 | Script | Question |
 |---|---|
-| [getting_started/basic.py](examples/getting_started/basic.py) | When the budget is tight, does PID pacing earn more surplus than truthful bidding? |
-| [bidders/segment_rate.py](examples/bidders/segment_rate.py) | Does a bidder that counts conversions per segment learn that sports converts better than news? |
-| [composite/night_shade.py](examples/composite/night_shade.py) | When a parent shades harder at night, does its child PID raise its multiplier at night? |
-| [markets/segments.py](examples/markets/segments.py) | Does a sports-only bidder win any auction outside sports? |
-| [markets/custom_market.py](examples/markets/custom_market.py) | Does the all-day bidder pay more per win at night, when the night-only bidder joins? |
-| [markets/independent_values.py](examples/markets/independent_values.py) | In a first-price auction with uniform values, does shading to (n-1)/n beat truthful bidding? |
-| [rewards/cpa_target.py](examples/rewards/cpa_target.py) | Does bidding target/value of the value meet a CPA target that truthful bidding misses? |
-| [rewards/custom_reward.py](examples/rewards/custom_reward.py) | Does a bandit rewarded for conversions pick a higher multiplier than one rewarded for surplus? |
-| [logging/pid_trace.py](examples/logging/pid_trace.py) | Does PID pacing spend its whole budget in each episode? |
-| [simulation/estimate_noise.py](examples/simulation/estimate_noise.py) | Does noise in the platform's value cost a truthful bidder surplus? |
-| [simulation/clock.py](examples/simulation/clock.py) | With a 12-hour day from 9:00, does an even-schedule bidder still have budget at 20:00, when truthful bidding has run out? |
-| [results/regret.py](examples/results/regret.py) | With no budget limit in a second-price auction, is truthful bidding's regret zero? |
-| [results/reserve.py](examples/results/reserve.py) | Does a reserve price of 0.1 raise the platform's revenue? |
+| [getting_started/basic.py](https://github.com/NovelioPI/bidlab/blob/main/examples/getting_started/basic.py) | When the budget is tight, does PID pacing earn more surplus than truthful bidding? |
+| [bidders/segment_rate.py](https://github.com/NovelioPI/bidlab/blob/main/examples/bidders/segment_rate.py) | Does a bidder that counts conversions per segment learn that sports converts better than news? |
+| [composite/night_shade.py](https://github.com/NovelioPI/bidlab/blob/main/examples/composite/night_shade.py) | When a parent shades harder at night, does its child PID raise its multiplier at night? |
+| [markets/segments.py](https://github.com/NovelioPI/bidlab/blob/main/examples/markets/segments.py) | Does a sports-only bidder win any auction outside sports? |
+| [markets/custom_market.py](https://github.com/NovelioPI/bidlab/blob/main/examples/markets/custom_market.py) | Does the all-day bidder pay more per win at night, when the night-only bidder joins? |
+| [markets/independent_values.py](https://github.com/NovelioPI/bidlab/blob/main/examples/markets/independent_values.py) | In a first-price auction with uniform values, does shading to (n-1)/n beat truthful bidding? |
+| [rewards/cpa_target.py](https://github.com/NovelioPI/bidlab/blob/main/examples/rewards/cpa_target.py) | Does bidding target/value of the value meet a CPA target that truthful bidding misses? |
+| [rewards/custom_reward.py](https://github.com/NovelioPI/bidlab/blob/main/examples/rewards/custom_reward.py) | Does a bandit rewarded for conversions pick a higher multiplier than one rewarded for surplus? |
+| [logging/pid_trace.py](https://github.com/NovelioPI/bidlab/blob/main/examples/logging/pid_trace.py) | Does PID pacing spend its whole budget in each episode? |
+| [simulation/estimate_noise.py](https://github.com/NovelioPI/bidlab/blob/main/examples/simulation/estimate_noise.py) | Does noise in the platform's value cost a truthful bidder surplus? |
+| [simulation/clock.py](https://github.com/NovelioPI/bidlab/blob/main/examples/simulation/clock.py) | With a 12-hour day from 9:00, does an even-schedule bidder still have budget at 20:00, when truthful bidding has run out? |
+| [results/regret.py](https://github.com/NovelioPI/bidlab/blob/main/examples/results/regret.py) | With no budget limit in a second-price auction, is truthful bidding's regret zero? |
+| [results/reserve.py](https://github.com/NovelioPI/bidlab/blob/main/examples/results/reserve.py) | Does a reserve price of 0.1 raise the platform's revenue? |
