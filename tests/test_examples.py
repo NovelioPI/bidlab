@@ -15,6 +15,9 @@ EXAMPLES = {
     "markets/segments.py": ("no", ("markets.md",)),
     "markets/custom_market.py": ("yes", ("markets.md",)),
     "markets/independent_values.py": ("yes", ("markets.md",)),
+    "bidders/segment_rate.py": ("yes", ("bidders.md",)),
+    "composite/night_shade.py": ("yes", ("composite-bidders.md",)),
+    "logging/pid_trace.py": ("yes", ("logging.md",)),
 }
 
 
