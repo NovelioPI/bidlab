@@ -10,7 +10,7 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
-from bidlab.types import BidRequest, Brief, EpisodeReport
+from bidlab.types import Brief, EpisodeReport
 
 CAMPAIGN = Brief(budget=1e6, event_value=5.0)
 
@@ -67,7 +67,7 @@ class Reports(Bidder):
     seen: ClassVar[list[EpisodeReport]] = []
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         return value
 
     @override

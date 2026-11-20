@@ -45,12 +45,12 @@ def segment_draws(market, count, steps, seed=0):
     return list(islice(market.draws(count, np.random.default_rng(seed)), steps))
 
 
-def test_segment_shares_and_feature():
+def test_segment_shares_without_feature():
     market = Segmented((Segment("news", 0.7), Segment("sports", 0.3)))
     draws = segment_draws(market, count=2, steps=20_000)
-    names = [draw.features["segment"] for draw in draws]
+    names = [draw.segment for draw in draws]
     assert set(names) == {"news", "sports"}
-    assert [draw.segment for draw in draws] == names
+    assert all(dict(draw.features) == {} for draw in draws)
     assert abs(names.count("news") / len(names) - 0.7) < 0.02
 
 

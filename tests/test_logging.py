@@ -11,7 +11,7 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
-from bidlab.types import BidRequest, BidResult, Brief, EpisodeReport
+from bidlab.types import BidResult, Brief, EpisodeReport
 
 CAMPAIGN = Brief(budget=1e6, event_value=5.0)
 
@@ -36,7 +36,7 @@ class Logs(Bidder):
         self.act("on_episode_start")
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.act("forward")
         return value
 
@@ -64,8 +64,8 @@ class Holder(Bidder):
         self.child = child
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
-        return self.child.forward(value, request)
+    def forward(self, value: float) -> float:
+        return self.child.forward(value)
 
 
 def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
@@ -148,7 +148,7 @@ class Both(Bidder):
     """Logs one name per step and per episode."""
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.log("x", 1.0)
         return value
 
@@ -167,7 +167,7 @@ class EpisodeFirst(Bidder):
         self.log("x", 2.0)
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.log("x", 1.0)
         return value
 
@@ -248,7 +248,7 @@ def test_log_outside_run_does_nothing():
     bidder = Linear()
     bidder.log("x", 1.0)
     bidder.log({"y": 2.0})
-    assert bidder.forward(2.0, BidRequest(time=0.0, value=2.0)) == 2.0
+    assert bidder.forward(2.0) == 2.0
     log = run(config(Campaign("bind", LogsInBind(), budget=1e6, event_value=5.0)))
     assert "bound" not in log.logged
 
@@ -259,7 +259,7 @@ class Keeps(Bidder):
     kept: ClassVar[list[Bidder]] = []
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         Keeps.kept.append(self)
         self.log("x", 1.0)
         return value
@@ -347,9 +347,9 @@ class TopLogs(Holder):
         )
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.log("lam", 1.0)
-        return super().forward(value, request)
+        return super().forward(value)
 
 
 class TopAndChild(Holder):
@@ -359,9 +359,9 @@ class TopAndChild(Holder):
         super().__init__(Logs("forward", lambda b, _: b.log("b", 2.0)))
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         self.log("a", 1.0)
-        return super().forward(value, request)
+        return super().forward(value)
 
 
 def test_different_names_in_tree_allowed():
@@ -449,9 +449,9 @@ class Sometimes(Bidder):
         self.logging = self.rng.random() < 0.5
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         if self.logging:
-            self.log("x", request.value)
+            self.log("x", value)
         return value
 
 

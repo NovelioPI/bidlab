@@ -5,7 +5,7 @@ from typing import override
 import numpy as np
 
 from bidlab.bidders.base import Bidder
-from bidlab.types import BidRequest, BidResult, Brief
+from bidlab.types import BidResult, Brief
 
 
 class PidPacing(Bidder):
@@ -90,7 +90,7 @@ class PidPacing(Bidder):
         self.multiplier = self.initial_multiplier
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         if self.log_state:
             self.log("multiplier", self.multiplier)
 

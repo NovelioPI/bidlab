@@ -31,7 +31,8 @@ class MarketDraw:
     Parameters
     ----------
     features : Mapping[str, str | float]
-        Public features every bidder sees in `BidRequest.features`.
+        Public features every bidder sees; each reaches `Bidder.forward` as
+        an input of the same name, which must not be a built-in input.
     probabilities : numpy.ndarray
         Each bidder's conversion probability, shape ``(campaigns,)``, in [0, 1].
         A bidder sees only its own, as part of its value.
@@ -156,7 +157,7 @@ class Segment:
 class Segmented(Market):
     """Each step comes from one segment; its `lift` shifts every bidder's logit.
 
-    The segment name goes in `BidRequest.features` under ``"segment"``.
+    Bidders get the segment name as the ``segment`` input of `Bidder.forward`.
 
     Parameters
     ----------
@@ -215,11 +216,7 @@ class Segmented(Market):
         shares = [segment.share for segment in self.segments]
         for logits in _logits(self.base, count, base_rng):
             segment = self.segments[pick_rng.choice(len(self.segments), p=shares)]
-            yield MarketDraw(
-                {"segment": segment.name},
-                _sigmoid(logits + segment.lift),
-                segment.name,
-            )
+            yield MarketDraw({}, _sigmoid(logits + segment.lift), segment.name)
 
 
 @dataclass(frozen=True)

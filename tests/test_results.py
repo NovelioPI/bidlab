@@ -54,7 +54,7 @@ def test_lambdas_and_closures_run_in_parallel():
     fraction = 0.7
 
     class Closure(Bidder):
-        def forward(self, value, request):
+        def forward(self, value):
             return fraction * value
 
     extra = Campaign(
@@ -74,7 +74,7 @@ def test_unpicklable_spec_fails_before_runs(monkeypatch):
         def __init__(self):
             self.lock = threading.Lock()
 
-        def forward(self, value, request):
+        def forward(self, value):
             return value
 
     pools = []

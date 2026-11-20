@@ -10,13 +10,24 @@ from scipy.special import expit, logit
 
 from bidlab.auctions import NO_WINNER
 from bidlab.bidders import Bidder
-from bidlab.bidders.base import attach_logger
+from bidlab.bidders.base import attach_logger, call_forward
 from bidlab.callbacks import Callback, checked_callbacks
 from bidlab.config import Campaign, SimConfig
 from bidlab.logs import LogBook, Logs
 from bidlab.markets import MarketDraw
 from bidlab.rewards import EpisodeReward, StepReward
-from bidlab.types import SECONDS_PER_HOUR, BidRequest, BidResult, Brief, EpisodeReport
+from bidlab.types import (
+    HOURS_PER_DAY,
+    SECONDS_PER_HOUR,
+    BidRequest,
+    BidResult,
+    Brief,
+    EpisodeReport,
+)
+
+BUILT_IN_INPUTS = frozenset(
+    {"value", "time", "time_left", "horizon", "hour_of_day", "budget_left", "segment"}
+)
 
 
 @dataclass(frozen=True)
@@ -162,7 +173,8 @@ class _Simulation:
         self.event_values = np.array(
             [campaign.event_value for campaign in config.campaigns]
         )
-        self.seconds_per_step = config.horizon_hours * SECONDS_PER_HOUR / config.steps
+        self.horizon = config.horizon_hours * SECONDS_PER_HOUR
+        self.seconds_per_step = self.horizon / config.steps
         self.market_draws = config.market.draws(
             count, np.random.default_rng(market_seed)
         )
@@ -261,10 +273,23 @@ class _Simulation:
             for i, p in enumerate(self.participants)
             if p.takes_part_in(draw.segment)
         }
+        shared = {
+            **draw.features,
+            "time": time,
+            "time_left": self.horizon - time,
+            "horizon": self.horizon,
+            "hour_of_day": (self.config.start_hour + time / SECONDS_PER_HOUR)
+            % HOURS_PER_DAY,
+            "segment": draw.segment,
+        }
         bids = np.zeros(len(self.participants))
         for i, request in requests.items():
-            bidder = self.participants[i].bidder
-            bids[i] = bidder.forward(request.value, request)
+            inputs = {
+                **shared,
+                "value": request.value,
+                "budget_left": float(budget_left[i]),
+            }
+            bids[i] = call_forward(self.participants[i].bidder, inputs)
         # Risk: if bids are not capped at the remaining budget, then spend can exceed it.
 
         bids = np.clip(
@@ -341,6 +366,13 @@ class _Simulation:
 
         if not np.all((probabilities >= 0.0) & (probabilities <= 1.0)):
             raise ValueError(f"{where}: probabilities must lie in [0, 1]")
+
+        clashes = draw.features.keys() & BUILT_IN_INPUTS
+        if clashes:
+            raise ValueError(
+                f"{where}: features {sorted(clashes)} have the names of built-in "
+                "inputs; rename them"
+            )
 
         if draw.segment not in self.segment_index:
             raise ValueError(

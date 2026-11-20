@@ -7,7 +7,7 @@ from bidlab.bidders import Bidder, Linear, PidPacing, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.runner import run_many
 from bidlab.simulator import run
-from bidlab.types import BidRequest, Brief
+from bidlab.types import Brief
 
 CAMPAIGN = Brief(budget=1e6, event_value=5.0)
 
@@ -19,7 +19,7 @@ class Add(Bidder):
         self.amount = amount
         self.seen = []
 
-    def forward(self, value, request):
+    def forward(self, value):
         self.seen.append(value)
         return value + self.amount
 
@@ -35,8 +35,8 @@ class Calls(Bidder):
     def on_episode_start(self, brief):
         Calls.calls.append((self.name, "start", brief))
 
-    def forward(self, value, request):
-        Calls.calls.append((self.name, "forward", request))
+    def forward(self, value, **inputs):
+        Calls.calls.append((self.name, "forward", inputs))
         return value
 
     def update_batch(self, bid_results):
@@ -53,7 +53,7 @@ class Holds(Bidder):
         self.model = model
         self.forwards = 0
 
-    def forward(self, value, request):
+    def forward(self, value):
         self.forwards += 1
         return value
 
@@ -66,7 +66,7 @@ class Counter(Bidder):
     def __init__(self):
         self.forwards = 0
 
-    def forward(self, value, request):
+    def forward(self, value):
         self.forwards += 1
         return value
 
@@ -83,7 +83,7 @@ class Draws(Bidder):
         self.name = name
         self.draw = draw
 
-    def forward(self, value, request):
+    def forward(self, value):
         if self.draw:
             Draws.draws.setdefault(self.name, []).append(self.rng.random())
 
@@ -91,19 +91,19 @@ class Draws(Bidder):
 
 
 class Watch(Bidder):
-    """Records each request's value."""
+    """Records each value it gets."""
 
     values: ClassVar[list[float]] = []
 
-    def forward(self, value, request):
-        Watch.values.append(request.value)
+    def forward(self, value):
+        Watch.values.append(value)
         return value
 
 
 class Jitter(Bidder):
     """Multiplies the value by a random factor from its own stream."""
 
-    def forward(self, value, request):
+    def forward(self, value):
         return value * self.rng.uniform(0.5, 1.5)
 
 
@@ -120,15 +120,25 @@ def test_stages_chain_values():
     first, second = Add(1.0), Linear(multiplier=3.0)
     stack = Stack(first, second)
     stack.bind(np.random.default_rng(0))
-    assert stack.forward(2.0, BidRequest(time=0.0, value=2.0)) == 9.0
+    assert stack.forward(2.0) == 9.0
     assert first.seen == [2.0]
+
+
+class AddTimeLeft(Bidder):
+    def forward(self, value, time_left):
+        return value + time_left
+
+
+def test_stack_chains_value_and_matches_inputs():
+    stack = Stack(Add(1.0), AddTimeLeft())
+    assert stack.forward(2.0, time_left=10.0, segment="all") == 13.0
 
 
 def test_stacks_nest():
     inner = Stack(Add(1.0), Linear(multiplier=2.0))
     outer = Stack(Add(1.0), inner)
     outer.bind(np.random.default_rng(0))
-    assert outer.forward(1.0, BidRequest(time=0.0, value=1.0)) == 6.0
+    assert outer.forward(1.0) == 6.0
 
 
 def test_hooks_reach_every_stage_in_order():

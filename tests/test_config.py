@@ -28,7 +28,7 @@ class Recorder(Bidder):
         super().bind(rng)
         Recorder.built.append(self)
 
-    def forward(self, value, request):
+    def forward(self, value):
         return value
 
     def update(self, result):
@@ -76,8 +76,8 @@ def test_uncopyable_bidder_fails_before_step_zero():
     steps_run = []
 
     class Watch(Recorder):
-        def forward(self, value, request):
-            steps_run.append(request.time)
+        def forward(self, value, **inputs):
+            steps_run.append(inputs["time"])
             return value
 
     class Locked(Recorder):
@@ -274,7 +274,7 @@ def test_first_price_config_runs():
 
 def test_bidder_without_forward_fails_on_creation():
     class Forgot(Bidder):
-        def forwards(self, value, request):
+        def forwards(self, value):
             return value
 
     with pytest.raises(TypeError, match="abstract method 'forward'"):

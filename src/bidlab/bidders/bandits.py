@@ -5,7 +5,7 @@ from typing import override
 import numpy as np
 
 from bidlab.bidders.base import Bidder
-from bidlab.types import BidRequest, BidResult, Brief, EpisodeReport
+from bidlab.types import BidResult, Brief, EpisodeReport
 
 # np.arange excludes its end, so a small margin keeps max_multiplier in the grid.
 ARM_GRID_END_MARGIN = 1e-9
@@ -82,7 +82,7 @@ class UcbMultiplier(Bidder):
             self.log("multiplier", float(self.arms[self.arm]))
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         return float(self.arms[self.arm]) * value
 
     @override
