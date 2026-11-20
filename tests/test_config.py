@@ -7,7 +7,7 @@ import pytest
 from bidlab.auctions import FirstPrice, SecondPrice
 from bidlab.bidders import Bidder, Linear
 from bidlab.config import Campaign, SimConfig
-from bidlab.markets import LogisticContext, Segment, Segmented
+from bidlab.markets import LogisticMarket, Segment, Segmented
 from bidlab.simulator import run
 
 
@@ -175,12 +175,12 @@ def test_sim_config_rejects_unknown_auction():
 
 
 def test_default_market_is_logistic_context():
-    assert SimConfig(campaigns=[other()]).market == LogisticContext()
+    assert SimConfig(campaigns=[other()]).market == LogisticMarket()
 
 
 def test_world_argument_rejected():
     with pytest.raises(TypeError, match="world"):
-        SimConfig(campaigns=[other()], world=LogisticContext())  # pyright: ignore[reportCallIssue]  Reason: the test checks the runtime error for a wrong type.
+        SimConfig(campaigns=[other()], world=LogisticMarket())  # pyright: ignore[reportCallIssue]  Reason: the test checks the runtime error for a wrong type.
 
 
 def test_non_market_rejected():

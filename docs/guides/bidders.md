@@ -1,6 +1,6 @@
 # Bidders
 
-This guide shows how to write a bidder, stack bidders, and use the built-in ones.
+This guide shows how to write a bidder, stack bidders, estimate values, and use the built-in ones.
 
 ## The idea
 
@@ -46,7 +46,9 @@ Like a PyTorch module, `forward` declares the inputs it needs as parameters. The
 | `hour_of_day` | Hour of day at `time`, in [0, 24) |
 | `budget_left` | The campaign's budget left before this auction |
 | `segment` | The auction's market segment; `"all"` without segments |
-| a feature name | Each public feature from the market, such as `country` |
+| `features` | Every public feature from the market, as a read-only mapping |
+| `market` | A `bl.MarketTruth` with this campaign's true `pctr` and `pcvr`; for checks and oracles, not for a fair benchmark |
+| a feature name | Each public feature from the market, such as `country`, or the array `vector` from `LogisticMarket` |
 
 ```python
 import bidlab as bl
@@ -119,6 +121,90 @@ learning = bl.SimConfig(
 print(len(bl.run_many(learning, seeds=range(2))))  # 4 rows
 ```
 
+## Value estimators
+
+A value estimator is a bidder: the first stage of a `Stack`, before a bid control. It ignores the incoming `value` and outputs `event_value` times its own estimate of the conversion chance. Three common kinds:
+
+| Estimator | Estimate |
+|---|---|
+| Fixed | One rate for every impression |
+| Counting | Conversions per win so far |
+| Model | A model on the public features, such as one logistic model per stage |
+
+```python
+import numpy as np
+
+
+class FixedRate(bl.Bidder):
+    def __init__(self, rate, event_value):
+        self.rate = rate
+        self.event_value = event_value
+
+    def forward(self, value):
+        return self.rate * self.event_value
+
+
+class CountedRate(bl.Bidder):
+    def __init__(self, event_value, prior=0.05):
+        self.event_value = event_value
+        self.prior = prior
+        self.wins = 0
+        self.conversions = 0
+
+    def forward(self, value):
+        return (self.conversions + self.prior) / (self.wins + 1) * self.event_value
+
+    def update(self, result):
+        self.wins += result.won
+        self.conversions += result.converted
+
+
+class ConversionModel(bl.Bidder):
+    """Online logistic regression of a conversion on the public feature vector."""
+
+    def __init__(self, event_value, feature_count, learning_rate=0.05):
+        self.event_value = event_value
+        self.weights = np.zeros(feature_count)
+        self.learning_rate = learning_rate
+        self.pending = {}
+
+    def predict(self, vector):
+        return 1.0 / (1.0 + np.exp(-(self.weights @ vector) + 3.0))
+
+    def forward(self, value, features, time):
+        vector = features["vector"]
+        self.pending[time] = vector
+        return self.predict(vector) * self.event_value
+
+    def update(self, result):
+        vector = self.pending.pop(result.time)
+        if result.won:
+            error = result.converted - self.predict(vector)
+            self.weights += self.learning_rate * error * vector
+
+
+estimated = bl.SimConfig(
+    campaigns=[
+        bl.Campaign(
+            name,
+            bl.Stack(estimator, bl.PidPacing()),
+            budget=15,
+            event_value=5,
+        )
+        for name, estimator in (
+            ("fixed", FixedRate(0.05, event_value=5)),
+            ("counted", CountedRate(event_value=5)),
+            ("model", ConversionModel(event_value=5, feature_count=8)),
+        )
+    ],
+    episodes=3,
+    steps=200,
+)
+print(len(bl.run_many(estimated, seeds=range(2))))  # 6 rows
+```
+
+With a click stage, a model can learn each stage apart: clicks from every won impression, conversions from clicked ones, using `result.clicked`. The example [bidders/value_estimators.py](../../examples/bidders/value_estimators.py) does this and compares the three estimators with the market's truth.
+
 ## A bidder that uses randomness
 
 Draw only from `self.rng`, so runs repeat with the seed.
@@ -154,3 +240,4 @@ A bidder can also hold other bidders and call them itself. See [Composite bidder
 | Script | Question |
 |---|---|
 | [bidders/segment_rate.py](../../examples/bidders/segment_rate.py) | Does a bidder that counts conversions per segment learn that sports converts better than news? |
+| [bidders/value_estimators.py](../../examples/bidders/value_estimators.py) | Does a two-stage model on the public features estimate conversions better than counting? |

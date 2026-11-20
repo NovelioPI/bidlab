@@ -90,10 +90,20 @@ def test_ucb_reward_is_episode_surplus():
     bandit.on_episode_start(Campaign("me", bandit, budget=10, event_value=5))
     results = [
         BidResult(
-            time=0.0, bid=1.0, won=True, price=0.4, converted=True, realized_value=5.0
+            time=0.0,
+            bid=1.0,
+            won=True,
+            price=0.4,
+            clicked=True,
+            converted=True,
+            realized_value=5.0,
         ),
-        BidResult(time=1.0, bid=1.0, won=True, price=0.7, converted=False),
-        BidResult(time=2.0, bid=1.0, won=False, price=0.0, converted=False),
+        BidResult(
+            time=1.0, bid=1.0, won=True, price=0.7, clicked=True, converted=False
+        ),
+        BidResult(
+            time=2.0, bid=1.0, won=False, price=0.0, clicked=False, converted=False
+        ),
     ]
     bandit.update_batch(results)
     bandit.on_episode_end(

@@ -127,7 +127,7 @@ class Bidder(ABC):
         ----------
         value : float
             The platform's value of the impression: `Campaign.event_value`
-            times its estimate of the conversion probability, exact unless
+            times its estimates of pCTR and pCVR, exact unless
             `SimConfig.estimate_noise` is set. In a `Stack`, the previous
             bidder's output.
         time : float
@@ -144,9 +144,15 @@ class Bidder(ABC):
         segment : str
             The auction's market segment; ``"all"`` in a market without
             segments.
-        **features : str or float
+        features : Mapping[str, str | float | numpy.ndarray]
+            Every public feature of the impression, read-only, the same for
+            every bidder; ``features["vector"]`` from `LogisticMarket`.
+        market : MarketTruth
+            This campaign's true pCTR and pCVR for the impression. A fair
+            benchmark bidder does not read it.
+        **named_features : str, float or numpy.ndarray
             Each public feature of the impression from the market, under its
-            own name, the same for every bidder.
+            own name, the same for every bidder. Arrays are read-only.
 
         Returns
         -------
@@ -340,12 +346,7 @@ def call_forward(bidder: Bidder, inputs: Mapping[str, object]) -> float:
         If ``forward`` has a positional-only parameter, or a parameter with
         no default that is not in ``inputs``.
     """
-    plan: _ForwardPlan | None = vars(bidder).get(_FORWARD_PLAN)
-    # Reading the signature on every auction would slow every run.
-    if plan is None:
-        plan = _forward_plan(bidder)
-        vars(bidder)[_FORWARD_PLAN] = plan
-
+    plan = _cached_plan(bidder)
     for name in plan.required:
         if name not in inputs:
             raise TypeError(
@@ -359,6 +360,42 @@ def call_forward(bidder: Bidder, inputs: Mapping[str, object]) -> float:
     return bidder.forward(
         **{name: inputs[name] for name in plan.names if name in inputs}
     )
+
+
+def takes_input(bidder: Bidder, name: str) -> bool:
+    """Return whether `call_forward` would pass ``bidder`` the input ``name``.
+
+    The simulator calls this to skip building an input nobody reads.
+
+    Parameters
+    ----------
+    bidder : Bidder
+        The bidder to ask.
+    name : str
+        The input's name.
+
+    Returns
+    -------
+    bool
+        True when ``forward`` names ``name`` or takes ``**kwargs``.
+
+    Raises
+    ------
+    TypeError
+        If ``forward`` has a positional-only parameter.
+    """
+    plan = _cached_plan(bidder)
+    return plan.takes_all or name in plan.names
+
+
+def _cached_plan(bidder: Bidder) -> _ForwardPlan:
+    plan: _ForwardPlan | None = vars(bidder).get(_FORWARD_PLAN)
+    # Reading the signature on every auction would slow every run.
+    if plan is None:
+        plan = _forward_plan(bidder)
+        vars(bidder)[_FORWARD_PLAN] = plan
+
+    return plan
 
 
 def _forward_plan(bidder: Bidder) -> _ForwardPlan:

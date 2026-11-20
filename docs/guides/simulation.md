@@ -9,6 +9,8 @@ The README lists the six parts of a step. These rules hold on top of them.
 - A bid that is NaN or infinite counts as 0.
 - A bid above the bidder's remaining budget is cut to that budget. The bidder does not see this; it tracks its own spend.
 - One conversion draw happens at every step, even when nobody wins. This keeps runs repeatable when bidders change.
+- A market with a click stage also gets one click draw per step, from a separate stream. A market without one draws no click, so its runs keep every number.
+- Only a clicked impression can convert.
 - Each bidder gets only its own `BidResult`. A loser never sees the winning price.
 
 Budgets reset at the start of each episode, and each episode starts with `on_episode_start(campaign)`. Bidder objects persist for the whole run, so a learning bidder keeps what it learned.
@@ -48,9 +50,9 @@ print(log.bids[0, :12, 0])  # 0 until 9:00, which is step 24
 
 ## Estimate noise
 
-The `value` input is the platform's value: w times its estimate of p. The estimate is exact by default.
+The `value` input is the platform's value: w times its estimate of pCTR × pCVR. The estimate is exact by default.
 
-`SimConfig(estimate_noise=0.5)` adds normal noise with that standard deviation to logit(p). Use it to test how a bidder copes with a wrong value. Metrics always use the true value, in `RunLog.true_values`.
+`SimConfig(estimate_noise=0.5)` adds normal noise with that standard deviation to logit(pCVR), and, with a click stage, an independent error of the same size to logit(pCTR). Use it to test how a bidder copes with a wrong value. Metrics always use the true value, in `RunLog.true_values`, and the `market` input always holds the true rates.
 
 ```python
 import dataclasses

@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import override
 
 import pytest
+from scipy import stats
 
 from bidlab.auctions import FirstPrice, SecondPrice
 from bidlab.bidders import Linear, PidPacing, UcbMultiplier
 from bidlab.config import Campaign, SimConfig
+from bidlab.markets import IndependentValues, LogisticMarket, Segment, Segmented
 from bidlab.runner import run_many
 from bidlab.simulator import run
 from bidlab.types import BidResult
@@ -25,8 +27,8 @@ RUN_LOG_HASHES = {
     "second": "cd529f75ad49b9df40659b8d715a21b5ace97c4d004f52b4e2cf096522db7edc",
 }
 # Main results table CSV for seeds 0 and 1, recorded with the run-log hashes above.
-# Re-recorded without the reward columns; every other cell is unchanged.
-RESULTS_HASH = "87ce5e0b95761cef26038273b7080f9b2816492bd4ba28f2a9cc599d4ca37fb7"
+# Re-recorded with the clicks column (feature 008); without it the CSV equals main's.
+RESULTS_HASH = "c0692f4e8af77cfb981a516a5d904fa1fe63f5f9cb2832352fe864c44fcb3ef6"
 
 
 class ConversionBandit(UcbMultiplier):
@@ -128,6 +130,57 @@ def test_run_log_without_pid_matches_main(kind):
     assert digest.hexdigest() == MAIN_HASHES_WITHOUT_PID[kind]
 
 
+# Recorded on main (a6f29f4) with numpy 2.5.4, before markets could draw a click stage.
+# Each kind's hashes for estimate_noise 0.0 and 0.5.
+MAIN_HASHES_WITHOUT_CLICKS = {
+    "logistic": (
+        "87f5c19f555a9d5ec19f8b0c96cca68d477bf36bb3533c62f282d0af4f5638e2",
+        "3cf0198769257954bef7217b1eecbedcb997860b244e4f0a5e6e24f8c41f2d57",
+    ),
+    "segmented": (
+        "a4fef502d9ac7fa081de7c1e4dfd6345c3893095356032a121692e4f4774fe89",
+        "305cade86a91862b1faeba4438544036c2b47d51e896f2cde40829b8a3e00180",
+    ),
+    "independent": (
+        "b77c2546f13de2579c756195b9c08d31618d6f758dd0d657729777da94f3ede8",
+        "f91c5ad293f52d96a77d2a27ab61feaaf2be876df2d38bc348c217bea6da0ec0",
+    ),
+}
+NOISES = (0.0, 0.5)
+
+
+def market_without_clicks(kind):
+    if kind == "logistic":
+        return LogisticMarket()
+    if kind == "segmented":
+        return Segmented((Segment("mobile", 0.6, lift=0.5), Segment("desktop", 0.4)))
+    return IndependentValues(stats.uniform(0, 0.1))
+
+
+@pytest.mark.parametrize("noise", NOISES)
+@pytest.mark.parametrize("kind", list(MAIN_HASHES_WITHOUT_CLICKS))
+def test_no_click_stage_matches_main(kind, noise):
+    campaigns = (
+        Campaign("t", Linear(), budget=20.0, event_value=5.0),
+        Campaign("b", UcbMultiplier(), budget=20.0, event_value=4.0),
+        Campaign("s", Linear(multiplier=0.8), budget=20.0, event_value=6.0),
+    )
+    config = SimConfig(
+        campaigns=campaigns,
+        episodes=2,
+        steps=300,
+        seed=7,
+        market=market_without_clicks(kind),
+        estimate_noise=noise,
+    )
+    log = run(config)
+    digest = hashlib.sha256()
+    for array in (log.bids, log.true_values, log.winner, log.price, log.converted):
+        digest.update(array.tobytes())
+
+    assert digest.hexdigest() == MAIN_HASHES_WITHOUT_CLICKS[kind][NOISES.index(noise)]
+
+
 PUBLIC_NAMES = {
     "Callback",
     "SimConfig",
@@ -138,6 +191,7 @@ PUBLIC_NAMES = {
     "SecondPrice",
     "Bidder",
     "Linear",
+    "MarketTruth",
     "PidPacing",
     "UcbMultiplier",
     "BidResult",
@@ -172,7 +226,7 @@ def test_markets_module_exports():
     for name in (
         "Market",
         "MarketDraw",
-        "LogisticContext",
+        "LogisticMarket",
         "Segment",
         "Segmented",
         "IndependentValues",

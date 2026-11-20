@@ -1,10 +1,10 @@
-"""Markets: where each step's features and conversion probabilities come from."""
+"""Markets: where each step's features, click and conversion probabilities come from."""
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from types import MappingProxyType
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 import numpy as np
 import numpy.typing as npt
@@ -12,6 +12,8 @@ import numpy.typing as npt
 ALL_SEGMENTS = "all"
 SHARE_TOLERANCE = 1e-9
 SAMPLE_BLOCK_SIZE = 1024
+
+type FeatureValue = str | float | npt.NDArray[np.float64]
 
 
 class Distribution(Protocol):
@@ -28,31 +30,48 @@ class Distribution(Protocol):
 class MarketDraw:
     """One step's draw: public features, private probabilities and the segment.
 
+    Every argument after ``features`` is keyword-only, so ``pctr`` and
+    ``pcvr`` cannot be swapped by position.
+
     Parameters
     ----------
-    features : Mapping[str, str | float]
-        Public features every bidder sees; each reaches `Bidder.forward` as
-        an input of the same name, which must not be a built-in input.
-    probabilities : numpy.ndarray
-        Each bidder's conversion probability, shape ``(campaigns,)``, in [0, 1].
-        A bidder sees only its own, as part of its value.
+    features : Mapping[str, str | float | numpy.ndarray]
+        Public features every bidder sees, in the ``features`` input of
+        `Bidder.forward` and each as an input of its own name, which must
+        not be a built-in input. A writable array is stored as a read-only
+        copy; a read-only array is kept as is.
+    pctr : numpy.ndarray, optional
+        Each campaign's click probability, shape ``(campaigns,)``, in [0, 1].
+        None means the market has no click stage: every won impression is
+        clicked.
+    pcvr : numpy.ndarray
+        Each campaign's conversion probability after a click, shape
+        ``(campaigns,)``, in [0, 1].
     segment : str, optional
         Name of this step's segment; must be in the market's `segment_names`.
+
+    Notes
+    -----
+    A campaign's bidder sees its own ``pctr`` and ``pcvr`` in the ``market``
+    input, and the platform's estimate of their product in ``value``.
     """
 
-    features: Mapping[str, str | float]
-    probabilities: npt.NDArray[np.float64]
+    features: Mapping[str, FeatureValue]
+    _: KW_ONLY
+    pctr: npt.NDArray[np.float64] | None = None
+    pcvr: npt.NDArray[np.float64]
     segment: str = ALL_SEGMENTS
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "features", MappingProxyType(dict(self.features)))
-        object.__setattr__(
-            self, "probabilities", np.asarray(self.probabilities, dtype=float)
-        )
+        features = {name: _read_only(value) for name, value in self.features.items()}
+        object.__setattr__(self, "features", MappingProxyType(features))
+        if self.pctr is not None:
+            object.__setattr__(self, "pctr", np.asarray(self.pctr, dtype=float))
+        object.__setattr__(self, "pcvr", np.asarray(self.pcvr, dtype=float))
 
 
 class Market(ABC):
-    """Draws each step's public features and every bidder's conversion probability.
+    """Draws each step's public features and every campaign's probabilities.
 
     Subclass it and implement `draws`. Override `segment_names` when the
     market has segments.
@@ -66,7 +85,7 @@ class Market(ABC):
     >>> class Flat(bl.markets.Market):
     ...     def draws(self, count, rng):
     ...         while True:
-    ...             yield bl.markets.MarketDraw({}, np.full(count, 0.1))
+    ...             yield bl.markets.MarketDraw({}, pcvr=np.full(count, 0.1))
     >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], market=Flat(), episodes=1, steps=10))
     >>> log.true_values[0, :3, 0].tolist()
@@ -85,7 +104,8 @@ class Market(ABC):
         Parameters
         ----------
         count : int
-            Number of campaigns; each draw holds one probability per campaign.
+            Number of campaigns; each draw holds one probability per campaign
+            and stage.
         rng : numpy.random.Generator
             The market's own random stream. Use only this stream, so runs
             stay reproducible.
@@ -99,39 +119,79 @@ class Market(ABC):
 
 
 @dataclass(frozen=True)
-class LogisticContext(Market):
-    """Conversion probability σ(ad vector · random context + bias) per bidder.
+class LogisticMarket(Market):
+    """pCVR = σ(ad vector · feature vector + bias) per campaign; pCTR the same way.
 
-    Each bidder gets a fixed ad vector and bias for the whole run. Each step
-    draws a new standard normal context, so bidders' probabilities move
-    together on some steps and apart on others.
+    Each campaign gets fixed ad vectors and biases for the whole run. Each
+    step draws a new standard normal feature vector, so campaigns'
+    probabilities move together on some steps and apart on others. The first
+    ``public_features`` numbers of the vector reach bidders as
+    ``features["vector"]``; the rest still drive the probabilities unseen.
 
     Parameters
     ----------
-    context_size : int, optional
-        Length of the context and ad vectors.
-    bias_mean : float, optional
-        Mean of the per-bidder bias; -3 gives probabilities near 5%.
-    bias_sd : float, optional
-        Spread of the per-bidder bias.
+    feature_count : int, optional
+        Length of the feature vector and the ad vectors.
+    ctr_bias_mean : float, optional
+        Mean of the per-campaign click bias. None, the default, means no
+        click stage: every won impression is clicked.
+    ctr_bias_sd : float, optional
+        Spread of the per-campaign click bias.
+    cvr_bias_mean : float, optional
+        Mean of the per-campaign conversion bias; -3 gives pCVR near 5%.
+    cvr_bias_sd : float, optional
+        Spread of the per-campaign conversion bias.
+    public_features : int, optional
+        How many features bidders see, from 0 to ``feature_count``. None
+        means all.
+
+    Raises
+    ------
+    TypeError
+        If ``public_features`` is not an int.
+    ValueError
+        If ``public_features`` is outside [0, ``feature_count``].
 
     Examples
     --------
     >>> import numpy as np
     >>> import bidlab as bl
-    >>> draws = bl.markets.LogisticContext().draws(3, np.random.default_rng(0))
-    >>> next(draws).probabilities.shape
-    (3,)
+    >>> market = bl.markets.LogisticMarket(ctr_bias_mean=-4.0, public_features=3)
+    >>> draw = next(market.draws(2, np.random.default_rng(0)))
+    >>> draw.pcvr.shape, draw.pctr.shape, draw.features["vector"].shape
+    ((2,), (2,), (3,))
     """
 
-    context_size: int = 8
-    bias_mean: float = -3.0
-    bias_sd: float = 0.5
+    feature_count: int = 8
+    ctr_bias_mean: float | None = None
+    ctr_bias_sd: float = 0.5
+    cvr_bias_mean: float = -3.0
+    cvr_bias_sd: float = 0.5
+    public_features: int | None = None
+
+    def __post_init__(self) -> None:
+        public = self.public_features
+        if public is None:
+            return
+
+        if isinstance(public, bool) or not isinstance(public, int):
+            raise TypeError(
+                f"public_features must be an int or None, got {type(public).__name__}"
+            )
+
+        if not 0 <= public <= self.feature_count:
+            raise ValueError(
+                f"public_features must be in [0, {self.feature_count}], got {public}"
+            )
 
     def draws(self, count: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
         """Yield one draw per step; see `Market.draws`."""
-        for logits in _logits(self, count, rng):
-            yield MarketDraw({}, _sigmoid(logits))
+        for stages in _logistic_stages(self, count, rng):
+            yield MarketDraw(
+                {"vector": stages.public_vector},
+                pctr=stages.pctr,
+                pcvr=_sigmoid(stages.cvr_logits),
+            )
 
 
 @dataclass(frozen=True)
@@ -145,7 +205,7 @@ class Segment:
     share : float
         Fraction of steps from this segment. Shares must sum to 1.
     lift : float, optional
-        Added to every bidder's logit in this segment.
+        Added to every campaign's CVR logit in this segment.
     """
 
     name: str
@@ -155,17 +215,18 @@ class Segment:
 
 @dataclass(frozen=True)
 class Segmented(Market):
-    """Each step comes from one segment; its `lift` shifts every bidder's logit.
+    """Each step comes from one segment; its `lift` shifts every campaign's CVR logit.
 
-    Bidders get the segment name as the ``segment`` input of `Bidder.forward`.
+    Bidders get the segment name as the ``segment`` input of `Bidder.forward`,
+    and the base market's ``"vector"`` feature and click stage unchanged.
 
     Parameters
     ----------
     segments : Sequence[Segment]
         At least one segment, stored as a tuple, with unique names and shares
         that sum to 1.
-    base : LogisticContext, optional
-        Draws the logits before the lift is added.
+    base : LogisticMarket, optional
+        Draws the features and logits before the lift is added.
 
     Raises
     ------
@@ -183,7 +244,7 @@ class Segmented(Market):
     """
 
     segments: Sequence[Segment]
-    base: LogisticContext = LogisticContext()
+    base: LogisticMarket = LogisticMarket()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "segments", tuple(self.segments))
@@ -214,9 +275,14 @@ class Segmented(Market):
         """Yield one draw per step; see `Market.draws`."""
         base_rng, pick_rng = rng.spawn(2)
         shares = [segment.share for segment in self.segments]
-        for logits in _logits(self.base, count, base_rng):
+        for stages in _logistic_stages(self.base, count, base_rng):
             segment = self.segments[pick_rng.choice(len(self.segments), p=shares)]
-            yield MarketDraw({}, _sigmoid(logits + segment.lift), segment.name)
+            yield MarketDraw(
+                {"vector": stages.public_vector},
+                pctr=stages.pctr,
+                pcvr=_sigmoid(stages.cvr_logits + segment.lift),
+                segment=segment.name,
+            )
 
 
 @dataclass(frozen=True)
@@ -243,7 +309,7 @@ class IndependentValues(Market):
     >>> import bidlab as bl
     >>> market = bl.markets.IndependentValues(stats.uniform(0, 0.1))
     >>> draw = next(market.draws(2, np.random.default_rng(0)))
-    >>> bool(((draw.probabilities >= 0) & (draw.probabilities <= 0.1)).all())
+    >>> bool(((draw.pcvr >= 0) & (draw.pcvr <= 0.1)).all())
     True
     """
 
@@ -267,24 +333,62 @@ class IndependentValues(Market):
                     for stream in streams
                 ]
             )
-            for probabilities in np.clip(block, 0.0, 1.0):
-                yield MarketDraw({}, probabilities)
+            for pcvr in np.clip(block, 0.0, 1.0):
+                yield MarketDraw({}, pcvr=pcvr)
 
 
-def _logits(
-    market: LogisticContext, count: int, rng: np.random.Generator
-) -> Iterator[npt.NDArray[np.float64]]:
-    dimensions = market.context_size
-    # Separate streams keep bidder i's draws equal when bidders are added.
-    vector_rng, bias_rng, context_rng = rng.spawn(3)
-    ad_vectors = vector_rng.normal(
-        0.0, 1.0 / np.sqrt(dimensions), size=(count, dimensions)
+class _Stages(NamedTuple):
+    public_vector: npt.NDArray[np.float64]
+    pctr: npt.NDArray[np.float64] | None
+    cvr_logits: npt.NDArray[np.float64]
+
+
+def _logistic_stages(
+    market: LogisticMarket, count: int, rng: np.random.Generator
+) -> Iterator[_Stages]:
+    dimensions = market.feature_count
+    public = dimensions if market.public_features is None else market.public_features
+    # Separate streams keep campaign i's draws equal when campaigns are added.
+    # Risk: if the click streams were spawned first, then every CVR draw would move.
+    cvr_vector_rng, cvr_bias_rng, feature_rng, ctr_vector_rng, ctr_bias_rng = rng.spawn(
+        5
     )
-    biases = bias_rng.normal(market.bias_mean, market.bias_sd, size=count)
+    scale = 1.0 / np.sqrt(dimensions)
+    click_weights = None
+    if market.ctr_bias_mean is not None:
+        click_weights = (
+            ctr_vector_rng.normal(0.0, scale, size=(count, dimensions)),
+            ctr_bias_rng.normal(market.ctr_bias_mean, market.ctr_bias_sd, size=count),
+        )
+
+    cvr_vectors = cvr_vector_rng.normal(0.0, scale, size=(count, dimensions))
+    cvr_biases = cvr_bias_rng.normal(
+        market.cvr_bias_mean, market.cvr_bias_sd, size=count
+    )
     while True:
-        context = context_rng.normal(size=dimensions)
+        features = feature_rng.normal(size=dimensions)
+        pctr = None
         # A matrix product rounds differently as rows are added; a per-row sum does not.
-        yield (ad_vectors * context).sum(axis=1) + biases
+        if click_weights is not None:
+            ctr_vectors, ctr_biases = click_weights
+            pctr = _sigmoid((ctr_vectors * features).sum(axis=1) + ctr_biases)
+
+        cvr_logits = (cvr_vectors * features).sum(axis=1) + cvr_biases
+        public_vector = features[:public]
+        # Nothing else holds this step's features, so a read-only view needs no copy.
+        public_vector.flags.writeable = False
+        yield _Stages(public_vector, pctr, cvr_logits)
+
+
+def _read_only(value: FeatureValue) -> FeatureValue:
+    # A market that already froze its array owns it; copying it every step would slow runs.
+    if not isinstance(value, np.ndarray) or not value.flags.writeable:
+        return value
+
+    # A copy, so neither the market nor a bidder can change what others see.
+    copy = value.copy()
+    copy.flags.writeable = False
+    return copy
 
 
 def _sigmoid(logits: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
