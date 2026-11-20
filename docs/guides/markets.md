@@ -4,7 +4,7 @@ This guide shows the built-in markets, segments and targeting, and how to write 
 
 ## Built-in markets
 
-A market draws each step's public features and each bidder's private conversion probability. Pass one as `SimConfig(market=...)`.
+A market draws each step's public features and each bidder's private conversion probability. Each feature reaches `forward` as an input of the same name, which must not be a built-in input such as `time`. Pass one as `SimConfig(market=...)`.
 
 | Market | Draws |
 |---|---|
@@ -16,7 +16,7 @@ A market draws each step's public features and each bidder's private conversion 
 
 ## Segments and targeting
 
-A segmented market puts the segment name in `request.features["segment"]`. A campaign with `segments` bids only in those segments. Elsewhere its bidder is not called, and its logged bid is 0.
+A bidder gets the segment name as its `segment` input. A campaign with `segments` bids only in those segments. Elsewhere its bidder is not called, and its logged bid is 0.
 
 ```python
 import bidlab as bl

@@ -1,56 +1,55 @@
 # Rewards
 
-This guide shows the reward each bidder learns from, the built-in reward functions, and how to write your own.
+This guide shows how a bidder defines the reward it learns from, and how to record it.
 
-## Step and episode rewards
+## A reward is the bidder's own code
 
-Each `Campaign` has a `step_reward`, called after every auction, and an optional `episode_reward`, called once per episode. Both are plain functions.
+bidlab has no reward setting. A bidder computes its reward from what it learns, in `update` or `on_episode_end`, and learns from it there. This keeps the learning signal with the algorithm, as a PyTorch module keeps its loss with its training step.
 
-| Kind | Built-in functions | Your own |
+| Hook | Reads | Typical reward |
 |---|---|---|
-| Step | `bl.rewards.surplus` (default), `conversions`, `realized_value` | `f(request, result, params) -> float` |
-| Episode | `bl.rewards.cpa_score`, `total_surplus` | `g(report, params) -> float` |
+| `update(result)` | One `BidResult` | `result.realized_value - result.price`, `float(result.converted)` |
+| `on_episode_end(report)` | The episode's `EpisodeReport` | `report.realized_value - report.spend` |
+| `on_episode_start(campaign)` | The `Campaign` | Settings such as `campaign.cpa_target` |
 
-A step reward reads the realized value from `result.realized_value`. The bidder sees it as `result.reward`. An episode reward reaches the bidder as `on_episode_end(report, episode_reward)`.
-
-## Parameters
-
-The `params` dict holds the campaign's `reward_params`, plus its `cpa_target` when it has one.
+To see the reward in results, record it with `self.log`. A value logged in `update` lands per auction; one logged in `on_episode_end` lands per episode. See [Logging](logging.md).
 
 ```python
 import bidlab as bl
 
 
-def cheap_conversions(request, result, params):
-    return float(result.converted) - params["cost_weight"] * result.price
+class CheapConversions(bl.Bidder):
+    """Learns nothing; logs a conversion reward that charges for price."""
+
+    def __init__(self, cost_weight=0.5):
+        self.cost_weight = cost_weight
+
+    def forward(self, value):
+        return value
+
+    def update(self, result):
+        reward = float(result.converted) - self.cost_weight * result.price
+        self.log("reward", reward)
 
 
-campaign = bl.Campaign(
-    "bandit",
-    bl.UcbMultiplier(),
-    budget=50,
-    event_value=5,
-    step_reward=cheap_conversions,
-    reward_params={"cost_weight": 0.5},
-)
+campaign = bl.Campaign("cheap", CheapConversions(), budget=50, event_value=5)
+config = bl.SimConfig(campaigns=[campaign], episodes=2, steps=200)
+print(bl.run(config).logged["reward"]["cheap"].shape)  # (2, 200)
 ```
 
-## CPA targets
+## A learning bidder with another reward
 
-`cpa_score` is the AuctionNet score: the episode's value, cut by (target / CPA)³ when the CPA is above target. `bl.rewards.cpa_score_of` computes it from plain numbers, for your own episode rewards.
+`UcbMultiplier` sums the surplus, `realized_value - price`, in `update` into `arm_reward`, and learns from it at the episode end. Override `update` to reward something else.
 
 ```python
-cpa_campaign = bl.Campaign(
-    "pid",
-    bl.PidPacing(),
-    budget=15,
-    event_value=5,
-    cpa_target=3,
-    episode_reward=bl.rewards.cpa_score,
-)
-config = bl.SimConfig(campaigns=[campaign, cpa_campaign], episodes=2, steps=200)
-print(bl.run(config).episode_rewards.shape)  # (2, 2)
+class ConversionBandit(bl.UcbMultiplier):
+    def update(self, result):
+        self.arm_reward += float(result.converted)
 ```
+
+## Comparing bidders
+
+Each bidder may define its reward differently, so compare bidders on metrics instead: `surplus`, `cpa_score` and `regret` in [Results](results.md). `cpa_score` is the AuctionNet score: the episode's value, cut by (target / CPA)³ when the CPA is above the campaign's `cpa_target`.
 
 ## Examples
 

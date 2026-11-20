@@ -38,24 +38,24 @@ print(results.summary())
 ## How one step works
 
 1. The market draws the impression's public features and each bidder's conversion probability pᵢ. The default market, `LogisticContext`, uses pᵢ = σ(x · φᵢ + βᵢ) for a random context x.
-2. Each bidder sees its own `BidRequest`. It holds the `time` in seconds since the episode start and the public `features`. Its `value` is the platform's value of the impression, w × pᵢ.
+2. Each bidder's `forward` gets the inputs it names, such as `value`, `time`, `budget_left` and each public feature. Its `value` is the platform's value of the impression, w × pᵢ.
 3. Each bid is capped at the bidder's remaining budget. The bidder does not see that amount; it tracks its own spend.
 4. The auction picks a winner: `FirstPrice` or `SecondPrice`, with an optional reserve price.
 5. The winner converts with probability p of the winner.
-6. Each bidder gets its own `BidResult`: the auction's `time`, its bid, and whether it won. It also holds the price it paid, whether it converted, its `realized_value`, and its reward. A loser never sees the winning price.
+6. Each bidder gets its own `BidResult`: the auction's `time`, its bid, and whether it won. It also holds the price it paid, whether it converted, and its `realized_value`. A bidder computes its own reward from it. A loser never sees the winning price.
 
-`request.value` is exact by default. [Simulation](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/simulation.md) covers the clock, noise in that value, and reproducibility.
+The `value` input is exact by default. [Simulation](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/simulation.md) covers the clock, noise in that value, and reproducibility.
 
 ## Write a bidder
 
-Subclass `bl.Bidder` and implement `forward(value, request)`. Alone, a bidder gets `request.value`, and its output is the bid.
+Subclass `bl.Bidder` and implement `forward`. Like a PyTorch module, `forward` names the inputs it needs, such as `forward(self, value, time_left)`. Alone, a bidder gets the platform's `value`, and its output is the bid.
 
 ```python
 class FlatBid(bl.Bidder):
     def __init__(self, amount):
         self.amount = amount
 
-    def forward(self, value, request):
+    def forward(self, value):
         return self.amount
 
 
@@ -70,17 +70,17 @@ flat = bl.SimConfig(
 print(bl.run_many(flat, seeds=range(2)).summary())
 ```
 
-[Bidders](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/bidders.md) covers the other hooks, learning from results, and stacking bidders with `bl.Stack`.
+[Bidders](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/bidders.md) covers every input, the other hooks, learning from results, and stacking bidders with `bl.Stack`.
 
 ## Guides
 
 | Guide | Covers |
 |---|---|
 | [Simulation](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/simulation.md) | Each step in detail, the clock, estimate noise, parallel runs, reproducibility |
-| [Bidders](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/bidders.md) | Hooks, value models and bid control, `Stack`, built-in bidders |
+| [Bidders](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/bidders.md) | Inputs, hooks, value models and bid control, `Stack`, built-in bidders |
 | [Composite bidders](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/composite-bidders.md) | Bidders that hold and call other bidders |
 | [Markets](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/markets.md) | Built-in markets, segments and targeting, custom markets |
-| [Rewards](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/rewards.md) | Step and episode rewards, CPA targets, your own reward |
+| [Rewards](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/rewards.md) | A reward in the bidder's own code, logging it, comparing bidders |
 | [Logging and callbacks](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/logging.md) | `self.log` in a bidder, and watching a run |
 | [Results](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/results.md) | `Results`, `RunLog`, metric functions, regret |
 

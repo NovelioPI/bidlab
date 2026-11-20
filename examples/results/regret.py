@@ -31,7 +31,6 @@ if __name__ == "__main__":
         f"bids and true values per campaign: {log.bids.shape}, {log.true_values.shape}"
     )
     print(f"winner, price, converted per step: {log.winner.shape}")
-    print(f"rewards: {log.rewards.shape}, episode rewards: {log.episode_rewards.shape}")
     print(f"first segments: {log.segment[0, :3]}, logged: {dict(log.logged)}")
     print(f"auctions with no winner: {(log.winner == -1).sum()}")
     print(f"price paid: {log.price[log.converted].mean():.3f} on converted steps")

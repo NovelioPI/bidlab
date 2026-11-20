@@ -15,18 +15,17 @@ class SegmentRate(bl.Bidder):
         self.conversions = {}
         self.pending = {}
 
-    def on_episode_start(self, brief):
-        self.brief = brief
+    def on_episode_start(self, campaign):
+        self.event_value = campaign.event_value
 
     def rate(self, segment):
         conversions = self.conversions.get(segment, 0) + self.prior
         return conversions / (self.wins.get(segment, 0) + 1)
 
-    def forward(self, value, request):
-        segment = request.features["segment"]
-        # BidResult carries the auction time but not the features.
-        self.pending[request.time] = segment
-        return self.rate(segment) * self.brief.event_value
+    def forward(self, value, segment, time):
+        # BidResult carries the auction time but not the segment.
+        self.pending[time] = segment
+        return self.rate(segment) * self.event_value
 
     def update_batch(self, bid_results):
         for result in bid_results:
@@ -37,7 +36,7 @@ class SegmentRate(bl.Bidder):
                     self.conversions.get(segment, 0) + result.converted
                 )
 
-    def on_episode_end(self, report, episode_reward):
+    def on_episode_end(self, report):
         self.log({f"rate_{segment}": self.rate(segment) for segment in self.wins})
 
 
