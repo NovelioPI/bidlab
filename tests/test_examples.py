@@ -18,6 +18,10 @@ EXAMPLES = {
     "bidders/segment_rate.py": ("yes", ("bidders.md",)),
     "composite/night_shade.py": ("yes", ("composite-bidders.md",)),
     "logging/pid_trace.py": ("yes", ("logging.md",)),
+    "rewards/cpa_target.py": ("yes", ("rewards.md",)),
+    "rewards/custom_reward.py": ("yes", ("rewards.md",)),
+    "simulation/estimate_noise.py": ("yes", ("simulation.md",)),
+    "simulation/clock.py": ("yes", ("simulation.md",)),
 }
 
 
