@@ -1,6 +1,7 @@
 import hashlib
 import importlib
 import importlib.util
+import re
 import tomllib
 from pathlib import Path
 
@@ -228,3 +229,13 @@ def test_removed_interfaces():
     assert "yaml" not in dependencies
     assert "scripts" not in pyproject["project"]
     assert pyproject["project"]["name"] == "bidlab"
+
+
+def relative_links(markdown: str) -> list[str]:
+    targets = re.findall(r"\]\(([^)]+)\)", markdown)
+    return [target for target in targets if not target.startswith(("https://", "#"))]
+
+
+def test_readme_links_work_on_pypi():
+    # PyPI shows the README without the repo, so a relative link breaks there.
+    assert relative_links((ROOT / "README.md").read_text()) == []
