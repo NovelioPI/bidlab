@@ -226,10 +226,14 @@ def test_local_links_resolve():
 def test_examples_linked_from_guides():
     missing = []
     for name, (_, guides) in EXAMPLES.items():
+        if not guides:
+            missing.append(f"no guide is listed for {name}")
+
         for guide in guides:
             targets = local_links(ROOT / "docs" / "guides" / guide)
             if f"../../examples/{name}" not in targets:
                 missing.append(f"{guide} does not link {name}")
+
     assert not missing, missing
 
 
