@@ -15,14 +15,16 @@ market = bl.markets.Segmented(
 )
 
 config = bl.SimConfig(
-    bidders=[
-        bl.BidderSpec("everywhere", bl.Truthful(), bl.Campaign(budget=50, value=5)),
-        bl.BidderSpec(
+    campaigns=[
+        bl.Campaign("everywhere", bl.Linear(), budget=50, event_value=5),
+        bl.Campaign(
             "sports_only",
-            bl.Truthful(),
-            bl.Campaign(budget=50, value=5, segments=("sports",)),
+            bl.Linear(),
+            budget=50,
+            event_value=5,
+            segments=("sports",),
         ),
-        bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=15, value=5)),
+        bl.Campaign("pid", bl.PidPacing(), budget=15, event_value=5),
     ],
     market=market,
     auction=bl.SecondPrice(reserve=0.01),
@@ -32,11 +34,11 @@ config = bl.SimConfig(
 
 if __name__ == "__main__":
     results = bl.run_many(config, seeds=range(5))
-    assert results.segments is not None
-    print(results.segments.summary())
+    assert results.segment_rows is not None
+    print(results.segment_rows.summary())
     wins = {"sports": 0.0, "other": 0.0}
-    for row in results.segments.rows:
-        if row["bidder"] == "sports_only":
+    for row in results.segment_rows.rows:
+        if row["campaign"] == "sports_only":
             where = "sports" if row["segment"] == "sports" else "other"
             wins[where] += float(row["wins"])
 

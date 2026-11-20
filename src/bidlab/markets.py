@@ -31,9 +31,9 @@ class MarketDraw:
     Parameters
     ----------
     features : Mapping[str, str | float]
-        Public features every bidder sees in `Observation.features`.
+        Public features every bidder sees in `BidRequest.features`.
     probabilities : numpy.ndarray
-        Each bidder's conversion probability, shape ``(bidders,)``, in [0, 1].
+        Each bidder's conversion probability, shape ``(campaigns,)``, in [0, 1].
         A bidder sees only its own, as part of its value.
     segment : str, optional
         Name of this step's segment; must be in the market's `segment_names`.
@@ -63,12 +63,12 @@ class Market(ABC):
     >>> import numpy as np
     >>> import bidlab as bl
     >>> class Flat(bl.markets.Market):
-    ...     def draws(self, bidders, rng):
+    ...     def draws(self, count, rng):
     ...         while True:
-    ...             yield bl.markets.MarketDraw({}, np.full(bidders, 0.1))
-    >>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))
-    >>> log = bl.run(bl.SimConfig(bidders=[spec], market=Flat(), episodes=1, steps=10))
-    >>> log.values[0, :3, 0].tolist()
+    ...             yield bl.markets.MarketDraw({}, np.full(count, 0.1))
+    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
+    >>> log = bl.run(bl.SimConfig(campaigns=[campaign], market=Flat(), episodes=1, steps=10))
+    >>> log.true_values[0, :3, 0].tolist()
     [0.5, 0.5, 0.5]
     """
 
@@ -78,13 +78,13 @@ class Market(ABC):
         return (ALL_SEGMENTS,)
 
     @abstractmethod
-    def draws(self, bidders: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
+    def draws(self, count: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
         """Yield one draw per step, for the whole run.
 
         Parameters
         ----------
-        bidders : int
-            Number of bidders; each draw holds one probability per bidder.
+        count : int
+            Number of campaigns; each draw holds one probability per campaign.
         rng : numpy.random.Generator
             The market's own random stream. Use only this stream, so runs
             stay reproducible.
@@ -107,11 +107,11 @@ class LogisticContext(Market):
 
     Parameters
     ----------
-    context_dim : int, optional
+    context_size : int, optional
         Length of the context and ad vectors.
     bias_mean : float, optional
         Mean of the per-bidder bias; -3 gives probabilities near 5%.
-    bias_std : float, optional
+    bias_sd : float, optional
         Spread of the per-bidder bias.
 
     Examples
@@ -123,13 +123,13 @@ class LogisticContext(Market):
     (3,)
     """
 
-    context_dim: int = 8
+    context_size: int = 8
     bias_mean: float = -3.0
-    bias_std: float = 0.5
+    bias_sd: float = 0.5
 
-    def draws(self, bidders: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
+    def draws(self, count: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
         """Yield one draw per step; see `Market.draws`."""
-        for logits in _logits(self, bidders, rng):
+        for logits in _logits(self, count, rng):
             yield MarketDraw({}, _sigmoid(logits))
 
 
@@ -140,7 +140,7 @@ class Segment:
     Parameters
     ----------
     name : str
-        Segment name; bidders list it in `BidderSpec.segments`.
+        Segment name; bidders list it in `Campaign.segments`.
     share : float
         Fraction of steps from this segment. Shares must sum to 1.
     lift : float, optional
@@ -156,7 +156,7 @@ class Segment:
 class Segmented(Market):
     """Each step comes from one segment; its `lift` shifts every bidder's logit.
 
-    The segment name goes in `Observation.features` under ``"segment"``.
+    The segment name goes in `BidRequest.features` under ``"segment"``.
 
     Parameters
     ----------
@@ -209,11 +209,11 @@ class Segmented(Market):
         """The segment names, in the order given."""
         return tuple(segment.name for segment in self.segments)
 
-    def draws(self, bidders: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
+    def draws(self, count: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
         """Yield one draw per step; see `Market.draws`."""
         base_rng, pick_rng = rng.spawn(2)
         shares = [segment.share for segment in self.segments]
-        for logits in _logits(self.base, bidders, base_rng):
+        for logits in _logits(self.base, count, base_rng):
             segment = self.segments[pick_rng.choice(len(self.segments), p=shares)]
             yield MarketDraw(
                 {"segment": segment.name},
@@ -259,10 +259,10 @@ class IndependentValues(Market):
                 f"got {type(self.distribution).__name__}"
             )
 
-    def draws(self, bidders: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
+    def draws(self, count: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
         """Yield one draw per step; see `Market.draws`."""
         # Child stream i depends only on i, so adding a bidder keeps the others' values.
-        streams = rng.spawn(bidders)
+        streams = rng.spawn(count)
         while True:
             block = np.column_stack(
                 [
@@ -275,15 +275,15 @@ class IndependentValues(Market):
 
 
 def _logits(
-    market: LogisticContext, bidders: int, rng: np.random.Generator
+    market: LogisticContext, count: int, rng: np.random.Generator
 ) -> Iterator[npt.NDArray[np.float64]]:
-    dimensions = market.context_dim
+    dimensions = market.context_size
     # Separate streams keep bidder i's draws equal when bidders are added.
     vector_rng, bias_rng, context_rng = rng.spawn(3)
     ad_vectors = vector_rng.normal(
-        0.0, 1.0 / np.sqrt(dimensions), size=(bidders, dimensions)
+        0.0, 1.0 / np.sqrt(dimensions), size=(count, dimensions)
     )
-    biases = bias_rng.normal(market.bias_mean, market.bias_std, size=bidders)
+    biases = bias_rng.normal(market.bias_mean, market.bias_sd, size=count)
     while True:
         context = context_rng.normal(size=dimensions)
         # A matrix product rounds differently as rows are added; a per-row sum does not.

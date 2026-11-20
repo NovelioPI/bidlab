@@ -4,15 +4,15 @@ from typing import Any, ClassVar, override
 
 import pytest
 
-from bidlab.bidders import Bidder, PidPacing, Truthful
+from bidlab.bidders import Bidder, Linear, PidPacing
 from bidlab.callbacks import Callback
-from bidlab.config import BidderSpec, SimConfig
+from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
-from bidlab.types import Campaign, EpisodeStats, Observation
+from bidlab.types import BidRequest, Brief, EpisodeReport
 
-CAMPAIGN = Campaign(budget=1e6, value=5.0)
+CAMPAIGN = Brief(budget=1e6, event_value=5.0)
 
 
 class Record(Callback):
@@ -27,8 +27,10 @@ class Record(Callback):
         self.calls.append((self.name, "run_start", config))
 
     @override
-    def on_episode_end(self, episode: int, stats: Mapping[str, EpisodeStats]) -> None:
-        self.calls.append((self.name, "episode_end", (episode, stats)))
+    def on_episode_end(
+        self, episode: int, reports: Mapping[str, EpisodeReport]
+    ) -> None:
+        self.calls.append((self.name, "episode_end", (episode, reports)))
 
     @override
     def on_run_end(self, log: RunLog) -> None:
@@ -49,7 +51,9 @@ class Shared(Record):
         Shared.order.append((self.name, "run_start"))
 
     @override
-    def on_episode_end(self, episode: int, stats: Mapping[str, EpisodeStats]) -> None:
+    def on_episode_end(
+        self, episode: int, reports: Mapping[str, EpisodeReport]
+    ) -> None:
         Shared.order.append((self.name, "episode_end"))
 
     @override
@@ -57,29 +61,31 @@ class Shared(Record):
         Shared.order.append((self.name, "run_end"))
 
 
-class Stats(Bidder):
-    """Keeps every EpisodeStats its on_episode_end gets."""
+class Reports(Bidder):
+    """Keeps every EpisodeReport its on_episode_end gets."""
 
-    seen: ClassVar[list[EpisodeStats]] = []
+    seen: ClassVar[list[EpisodeReport]] = []
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         return value
 
     @override
-    def on_episode_end(self, stats: EpisodeStats, episode_reward: float | None) -> None:
-        Stats.seen.append(stats)
+    def on_episode_end(
+        self, report: EpisodeReport, episode_reward: float | None
+    ) -> None:
+        Reports.seen.append(report)
 
 
-def config(*specs: BidderSpec, **kwargs: Any) -> SimConfig:
+def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
     defaults: dict[str, Any] = {"episodes": 3, "steps": 50, "seed": 3}
-    return SimConfig(bidders=specs, **(defaults | kwargs))
+    return SimConfig(campaigns=campaigns, **(defaults | kwargs))
 
 
-def two() -> tuple[BidderSpec, ...]:
+def two() -> tuple[Campaign, ...]:
     return (
-        BidderSpec("t", Truthful(), CAMPAIGN),
-        BidderSpec("p", PidPacing(), Campaign(3.0, 5.0)),
+        Campaign("t", Linear(), budget=1e6, event_value=5.0),
+        Campaign("p", PidPacing(), budget=3.0, event_value=5.0),
     )
 
 
@@ -104,16 +110,19 @@ def test_run_hook_order():
     assert callback.calls[-1][2] is log
 
 
-def test_episode_stats_match_bidders():
-    Stats.seen.clear()
+def test_episode_report_match_bidders():
+    Reports.seen.clear()
     callback = Record()
-    specs = (BidderSpec("s", Stats(), CAMPAIGN), BidderSpec("t", Truthful(), CAMPAIGN))
-    run(config(*specs), callbacks=[callback])
-    stats = [args[1] for _, hook, args in callback.calls if hook == "episode_end"]
-    assert [set(episode) for episode in stats] == [{"s", "t"}] * 3
-    assert [episode["s"] for episode in stats] == Stats.seen
+    campaigns = (
+        Campaign("s", Reports(), budget=1e6, event_value=5.0),
+        Campaign("t", Linear(), budget=1e6, event_value=5.0),
+    )
+    run(config(*campaigns), callbacks=[callback])
+    reports = [args[1] for _, hook, args in callback.calls if hook == "episode_end"]
+    assert [set(episode) for episode in reports] == [{"s", "t"}] * 3
+    assert [episode["s"] for episode in reports] == Reports.seen
     with pytest.raises(TypeError):
-        stats[0]["x"] = stats[0]["s"]  # pyright: ignore[reportIndexIssue]  Reason: the test checks the mapping is read-only.
+        reports[0]["x"] = reports[0]["s"]  # pyright: ignore[reportIndexIssue]  Reason: the test checks the mapping is read-only.
 
 
 def test_callbacks_in_list_order():
@@ -162,7 +171,9 @@ class Fails(Callback):
         self.fail("on_run_start")
 
     @override
-    def on_episode_end(self, episode: int, stats: Mapping[str, EpisodeStats]) -> None:
+    def on_episode_end(
+        self, episode: int, reports: Mapping[str, EpisodeReport]
+    ) -> None:
         self.fail("on_episode_end")
 
     @override
@@ -200,18 +211,18 @@ class OnlyEnd(Callback):
     """Overrides one hook only."""
 
     def __init__(self):
-        self.logs: list[RunLog] = []
+        self.logged: list[RunLog] = []
 
     @override
     def on_run_end(self, log: RunLog) -> None:
-        self.logs.append(log)
+        self.logged.append(log)
 
 
 def test_partial_callback():
     callback = OnlyEnd()
     log = run(config(*two()), callbacks=[callback])
     run_many(config(*two()), seeds=[0, 1], callbacks=[callback])
-    assert len(callback.logs) == 1 and callback.logs[0] is log
+    assert len(callback.logged) == 1 and callback.logged[0] is log
 
 
 def test_callbacks_leave_run_unchanged():

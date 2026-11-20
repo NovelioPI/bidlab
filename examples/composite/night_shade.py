@@ -15,7 +15,7 @@ NIGHT_END_HOUR = 6
 
 
 class Shade(bl.Bidder):
-    def forward(self, value, observation, factor=1.0):
+    def forward(self, value, request, factor=1.0):
         return value * factor
 
 
@@ -26,34 +26,34 @@ class NightShade(bl.Bidder):
         self.shade = Shade()
         self.pacing = bl.PidPacing()
 
-    def on_episode_start(self, campaign):
-        self.campaign = campaign
+    def on_episode_start(self, brief):
+        self.brief = brief
 
-    def forward(self, value, observation):
-        night = self.campaign.hour_of_day(observation.time) < NIGHT_END_HOUR
+    def forward(self, value, request):
+        night = self.brief.hour_of_day(request.time) < NIGHT_END_HOUR
         factor = self.night_factor if night else self.day_factor
-        shaded = self.shade.forward(value, observation, factor=factor)
-        return self.pacing.forward(shaded, observation)
+        shaded = self.shade.forward(value, request, factor=factor)
+        return self.pacing.forward(shaded, request)
 
 
 config = bl.SimConfig(
-    bidders=[
-        bl.BidderSpec("night", NightShade(), bl.Campaign(budget=15, value=5)),
-        bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=15, value=5)),
-        bl.BidderSpec("big", bl.Truthful(), bl.Campaign(budget=50, value=5)),
+    campaigns=[
+        bl.Campaign("night", NightShade(), budget=15, event_value=5),
+        bl.Campaign("pid", bl.PidPacing(), budget=15, event_value=5),
+        bl.Campaign("big", bl.Linear(), budget=50, event_value=5),
     ],
     episodes=5,
     steps=480,
 )
 
 if __name__ == "__main__":
-    print([path for path, _ in config.bidders[0].bidder.named_bidders()])
+    print([path for path, _ in config.campaigns[0].bidder.named_bidders()])
     hours = np.arange(config.steps) * config.horizon_hours / config.steps
     at_night = hours < NIGHT_END_HOUR
     higher = []
     for seed in range(5):
         log = bl.run(dataclasses.replace(config, seed=seed))
-        multiplier = log.logs["pacing.multiplier"]["night"]
+        multiplier = log.logged["pacing.multiplier"]["night"]
         night = multiplier[:, at_night].mean()
         day = multiplier[:, ~at_night].mean()
         print(f"seed {seed}: child multiplier {night:.2f} at night, {day:.2f} by day")

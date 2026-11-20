@@ -9,29 +9,29 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | Symbol | Meaning | Unit |
 |---|---|---|
 | t | Step in the episode | step |
-| vᵢₜ | True expected value of bidder i at step t: wᵢ × pᵢₜ, as in `RunLog.values` | money |
-| wᵢ | Value of one conversion to bidder i: `campaign.value` | money |
-| pᵢₜ | True conversion probability of bidder i at step t, not the bidder's estimate | probability |
-| Wᵢ | Steps that bidder i won | set of steps |
+| vᵢₜ | True expected value of campaign i at step t: wᵢ × pᵢₜ, as in `RunLog.true_values` | money |
+| wᵢ | Value of one event to campaign i: `Campaign.event_value`. Today the event is a conversion | money |
+| pᵢₜ | True conversion probability of campaign i at step t, not the bidder's estimate | probability |
+| Wᵢ | Steps that campaign i won | set of steps |
 | priceₜ | Price paid at step t | money |
-| Bᵢ | Budget of bidder i per episode | money |
-| targetᵢ | CPA target of bidder i, if set | money per conversion |
+| Bᵢ | Budget of campaign i per episode | money |
+| targetᵢ | CPA target of campaign i, if set | money per conversion |
 
-## Bidder metrics
+## Campaign metrics
 
 | Metric | Definition | Notes |
 |---|---|---|
 | spend | Σ priceₜ over Wᵢ | |
 | wins | \|Wᵢ\| | |
 | conversions | Realized conversions over Wᵢ | |
-| value | conversions × wᵢ | Realized, so it includes luck |
-| surplus | value − spend | |
+| realized_value | conversions × wᵢ | Realized, so it includes luck |
+| surplus | realized_value − spend | |
 | budget_used | spend / Bᵢ | Never above 1 |
 | cpa | spend / conversions | NaN when conversions = 0 |
 | cpa_violation | max(0, cpa / targetᵢ − 1) | 0 when spend = 0. +inf when spend > 0 and conversions = 0. NaN with no target |
-| cpa_score | value × min((targetᵢ / cpa)³, 1) | AuctionNet score. Equals value when spend = 0. 0 when spend > 0 and conversions = 0. NaN with no target |
+| cpa_score | realized_value × min((targetᵢ / cpa)³, 1) | AuctionNet score. Equals realized_value when spend = 0. 0 when spend > 0 and conversions = 0. NaN with no target |
 | regret | See below | Uses expected value, not realized |
-| reward | Σ of the bidder's step rewards | Uses the bidder's configured `reward` |
+| reward | Σ of the bidder's step rewards | Uses the campaign's `step_reward` |
 | episode_reward | The configured `episode_reward` | NaN when none is set |
 
 ## Platform metrics
@@ -43,7 +43,7 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 
 ## Segment metrics
 
-`results.segments` holds these columns, one row per seed, bidder, and market segment. Each value is a per-episode sum over the segment's steps, averaged over episodes.
+`results.segment_rows` holds these columns, one row per seed, campaign, and market segment. Each value is a per-episode sum over the segment's steps, averaged over episodes.
 
 | Metric | Definition | Notes |
 |---|---|---|
@@ -53,7 +53,7 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | conversions | Realized conversions over Wᵢ in the segment | |
 | surplus | conversions × wᵢ − spend | |
 
-For one seed and bidder, each metric summed over segments equals the main table's value.
+For one seed and campaign, each metric summed over segments equals the main table's value.
 
 ## Regret
 

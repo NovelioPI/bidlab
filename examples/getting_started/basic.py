@@ -7,10 +7,10 @@ then sits out. PID pacing spreads the same budget over the whole day.
 import bidlab as bl
 
 config = bl.SimConfig(
-    bidders=[
-        bl.BidderSpec("truthful", bl.Truthful(), bl.Campaign(budget=15, value=5)),
-        bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=15, value=5)),
-        bl.BidderSpec("big", bl.Truthful(), bl.Campaign(budget=50, value=5)),
+    campaigns=[
+        bl.Campaign("truthful", bl.Linear(), budget=15, event_value=5),
+        bl.Campaign("pid", bl.PidPacing(), budget=15, event_value=5),
+        bl.Campaign("big", bl.Linear(), budget=50, event_value=5),
     ],
     auction=bl.SecondPrice(reserve=0.01),
     market=bl.markets.LogisticContext(),
@@ -20,7 +20,7 @@ config = bl.SimConfig(
 
 
 def mean(results, bidder, column):
-    values = [row[column] for row in results.rows if row["bidder"] == bidder]
+    values = [row[column] for row in results.rows if row["campaign"] == bidder]
     return sum(values) / len(values)
 
 

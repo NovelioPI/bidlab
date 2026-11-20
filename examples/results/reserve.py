@@ -14,8 +14,8 @@ import bidlab as bl
 RESERVE = 0.1
 
 config = bl.SimConfig(
-    bidders=[
-        bl.BidderSpec(name, bl.Truthful(), bl.Campaign(budget=1e9, value=5))
+    campaigns=[
+        bl.Campaign(name, bl.Linear(), budget=1e9, event_value=5)
         for name in ("first", "second")
     ],
     auction=bl.SecondPrice(reserve=0.0),
@@ -26,7 +26,7 @@ config = bl.SimConfig(
 
 def platform_mean(results, column):
     """Mean over seeds; every bidder row of a seed holds the same platform value."""
-    values = [float(row[column]) for row in results.rows if row["bidder"] == "first"]
+    values = [float(row[column]) for row in results.rows if row["campaign"] == "first"]
     return sum(values) / len(values)
 
 
@@ -50,7 +50,7 @@ if __name__ == "__main__":
     except ImportError:
         print("to_pandas skipped: pandas is not installed")
     else:
-        print(frame.groupby("bidder")[["revenue", "welfare"]].mean())
+        print(frame.groupby("campaign")[["revenue", "welfare"]].mean())
 
     raised = platform_mean(with_reserve, "revenue")
     base = platform_mean(without, "revenue")
