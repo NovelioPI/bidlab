@@ -1,4 +1,9 @@
-"""A custom market with its own segments: busy days and quiet nights."""
+"""Does the all-day bidder pay more per win at night, when the night-only bidder joins?
+
+Conversion rates are higher by day, so day impressions are worth more. At night
+a third bidder competes, and in a second-price auction more competition raises
+the price.
+"""
 
 import bidlab as bl
 
@@ -42,3 +47,15 @@ if __name__ == "__main__":
     results = bl.run_many(config, seeds=range(5))
     assert results.segments is not None
     print(results.segments.summary())
+    spend = {"day": 0.0, "night": 0.0}
+    wins = {"day": 0.0, "night": 0.0}
+    for row in results.segments.rows:
+        if row["bidder"] == "truthful":
+            segment = str(row["segment"])
+            spend[segment] += float(row["spend"])
+            wins[segment] += float(row["wins"])
+
+    night = spend["night"] / wins["night"]
+    day = spend["day"] / wins["day"]
+    answer = "yes" if night > day else "no"
+    print(f"Answer: {answer}, {night:.3f} per win at night against {day:.3f} by day")
