@@ -32,12 +32,12 @@ class Shaded(bl.Bidder):
 
 watched = bl.SimConfig(
     campaigns=[
-        bl.Campaign("paced", bl.PidPacing(), budget=10, event_value=5),
+        bl.Campaign("paced", bl.PidPacing(), budget=10, base_value=5),
         bl.Campaign(
             "shaded",
             bl.Stack(Shaded(), bl.PidPacing(log_state=False)),
             budget=10,
-            event_value=5,
+            base_value=5,
         ),
     ],
     episodes=3,

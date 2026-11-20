@@ -13,9 +13,9 @@ TOLERANCE = 1e-9
 
 config = bl.SimConfig(
     campaigns=[
-        bl.Campaign("truthful", bl.Linear(), budget=1e9, event_value=5),
-        bl.Campaign("shaded", bl.Linear(multiplier=0.5), budget=1e9, event_value=5),
-        bl.Campaign("other", bl.Linear(), budget=1e9, event_value=5),
+        bl.Campaign("truthful", bl.Linear(), budget=1e9, base_value=5),
+        bl.Campaign("shaded", bl.Linear(multiplier=0.5), budget=1e9, base_value=5),
+        bl.Campaign("other", bl.Linear(), budget=1e9, base_value=5),
     ],
     auction=bl.SecondPrice(),
     episodes=3,

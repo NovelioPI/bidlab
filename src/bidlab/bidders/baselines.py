@@ -25,7 +25,7 @@ class Linear(Bidder):
     --------
     >>> import bidlab as bl
     >>> shaded = bl.Campaign(
-    ...     "shaded", bl.Linear(multiplier=0.8), budget=10, event_value=5
+    ...     "shaded", bl.Linear(multiplier=0.8), budget=10, base_value=5
     ... )
     >>> log = bl.run(bl.SimConfig(campaigns=[shaded], episodes=1, steps=20))
     >>> bool((log.bids == 0.8 * log.true_values).all())

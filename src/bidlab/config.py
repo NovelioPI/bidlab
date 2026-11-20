@@ -9,7 +9,7 @@ import numpy as np
 from bidlab.auctions import Auction, FirstPrice, SecondPrice
 from bidlab.bidders.base import Bidder, bind_tree
 from bidlab.markets import LogisticMarket, Market
-from bidlab.types import HOURS_PER_DAY
+from bidlab.types import HOURS_PER_DAY, Event, EventName
 
 
 @dataclass(frozen=True)
@@ -26,13 +26,17 @@ class Campaign:
         changes and every run starts from it.
     budget : float
         Budget per episode. Must be > 0.
-    event_value : float
-        What one event is worth to the advertiser. The only event today is a
-        conversion. Must be > 0. Not to be confused with the ``value`` input
-        of `Bidder.forward`, the value of one impression.
+    base_value : float
+        What one event is worth to the advertiser; the event is ``event``. A
+        bidder may use it as is or change it. Must be > 0. Not to be confused
+        with the ``value`` input of `Bidder.forward`, the expected value of
+        one impression.
+    event : Event or {"impression", "click", "conversion"}, optional
+        What the campaign pays for; ``"conversion"`` by default. Stored as an
+        `Event`. Billing stays per impression for every event.
     cpa_target : float, optional
-        Highest acceptable cost per conversion; the ``cpa_score`` metric uses
-        it. Must be > 0 when set.
+        Highest acceptable cost per conversion, for every event; the
+        ``cpa_score`` metric uses it. Must be > 0 when set.
     segments : Sequence[str], optional
         Market segments the campaign bids in, stored as a tuple. None means
         every segment.
@@ -40,15 +44,17 @@ class Campaign:
     Raises
     ------
     TypeError
-        If ``bidder`` is not a `Bidder` instance or ``segments`` is a string.
+        If ``bidder`` is not a `Bidder` instance, ``event`` is not a string,
+        or ``segments`` is a string.
     ValueError
-        If a number is out of range or ``segments`` is empty.
+        If a number is out of range, ``event`` is not an event name, or
+        ``segments`` is empty.
 
     Examples
     --------
     >>> import bidlab as bl
     >>> campaign = bl.Campaign(
-    ...     "pid", bl.PidPacing(), budget=15, event_value=5, cpa_target=3
+    ...     "pid", bl.PidPacing(), budget=15, base_value=5, cpa_target=3
     ... )
     >>> campaign.budget
     15.0
@@ -57,7 +63,8 @@ class Campaign:
     name: str
     bidder: Bidder
     budget: float
-    event_value: float
+    base_value: float
+    event: EventName = Event.CONVERSION
     cpa_target: float | None = None
     segments: Sequence[str] | None = None
 
@@ -77,7 +84,7 @@ class Campaign:
             )
 
         # An int budget would make integer numpy arrays that reject float prices.
-        for field_name in ("budget", "event_value", "cpa_target"):
+        for field_name in ("budget", "base_value", "cpa_target"):
             number = getattr(self, field_name)
             if number is None:
                 continue
@@ -89,7 +96,25 @@ class Campaign:
 
             object.__setattr__(self, field_name, float(number))
 
+        self._check_event()
         self._check_segments()
+
+    def _check_event(self) -> None:
+        # Callers can pass any object at run time; the type hint does not check it.
+        event: object = self.event
+        names = ", ".join(repr(member.value) for member in Event)
+        if not isinstance(event, str):
+            raise TypeError(
+                f"campaign {self.name!r}: event must be one of {names}, "
+                f"got {type(event).__name__}"
+            )
+
+        try:
+            object.__setattr__(self, "event", Event(event))
+        except ValueError:
+            raise ValueError(
+                f"campaign {self.name!r}: event must be one of {names}, got {event!r}"
+            ) from None
 
     def _check_segments(self) -> None:
         if self.segments is None:
@@ -182,8 +207,8 @@ class SimConfig:
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
     ...     campaigns=[
-    ...         bl.Campaign("truthful", bl.Linear(), budget=50, event_value=5),
-    ...         bl.Campaign("pid", bl.PidPacing(), budget=15, event_value=5),
+    ...         bl.Campaign("truthful", bl.Linear(), budget=50, base_value=5),
+    ...         bl.Campaign("pid", bl.PidPacing(), budget=15, base_value=5),
     ...     ],
     ...     auction=bl.FirstPrice(reserve=0.01),
     ...     episodes=2,

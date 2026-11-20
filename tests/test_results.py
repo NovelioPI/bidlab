@@ -7,12 +7,14 @@ import numpy as np
 import pytest
 from scipy import stats
 
+from bidlab.auctions import FirstPrice
 from bidlab.bidders import Bidder, Linear, PidPacing
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import LogisticMarket, Market, MarketDraw, Segment, Segmented
 from bidlab.results import Results
 from bidlab.runner import COLUMNS, SEGMENT_COLUMNS, run_many
 from bidlab.simulator import run
+from bidlab.types import Event
 
 
 def segments_table(results: Results) -> Results:
@@ -22,8 +24,8 @@ def segments_table(results: Results) -> Results:
 
 def config(*extra):
     campaigns = [
-        Campaign("t", Linear(), budget=20.0, event_value=5.0),
-        Campaign("p", PidPacing(), budget=8.0, event_value=5.0),
+        Campaign("t", Linear(), budget=20.0, base_value=5.0),
+        Campaign("p", PidPacing(), budget=8.0, base_value=5.0),
         *extra,
     ]
     return SimConfig(campaigns=campaigns, episodes=2, steps=100)
@@ -61,7 +63,7 @@ def test_lambdas_and_closures_run_in_parallel():
         "closure",
         Closure(),
         budget=20.0,
-        event_value=5.0,
+        base_value=5.0,
     )
     serial = run_many(config(extra), seeds=range(3))
     parallel = run_many(config(extra), seeds=range(3), workers=2)
@@ -80,7 +82,7 @@ def test_unpicklable_spec_fails_before_runs(monkeypatch):
     monkeypatch.setattr(
         "bidlab.runner.ProcessPoolExecutor", lambda *args, **kwargs: pools.append(1)
     )
-    extra = Campaign("locked", Locked(), budget=20.0, event_value=5.0)
+    extra = Campaign("locked", Locked(), budget=20.0, base_value=5.0)
     with pytest.raises(TypeError, match="'locked'.*workers=1"):
         run_many(config(extra), seeds=range(2), workers=2)
 
@@ -196,7 +198,7 @@ def test_custom_market_same_rows_in_parallel():
 
 def segmented_config():
     market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)))
-    targeted = Campaign("n", Linear(), budget=20.0, event_value=5.0, segments=("news",))
+    targeted = Campaign("n", Linear(), budget=20.0, base_value=5.0, segments=("news",))
     return SimConfig(
         campaigns=[*config().campaigns, targeted], episodes=2, steps=100, market=market
     )
@@ -310,7 +312,7 @@ def test_custom_market_segments_reach_segments_table():
                     {}, pcvr=rng.uniform(0.0, 0.2, size=count), segment=name
                 )
 
-    night = Campaign("n", Linear(), budget=20.0, event_value=5.0, segments=("night",))
+    night = Campaign("n", Linear(), budget=20.0, base_value=5.0, segments=("night",))
     cfg = SimConfig(
         campaigns=[*config().campaigns, night],
         episodes=2,
@@ -373,3 +375,126 @@ def test_segment_clicks_sum_to_main():
         assert len(own) == 2
         assert sum(own) == pytest.approx(row["clicks"], abs=1e-9)
     assert any(float(row["clicks"]) < float(row["wins"]) for row in results.rows)
+
+
+# Close expected values, so each campaign wins some auctions.
+EVENT_VALUES = {Event.IMPRESSION: 0.1, Event.CLICK: 0.4, Event.CONVERSION: 2.0}
+EVENT_COUNT = {"impression": "wins", "click": "clicks", "conversion": "conversions"}
+
+
+def event_config(market=None):
+    campaigns = [
+        Campaign(event, Linear(), budget=20.0, base_value=value, event=event)
+        for event, value in EVENT_VALUES.items()
+    ]
+    market = market or LogisticMarket(ctr_bias_mean=-1.0, cvr_bias_mean=-1.0)
+    return SimConfig(campaigns=campaigns, episodes=3, steps=200, market=market)
+
+
+def episode_counts(log, index, steps=None):
+    """Per-episode counts for one campaign, over all steps or the given ones."""
+    won = log.winner == index
+    if steps is not None:
+        won = won & steps
+    return {
+        "wins": won.sum(axis=1),
+        "clicks": (log.clicked & won).sum(axis=1),
+        "conversions": (log.converted & won).sum(axis=1),
+        "spend": np.where(won, log.price, 0.0).sum(axis=1),
+    }
+
+
+def rows_with_counts(cfg, seeds=range(2)):
+    results = run_many(cfg, seeds=seeds)
+    names = [campaign.name for campaign in cfg.campaigns]
+    for row in results.rows:
+        log = run(dataclasses.replace(cfg, seed=int(row["seed"])))
+        name = str(row["campaign"])
+        yield row, name, episode_counts(log, names.index(name))
+
+
+def test_surplus_follows_event():
+    for row, name, counts in rows_with_counts(event_config()):
+        value = counts[EVENT_COUNT[name]] * EVENT_VALUES[Event(name)]
+        assert row["realized_value"] == pytest.approx(value.mean())
+        assert row["surplus"] == pytest.approx((value - counts["spend"]).mean())
+        assert float(row["wins"]) > float(row["clicks"]) > float(row["conversions"]) > 0
+
+
+def test_segment_surplus_follows_event():
+    base = LogisticMarket(ctr_bias_mean=-1.0, cvr_bias_mean=-1.0)
+    market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)), base)
+    cfg = event_config(market)
+    results = run_many(cfg, seeds=range(2))
+    names = [campaign.name for campaign in cfg.campaigns]
+    for row in segments_table(results).rows:
+        log = run(dataclasses.replace(cfg, seed=int(row["seed"])))
+        name = str(row["campaign"])
+        here = log.segment == market.segment_names.index(str(row["segment"]))
+        counts = episode_counts(log, names.index(name), here)
+        value = counts[EVENT_COUNT[name]] * EVENT_VALUES[Event(name)]
+        assert row["surplus"] == pytest.approx((value - counts["spend"]).mean())
+
+
+def test_ctr_and_cpc_columns():
+    cfg = event_config()
+    columns = run_many(cfg, seeds=range(1)).columns
+    assert columns.index("ctr") == columns.index("budget_used") + 1
+    assert columns.index("cpc") == columns.index("ctr") + 1
+    assert columns.index("cpa") == columns.index("cpc") + 1
+    for row, _, counts in rows_with_counts(cfg):
+        assert row["ctr"] == pytest.approx((counts["clicks"] / counts["wins"]).mean())
+        assert row["cpc"] == pytest.approx((counts["spend"] / counts["clicks"]).mean())
+
+
+def test_cpa_counts_conversions_for_every_event():
+    target = 1.0
+    cfg = event_config()
+    cfg = dataclasses.replace(
+        cfg,
+        campaigns=[dataclasses.replace(c, cpa_target=target) for c in cfg.campaigns],
+    )
+    violations = []
+    for row, name, counts in rows_with_counts(cfg):
+        spend, conversions = counts["spend"], counts["conversions"]
+        assert (spend > 0).all()
+        assert (conversions > 0).all()
+        cpa = spend / conversions
+        value = counts[EVENT_COUNT[name]] * EVENT_VALUES[Event(name)]
+        violation = np.maximum(0.0, cpa / target - 1.0)
+        score = value * np.minimum((target / cpa) ** 3, 1.0)
+        assert row["cpa"] == pytest.approx(cpa.mean())
+        assert row["cpa_violation"] == pytest.approx(violation.mean())
+        assert row["cpa_score"] == pytest.approx(score.mean())
+        violations.append(float(row["cpa_violation"]))
+    # Some rows above target and some below, so both sides of max and min run.
+    assert min(violations) == 0 < max(violations)
+
+
+class FixedRates(Market):
+    """pCTR 0.3 and pCVR 0.2 for every campaign at every step."""
+
+    def draws(self, count, rng):
+        while True:
+            yield MarketDraw({}, pctr=np.full(count, 0.3), pcvr=np.full(count, 0.2))
+
+
+@pytest.mark.parametrize(
+    ("event", "factor"),
+    [(Event.IMPRESSION, 1.0), (Event.CLICK, 0.3), (Event.CONVERSION, 0.06)],
+)
+def test_regret_and_welfare_follow_event(event, factor):
+    # Alone in a first-price auction, a truthful bidder earns nothing, while
+    # bidding 0.05 × value wins every step and keeps 0.95 of each value.
+    campaign = Campaign("a", Linear(), budget=1e9, base_value=2.0, event=event)
+    cfg = SimConfig(
+        campaigns=[campaign],
+        episodes=2,
+        steps=100,
+        market=FixedRates(),
+        auction=FirstPrice(),
+    )
+    (row,) = run_many(cfg, seeds=[0]).rows
+    total_value = 100 * 2.0 * factor
+    assert row["welfare"] == pytest.approx(total_value)
+    assert row["regret"] == pytest.approx(0.95 * total_value)

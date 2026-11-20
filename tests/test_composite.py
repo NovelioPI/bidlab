@@ -101,7 +101,7 @@ def test_hidden_child_raises(held: object):
     "held", [{"model": Pass()}, [[Pass()]]], ids=["dict", "list-in-list"]
 )
 def test_hidden_child_raises_at_build(held: object):
-    campaign = Campaign("h", Holder(held), budget=1e6, event_value=5.0)
+    campaign = Campaign("h", Holder(held), budget=1e6, base_value=5.0)
     with pytest.raises(TypeError, match="attribute, list or tuple"):
         campaign.build(np.random.default_rng(0))
 
@@ -372,7 +372,7 @@ class Tally(Bidder):
 
 
 def other() -> Campaign:
-    return Campaign("other", Linear(multiplier=0.9), budget=1e6, event_value=4.0)
+    return Campaign("other", Linear(multiplier=0.9), budget=1e6, base_value=4.0)
 
 
 def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
@@ -382,7 +382,7 @@ def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
 
 def test_every_node_has_own_stream():
     tree = Stack(Pass(), Holder([Pass(), Holder(Pass())]))
-    built = Campaign("t", tree, budget=1e6, event_value=5.0).build(
+    built = Campaign("t", tree, budget=1e6, base_value=5.0).build(
         np.random.default_rng(0)
     )
     draws = [tuple(node.rng.random(100)) for _, node in built.named_bidders()]
@@ -400,7 +400,7 @@ def test_child_draws_leave_others_unchanged():
         logs.append(
             run(
                 config(
-                    Campaign("d", stack, budget=1e6, event_value=5.0),
+                    Campaign("d", stack, budget=1e6, base_value=5.0),
                     other(),
                     estimate_noise=0.5,
                 )
@@ -417,7 +417,7 @@ def test_child_draws_leave_others_unchanged():
 
 
 def test_composite_parallel_equals_serial():
-    campaign = Campaign("m", Stack(Mixer(), PidPacing()), budget=5.0, event_value=5.0)
+    campaign = Campaign("m", Stack(Mixer(), PidPacing()), budget=5.0, base_value=5.0)
     serial = run_many(config(campaign, other()), seeds=range(3))
     parallel = run_many(config(campaign, other()), seeds=range(3), workers=2)
     assert parallel.equals(serial)
@@ -426,7 +426,7 @@ def test_composite_parallel_equals_serial():
 def test_user_tree_unchanged():
     mixer = Mixer()
     run_many(
-        config(Campaign("m", Stack(mixer), budget=1e6, event_value=5.0), other()),
+        config(Campaign("m", Stack(mixer), budget=1e6, base_value=5.0), other()),
         seeds=range(2),
     )
     assert mixer.forwards == 0
@@ -451,7 +451,7 @@ class ResetsThroughCampaign(Bidder):
 
 def test_user_bidder_unchanged_through_campaign():
     bidder = ResetsThroughCampaign()
-    run(config(Campaign("r", bidder, budget=1e6, event_value=5.0)))
+    run(config(Campaign("r", bidder, budget=1e6, base_value=5.0)))
     assert bidder.wins == 99
 
 
@@ -459,7 +459,7 @@ def test_tree_hook_order():
     Log.calls.clear()
     run(
         config(
-            Campaign("x", LogParent(), budget=1e6, event_value=5.0),
+            Campaign("x", LogParent(), budget=1e6, base_value=5.0),
             episodes=1,
             steps=2,
         )
@@ -489,7 +489,7 @@ def test_children_get_hooks_without_super():
     Log.calls.clear()
     run(
         config(
-            Campaign("x", QuietParent(), budget=1e6, event_value=5.0),
+            Campaign("x", QuietParent(), budget=1e6, base_value=5.0),
             episodes=1,
             steps=2,
         )
@@ -507,16 +507,14 @@ def test_children_get_hooks_without_super():
 
 def test_child_result_has_final_bid():
     Bids.bids.clear()
-    log = run(
-        config(Campaign("h", HalfOfChild(), budget=1e6, event_value=5.0), other())
-    )
+    log = run(config(Campaign("h", HalfOfChild(), budget=1e6, base_value=5.0), other()))
     assert Bids.bids == log.bids[:, :, 0].ravel().tolist()
     assert Bids.bids == (log.true_values[:, :, 0].ravel() / 2).tolist()
 
 
 def test_unused_child_still_learns():
     Counts.counts.clear()
-    run(config(Campaign("u", Unused(), budget=1e6, event_value=5.0), other()))
+    run(config(Campaign("u", Unused(), budget=1e6, base_value=5.0), other()))
     assert Counts.counts == {"parent": [100, 100], "child": [0, 100]}
 
 
@@ -525,7 +523,7 @@ def test_tree_skipped_outside_segments():
     market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)))
     log = run(
         config(
-            Campaign("u", Unused(), budget=1e6, event_value=5.0, segments=["news"]),
+            Campaign("u", Unused(), budget=1e6, base_value=5.0, segments=["news"]),
             other(),
             market=market,
         )
@@ -539,7 +537,7 @@ def test_bind_override_keeps_child_streams():
     seen = []
     for parent in (Spawning("parent"), Holder(Draws("child"))):
         Draws.draws.clear()
-        built = Campaign("s", parent, budget=1e6, event_value=5.0).build(
+        built = Campaign("s", parent, budget=1e6, base_value=5.0).build(
             np.random.default_rng(7)
         )
         child = next(node for path, node in built.named_bidders() if path)
@@ -549,7 +547,7 @@ def test_bind_override_keeps_child_streams():
     assert seen[0] == seen[1]
 
     rng = np.random.default_rng(7)
-    built = Campaign("s", Spawning("parent"), budget=1e6, event_value=5.0).build(rng)
+    built = Campaign("s", Spawning("parent"), budget=1e6, base_value=5.0).build(rng)
     assert built.rng is rng
 
 
@@ -557,16 +555,16 @@ def test_bind_override_keeps_child_streams():
     "hook", ["on_episode_start", "forward", "update_batch", "on_episode_end"]
 )
 def test_late_child_raises(hook: str):
-    campaign = Campaign("grower", Grows(hook), budget=1e6, event_value=5.0)
+    campaign = Campaign("grower", Grows(hook), budget=1e6, base_value=5.0)
     with pytest.raises(ValueError, match=r"'grower'.*'late'.*__init__"):
         run(config(campaign, other(), episodes=1))
 
 
 def test_plain_attribute_changes_allowed():
-    log = run(config(Campaign("t", Tally(), budget=1e6, event_value=5.0), other()))
+    log = run(config(Campaign("t", Tally(), budget=1e6, base_value=5.0), other()))
     assert log.bids.shape == (2, 50, 2)
 
 
 def test_parent_passes_forward_argument():
-    log = run(config(Campaign("h", HalfShade(), budget=1e6, event_value=5.0), other()))
+    log = run(config(Campaign("h", HalfShade(), budget=1e6, base_value=5.0), other()))
     np.testing.assert_array_equal(log.bids[:, :, 0], log.true_values[:, :, 0] * 0.5)

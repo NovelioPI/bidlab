@@ -20,6 +20,8 @@ from bidlab.types import (
     SECONDS_PER_HOUR,
     BidResult,
     EpisodeReport,
+    Event,
+    EventName,
     MarketTruth,
 )
 
@@ -51,8 +53,9 @@ class RunLog:
     bids : numpy.ndarray
         Bids after cleaning and capping; 0 for a bidder outside its segments.
     true_values : numpy.ndarray
-        Each bidder's true expected value per step: `Campaign.event_value` × the
-        true pCTR × the true pCVR, with pCTR 1 when the market has no click
+        Each bidder's true expected value per step: `Campaign.base_value` ×
+        the true rate of its event: 1 for an impression, pCTR for a click,
+        pCTR × pCVR for a conversion, with pCTR 1 when the market has no click
         stage.
     winner : numpy.ndarray
         Index of the winning bidder per step; -1 when nobody won.
@@ -73,7 +76,7 @@ class RunLog:
     Examples
     --------
     >>> import bidlab as bl
-    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
+    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, base_value=5)
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=2, steps=50))
     >>> won = log.winner[0] == 0
     >>> bool(log.price[0][won].sum() <= campaign.budget)
@@ -145,7 +148,7 @@ def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
     --------
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
-    ...     campaigns=[bl.Campaign("t", bl.Linear(), budget=10, event_value=5)],
+    ...     campaigns=[bl.Campaign("t", bl.Linear(), budget=10, base_value=5)],
     ...     episodes=2,
     ...     steps=50,
     ... )
@@ -174,9 +177,15 @@ class _Simulation:
         ).spawn(3 + count)
         self.config = config
         self.callbacks = callbacks
-        self.event_values = np.array(
-            [campaign.event_value for campaign in config.campaigns]
+        self.base_values = np.array(
+            [campaign.base_value for campaign in config.campaigns]
         )
+        events = [campaign.event for campaign in config.campaigns]
+        self.values_click = np.array([event != Event.IMPRESSION for event in events])
+        self.values_conversion = np.array(
+            [event == Event.CONVERSION for event in events]
+        )
+        self.only_conversions = bool(self.values_conversion.all())
         self.horizon = config.horizon_hours * SECONDS_PER_HOUR
         self.seconds_per_step = self.horizon / config.steps
         self.market_draws = config.market.draws(
@@ -270,7 +279,7 @@ class _Simulation:
         self.book.at_step(episode, step)
         pctr = self.every_click if draw.pctr is None else draw.pctr
         pcvr = draw.pcvr
-        values = self.event_values * pctr * pcvr
+        values = self._event_values(pctr, pcvr)
         estimated = self._estimated_values(values, draw)
         time = step * self.seconds_per_step
         # Bidders outside their segments are not asked to bid, so they cannot learn from it.
@@ -324,8 +333,9 @@ class _Simulation:
                 price=price if won else 0.0,
                 clicked=clicked and won,
                 converted=converted and won,
-                realized_value=participant.campaign.event_value
-                if converted and won
+                realized_value=participant.campaign.base_value
+                if won
+                and event_happened(participant.campaign.event, won, clicked, converted)
                 else 0.0,
             )
             batch = [result]
@@ -374,7 +384,21 @@ class _Simulation:
             else _with_noise(draw.pctr, noise, self.ctr_estimate_rngs)
         )
         pcvr = _with_noise(draw.pcvr, noise, self.estimate_rngs)
-        return self.event_values * pctr * pcvr
+        return self._event_values(pctr, pcvr)
+
+    def _event_values(
+        self, pctr: npt.NDArray[np.float64], pcvr: npt.NDArray[np.float64]
+    ) -> npt.NDArray[np.float64]:
+        # Risk: if regrouped as base × (pCTR × pCVR), then floats round differently from main.
+        if self.only_conversions:
+            # Most runs value only conversions; skipping the masks keeps them as fast as before.
+            return self.base_values * pctr * pcvr
+
+        return (
+            self.base_values
+            * np.where(self.values_click, pctr, 1.0)
+            * np.where(self.values_conversion, pcvr, 1.0)
+        )
 
     def _next_draw(self, episode: int, step: int) -> MarketDraw:
         market = type(self.config.market).__name__
@@ -419,13 +443,16 @@ class _Simulation:
         reports: dict[str, EpisodeReport] = {}
         for i, participant in enumerate(self.participants):
             won = winner == i
-            conversions = int(np.sum(self.log.converted[episode] & won))
+            clicked = self.log.clicked[episode]
+            converted = self.log.converted[episode]
+            events = event_happened(participant.campaign.event, won, clicked, converted)
             report = EpisodeReport(
                 budget=participant.campaign.budget,
                 spend=float(np.sum(self.log.price[episode][won])),
                 wins=int(np.sum(won)),
-                conversions=conversions,
-                realized_value=conversions * participant.campaign.event_value,
+                clicks=int(np.sum(clicked & won)),
+                conversions=int(np.sum(converted & won)),
+                realized_value=int(np.sum(events)) * participant.campaign.base_value,
             )
             for node in participant.nodes:
                 node.on_episode_end(report)
@@ -435,6 +462,23 @@ class _Simulation:
         read_only = MappingProxyType(reports)
         for callback in self.callbacks:
             callback.on_episode_end(episode, read_only)
+
+
+def event_happened[Outcome: (bool, npt.NDArray[np.bool_])](
+    event: EventName, won: Outcome, clicked: Outcome, converted: Outcome
+) -> Outcome:
+    """Whether a campaign's event happened, per auction or per step of an array.
+
+    ``clicked`` and ``converted`` hold the winner's outcome, so each is
+    combined with ``won``.
+    """
+    if event == Event.IMPRESSION:
+        return won
+
+    if event == Event.CLICK:
+        return clicked & won
+
+    return converted & won
 
 
 def _with_noise(

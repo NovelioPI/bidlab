@@ -21,7 +21,7 @@ Subclass `bl.Bidder` and implement `forward`. Every other hook is optional.
 
 | Hook | Called |
 |---|---|
-| `on_episode_start(campaign)` | At the start of each episode, with the `Campaign`: budget, event value, CPA target, segments |
+| `on_episode_start(campaign)` | At the start of each episode, with the `Campaign`: budget, event, base value, CPA target, segments |
 | `forward(value, ...)` | At each auction the bidder takes part in, with the inputs it names; returns the bid or value |
 | `update_batch(results)` | After each step, with that step's `BidResult` list |
 | `update(result)` | Once per result, if you do not override `update_batch` |
@@ -83,13 +83,13 @@ class SegmentRate(bl.Bidder):
         self.pending = {}
 
     def on_episode_start(self, campaign):
-        self.event_value = campaign.event_value
+        self.base_value = campaign.base_value
 
     def forward(self, value, segment, time):
         self.pending[time] = segment
         wins = self.wins.get(segment, 0)
         rate = (self.conversions.get(segment, 0) + self.prior) / (wins + 1)
-        return rate * self.event_value
+        return rate * self.base_value
 
     def update_batch(self, bid_results):
         for result in bid_results:
@@ -110,9 +110,9 @@ learning = bl.SimConfig(
             "learned",
             bl.Stack(SegmentRate(), bl.PidPacing()),
             budget=15,
-            event_value=5,
+            base_value=5,
         ),
-        bl.Campaign("platform", bl.PidPacing(), budget=15, event_value=5),
+        bl.Campaign("platform", bl.PidPacing(), budget=15, base_value=5),
     ],
     market=market,
     episodes=3,
@@ -123,7 +123,7 @@ print(len(bl.run_many(learning, seeds=range(2))))  # 4 rows
 
 ## Value estimators
 
-A value estimator is a bidder: the first stage of a `Stack`, before a bid control. It ignores the incoming `value` and outputs `event_value` times its own estimate of the conversion chance. Three common kinds:
+A value estimator is a bidder: the first stage of a `Stack`, before a bid control. It ignores the incoming `value` and outputs `base_value` times its own estimate of the conversion chance. Three common kinds:
 
 | Estimator | Estimate |
 |---|---|
@@ -136,23 +136,23 @@ import numpy as np
 
 
 class FixedRate(bl.Bidder):
-    def __init__(self, rate, event_value):
+    def __init__(self, rate, base_value):
         self.rate = rate
-        self.event_value = event_value
+        self.base_value = base_value
 
     def forward(self, value):
-        return self.rate * self.event_value
+        return self.rate * self.base_value
 
 
 class CountedRate(bl.Bidder):
-    def __init__(self, event_value, prior=0.05):
-        self.event_value = event_value
+    def __init__(self, base_value, prior=0.05):
+        self.base_value = base_value
         self.prior = prior
         self.wins = 0
         self.conversions = 0
 
     def forward(self, value):
-        return (self.conversions + self.prior) / (self.wins + 1) * self.event_value
+        return (self.conversions + self.prior) / (self.wins + 1) * self.base_value
 
     def update(self, result):
         self.wins += result.won
@@ -162,8 +162,8 @@ class CountedRate(bl.Bidder):
 class ConversionModel(bl.Bidder):
     """Online logistic regression of a conversion on the public feature vector."""
 
-    def __init__(self, event_value, feature_count, learning_rate=0.05):
-        self.event_value = event_value
+    def __init__(self, base_value, feature_count, learning_rate=0.05):
+        self.base_value = base_value
         self.weights = np.zeros(feature_count)
         self.learning_rate = learning_rate
         self.pending = {}
@@ -174,7 +174,7 @@ class ConversionModel(bl.Bidder):
     def forward(self, value, features, time):
         vector = features["vector"]
         self.pending[time] = vector
-        return self.predict(vector) * self.event_value
+        return self.predict(vector) * self.base_value
 
     def update(self, result):
         vector = self.pending.pop(result.time)
@@ -189,12 +189,12 @@ estimated = bl.SimConfig(
             name,
             bl.Stack(estimator, bl.PidPacing()),
             budget=15,
-            event_value=5,
+            base_value=5,
         )
         for name, estimator in (
-            ("fixed", FixedRate(0.05, event_value=5)),
-            ("counted", CountedRate(event_value=5)),
-            ("model", ConversionModel(event_value=5, feature_count=8)),
+            ("fixed", FixedRate(0.05, base_value=5)),
+            ("counted", CountedRate(base_value=5)),
+            ("model", ConversionModel(base_value=5, feature_count=8)),
         )
     ],
     episodes=3,
@@ -219,7 +219,7 @@ class Jitter(bl.Bidder):
 
 
 jitter = bl.Campaign(
-    "jitter", bl.Stack(Jitter(), bl.PidPacing()), budget=15, event_value=5
+    "jitter", bl.Stack(Jitter(), bl.PidPacing()), budget=15, base_value=5
 )
 ```
 

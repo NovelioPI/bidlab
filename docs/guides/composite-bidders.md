@@ -52,7 +52,7 @@ A child's logged names carry its path, such as `"pacing.multiplier"`. See [Loggi
 
 ```python
 config = bl.SimConfig(
-    campaigns=[bl.Campaign("night", night, budget=15, event_value=5)],
+    campaigns=[bl.Campaign("night", night, budget=15, base_value=5)],
     episodes=2,
     steps=200,
 )

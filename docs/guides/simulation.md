@@ -38,7 +38,7 @@ class OfficeHours(bl.Bidder):
 
 
 office = bl.SimConfig(
-    campaigns=[bl.Campaign("office", OfficeHours(), budget=10, event_value=5)],
+    campaigns=[bl.Campaign("office", OfficeHours(), budget=10, base_value=5)],
     episodes=2,
     steps=96,
     horizon_hours=12,
@@ -50,9 +50,9 @@ print(log.bids[0, :12, 0])  # 0 until 9:00, which is step 24
 
 ## Estimate noise
 
-The `value` input is the platform's value: w times its estimate of pCTR × pCVR. The estimate is exact by default.
+The `value` input is the platform's value: w times its estimate of the chance of the campaign's event, such as pCTR × pCVR for a conversion. See [Campaigns](campaigns.md). The estimate is exact by default.
 
-`SimConfig(estimate_noise=0.5)` adds normal noise with that standard deviation to logit(pCVR), and, with a click stage, an independent error of the same size to logit(pCTR). Use it to test how a bidder copes with a wrong value. Metrics always use the true value, in `RunLog.true_values`, and the `market` input always holds the true rates.
+`SimConfig(estimate_noise=0.5)` adds normal noise with that standard deviation to logit(pCVR), and, with a click stage, an independent error of the same size to logit(pCTR). Only the stages a campaign's event uses enter its value, so an impression campaign's value stays exact. Use it to test how a bidder copes with a wrong value. Metrics always use the true value, in `RunLog.true_values`, and the `market` input always holds the true rates.
 
 ```python
 import dataclasses

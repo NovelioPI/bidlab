@@ -84,8 +84,8 @@ def run_many(
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
     ...     campaigns=[
-    ...         bl.Campaign("a", bl.Linear(), budget=10, event_value=5),
-    ...         bl.Campaign("b", bl.PidPacing(), budget=10, event_value=5),
+    ...         bl.Campaign("a", bl.Linear(), budget=10, base_value=5),
+    ...         bl.Campaign("b", bl.PidPacing(), budget=10, base_value=5),
     ...     ],
     ...     episodes=2,
     ...     steps=50,

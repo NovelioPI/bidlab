@@ -34,7 +34,7 @@ class Stack(Bidder):
 
     >>> import bidlab as bl
     >>> bidder = bl.Stack(bl.Linear(multiplier=0.9), bl.PidPacing())
-    >>> campaign = bl.Campaign("paced", bidder, budget=10, event_value=5)
+    >>> campaign = bl.Campaign("paced", bidder, budget=10, base_value=5)
     >>> bl.run(bl.SimConfig(campaigns=[campaign], episodes=1, steps=50)).bids.shape
     (1, 50, 1)
     """

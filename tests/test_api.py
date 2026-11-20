@@ -27,8 +27,8 @@ RUN_LOG_HASHES = {
     "second": "cd529f75ad49b9df40659b8d715a21b5ace97c4d004f52b4e2cf096522db7edc",
 }
 # Main results table CSV for seeds 0 and 1, recorded with the run-log hashes above.
-# Re-recorded with the clicks column (feature 008); without it the CSV equals main's.
-RESULTS_HASH = "c0692f4e8af77cfb981a516a5d904fa1fe63f5f9cb2832352fe864c44fcb3ef6"
+# Re-recorded with the ctr and cpc columns (feature 010); without them the CSV equals main's.
+RESULTS_HASH = "f328e6d91cc5b5089072a703d58221a8499097c9d3c4fa84dcd4d3b28250dd45"
 
 
 class ConversionBandit(UcbMultiplier):
@@ -41,19 +41,19 @@ class ConversionBandit(UcbMultiplier):
 
 def fingerprint_config(kind):
     campaigns = (
-        Campaign("t", Linear(), budget=40.0, event_value=5.0),
-        Campaign("p", PidPacing(), budget=10.0, event_value=5.0),
+        Campaign("t", Linear(), budget=40.0, base_value=5.0),
+        Campaign("p", PidPacing(), budget=10.0, base_value=5.0),
         Campaign(
             "b",
             ConversionBandit(),
             budget=40.0,
-            event_value=4.0,
+            base_value=4.0,
         ),
         Campaign(
             "s",
             Linear(multiplier=0.8),
             budget=40.0,
-            event_value=6.0,
+            base_value=6.0,
             cpa_target=3.0,
         ),
     )
@@ -98,18 +98,18 @@ MAIN_HASHES_WITHOUT_PID = {
 @pytest.mark.parametrize("kind", ["first", "second"])
 def test_run_log_without_pid_matches_main(kind):
     campaigns = (
-        Campaign("t", Linear(), budget=40.0, event_value=5.0),
+        Campaign("t", Linear(), budget=40.0, base_value=5.0),
         Campaign(
             "b",
             ConversionBandit(),
             budget=40.0,
-            event_value=4.0,
+            base_value=4.0,
         ),
         Campaign(
             "s",
             Linear(multiplier=0.8),
             budget=40.0,
-            event_value=6.0,
+            base_value=6.0,
             cpa_target=3.0,
         ),
     )
@@ -161,9 +161,9 @@ def market_without_clicks(kind):
 @pytest.mark.parametrize("kind", list(MAIN_HASHES_WITHOUT_CLICKS))
 def test_no_click_stage_matches_main(kind, noise):
     campaigns = (
-        Campaign("t", Linear(), budget=20.0, event_value=5.0),
-        Campaign("b", UcbMultiplier(), budget=20.0, event_value=4.0),
-        Campaign("s", Linear(multiplier=0.8), budget=20.0, event_value=6.0),
+        Campaign("t", Linear(), budget=20.0, base_value=5.0),
+        Campaign("b", UcbMultiplier(), budget=20.0, base_value=4.0),
+        Campaign("s", Linear(multiplier=0.8), budget=20.0, base_value=6.0),
     )
     config = SimConfig(
         campaigns=campaigns,
@@ -181,6 +181,60 @@ def test_no_click_stage_matches_main(kind, noise):
     assert digest.hexdigest() == MAIN_HASHES_WITHOUT_CLICKS[kind][NOISES.index(noise)]
 
 
+# Recorded on main (5627127) with numpy 2.5.4, before campaigns had an event.
+# Each kind's hashes for estimate_noise 0.0 and 0.5.
+MAIN_HASHES_WITH_CLICKS = {
+    "logistic": (
+        "2201c7f2d63518fbbe63cb96e5b4dbe35b726337dbe5940d39fb94fa4fb9f87f",
+        "20a3bf020dd3ff11dba9ea2c837609cf59d8d94358d1c3d0a531b3514995fc60",
+    ),
+    "segmented": (
+        "bbe84aa1f13b9247735f301b654c8dd3013d75c8364b5562fb51f16aaa7bc483",
+        "107953839a20ed4c3569b4c3227b8e84f61436d141b3abe30fc78952e6e639f1",
+    ),
+}
+
+
+def market_with_clicks(kind):
+    base = LogisticMarket(ctr_bias_mean=-3.0)
+    if kind == "logistic":
+        return base
+    return Segmented(
+        (Segment("mobile", 0.6, lift=0.5), Segment("desktop", 0.4)), base=base
+    )
+
+
+@pytest.mark.parametrize("noise", NOISES)
+@pytest.mark.parametrize("kind", list(MAIN_HASHES_WITH_CLICKS))
+def test_click_stage_matches_main(kind, noise):
+    campaigns = (
+        Campaign("t", Linear(), budget=20.0, base_value=5.0),
+        Campaign("b", UcbMultiplier(), budget=20.0, base_value=4.0),
+        Campaign("s", Linear(multiplier=0.8), budget=20.0, base_value=6.0),
+    )
+    config = SimConfig(
+        campaigns=campaigns,
+        episodes=2,
+        steps=300,
+        seed=7,
+        market=market_with_clicks(kind),
+        estimate_noise=noise,
+    )
+    log = run(config)
+    digest = hashlib.sha256()
+    for array in (
+        log.bids,
+        log.true_values,
+        log.winner,
+        log.price,
+        log.clicked,
+        log.converted,
+    ):
+        digest.update(array.tobytes())
+
+    assert digest.hexdigest() == MAIN_HASHES_WITH_CLICKS[kind][NOISES.index(noise)]
+
+
 PUBLIC_NAMES = {
     "Callback",
     "SimConfig",
@@ -196,6 +250,7 @@ PUBLIC_NAMES = {
     "UcbMultiplier",
     "BidResult",
     "EpisodeReport",
+    "Event",
     "RunLog",
     "run",
     "run_many",
