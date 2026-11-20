@@ -33,8 +33,6 @@ def hand_log(kind="second", reserve=0.0, budget=10.0, cpa_target=None):
         winner=np.array([[0, 1, 0]]),
         price=np.array([[0.5, 0.2, 0.3]]),
         converted=np.array([[True, False, False]]),
-        rewards=np.array([[[1.0, 0.0], [0.0, 2.0], [0.5, 0.0]]]),
-        episode_rewards=np.array([[np.nan, np.nan]]),
         segment=np.zeros((1, 3), dtype=np.int64),
     )
 
@@ -46,7 +44,6 @@ def test_metrics_on_hand_built_log():
     assert a.budget_used == pytest.approx(0.08)
     assert a.cpa == pytest.approx(0.8)
     assert np.isnan(a.cpa_violation) and np.isnan(a.cpa_score)
-    assert a.reward == 1.5 and np.isnan(a.episode_reward)
     assert (b.spend, b.wins, b.conversions, b.realized_value) == (0.2, 1, 0, 0.0)
     assert np.isnan(b.cpa)
     (platform,) = platform_metrics(hand_log())
@@ -129,7 +126,7 @@ class Episode:
 
 
 def one_episode_log(episode, campaigns, auction):
-    steps, count = len(episode.values), len(campaigns)
+    steps = len(episode.values)
     return RunLog(
         config=SimConfig(campaigns=campaigns, episodes=1, steps=steps, auction=auction),
         bids=np.array([episode.bids], dtype=float),
@@ -137,8 +134,6 @@ def one_episode_log(episode, campaigns, auction):
         winner=np.array([episode.winner]),
         price=np.array([episode.price], dtype=float),
         converted=np.zeros((1, steps), dtype=bool),
-        rewards=np.zeros((1, steps, count)),
-        episode_rewards=np.full((1, count), np.nan),
         segment=np.zeros((1, steps), dtype=np.int64),
     )
 

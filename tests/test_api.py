@@ -1,30 +1,40 @@
+import dataclasses
 import hashlib
 import importlib
 import importlib.util
 import re
 import tomllib
 from pathlib import Path
+from typing import override
 
 import pytest
 
-from bidlab import rewards
 from bidlab.auctions import FirstPrice, SecondPrice
 from bidlab.bidders import Linear, PidPacing, UcbMultiplier
 from bidlab.config import Campaign, SimConfig
 from bidlab.runner import run_many
 from bidlab.simulator import run
+from bidlab.types import BidResult
 
 ROOT = Path(__file__).parent.parent
 
-# Recorded with numpy 2.5.4 after PidPacing began planning spend by time.
-# test_run_log_without_pid_matches_main shows every other float is unchanged.
+# Recorded with numpy 2.5.4 when the reward arrays left RunLog (feature 009).
+# The five arrays hashed equal those of the commit before, bffd15a, bit for bit.
 RUN_LOG_HASHES = {
-    "first": "2bae08b40187f061e33dc66695216400970b159d05ceddca884b61567def6196",
-    "second": "d4da1e3bb9b8788845c833e0d13f4294fcbd0e43207c94bef87073305a1c28f9",
+    "first": "3f42bf23edfa6f8f3ee3462aebb5d24b38aed3088ddd8cc90aa4123b838cebc5",
+    "second": "cd529f75ad49b9df40659b8d715a21b5ace97c4d004f52b4e2cf096522db7edc",
 }
 # Main results table CSV for seeds 0 and 1, recorded with the run-log hashes above.
-# Re-recorded after the campaign and realized_value column renames; data rows unchanged.
-RESULTS_HASH = "2c47a056dbe777b71967f58ac6b69835ddf8478a92d663ad90c008de775051cc"
+# Re-recorded without the reward columns; every other cell is unchanged.
+RESULTS_HASH = "87ce5e0b95761cef26038273b7080f9b2816492bd4ba28f2a9cc599d4ca37fb7"
+
+
+class ConversionBandit(UcbMultiplier):
+    """Rewards each conversion, as ``step_reward=rewards.conversions`` did."""
+
+    @override
+    def update(self, result: BidResult) -> None:
+        self.episode_reward += float(result.converted)
 
 
 def fingerprint_config(kind):
@@ -33,10 +43,9 @@ def fingerprint_config(kind):
         Campaign("p", PidPacing(), budget=10.0, event_value=5.0),
         Campaign(
             "b",
-            UcbMultiplier(),
+            ConversionBandit(),
             budget=40.0,
             event_value=4.0,
-            step_reward=rewards.conversions,
         ),
         Campaign(
             "s",
@@ -44,7 +53,6 @@ def fingerprint_config(kind):
             budget=40.0,
             event_value=6.0,
             cpa_target=3.0,
-            episode_reward=rewards.cpa_score,
         ),
     )
     return SimConfig(
@@ -66,8 +74,6 @@ def test_run_log_fingerprint(kind):
         log.winner,
         log.price,
         log.converted,
-        log.rewards,
-        log.episode_rewards,
     ):
         digest.update(array.tobytes())
 
@@ -80,10 +86,10 @@ def test_results_fingerprint(tmp_path):
     assert hashlib.sha256(path.read_bytes()).hexdigest() == RESULTS_HASH
 
 
-# Recorded on main (151995c) with numpy 2.5.4, before the bidder interface changed.
+# Main's floats from 151995c, re-hashed without the reward arrays (feature 009).
 MAIN_HASHES_WITHOUT_PID = {
-    "first": "353a32401bb86c966629d5388d61fa94770ee111ed9b2aba644d72d798fb2f01",
-    "second": "2b269e595d37ee73bdf6f30e4f9979c0711b5c208b583369c36091db60359a92",
+    "first": "c61ecaf187fb74d57d3d487d2c21cde59a1cfd1c0702753b7e5eaa6a010a80fc",
+    "second": "398cb477c2848bbec49260123ce3fe30f85c77dfea60e1cd20df9da016a94270",
 }
 
 
@@ -93,10 +99,9 @@ def test_run_log_without_pid_matches_main(kind):
         Campaign("t", Linear(), budget=40.0, event_value=5.0),
         Campaign(
             "b",
-            UcbMultiplier(),
+            ConversionBandit(),
             budget=40.0,
             event_value=4.0,
-            step_reward=rewards.conversions,
         ),
         Campaign(
             "s",
@@ -104,7 +109,6 @@ def test_run_log_without_pid_matches_main(kind):
             budget=40.0,
             event_value=6.0,
             cpa_target=3.0,
-            episode_reward=rewards.cpa_score,
         ),
     )
     auction = FirstPrice(0.01) if kind == "first" else SecondPrice(0.01)
@@ -118,8 +122,6 @@ def test_run_log_without_pid_matches_main(kind):
         log.winner,
         log.price,
         log.converted,
-        log.rewards,
-        log.episode_rewards,
     ):
         digest.update(array.tobytes())
 
@@ -138,7 +140,6 @@ PUBLIC_NAMES = {
     "Linear",
     "PidPacing",
     "UcbMultiplier",
-    "BidRequest",
     "BidResult",
     "EpisodeReport",
     "RunLog",
@@ -148,7 +149,6 @@ PUBLIC_NAMES = {
     "campaign_metrics",
     "platform_metrics",
     "regret",
-    "rewards",
     "bidders",
     "segment_metrics",
 }
@@ -197,23 +197,6 @@ def test_bidder_families_are_same_objects():
     assert bl.bidders.bandits.UcbMultiplier is bl.UcbMultiplier
 
 
-def test_builtin_rewards_are_callable():
-    import bidlab as bl
-
-    request = bl.BidRequest(time=0.0, value=0.2)
-    result = bl.BidResult(
-        time=0.0, bid=0.3, won=True, price=0.25, converted=True, realized_value=4.0
-    )
-    report = bl.EpisodeReport(
-        budget=10, spend=2, wins=3, conversions=1, realized_value=4
-    )
-    assert bl.rewards.surplus(request, result, {}) == 3.75
-    assert bl.rewards.conversions(request, result, {}) == 1.0
-    assert bl.rewards.realized_value(request, result, {}) == 4.0
-    assert bl.rewards.cpa_score(report, {"cpa_target": 2.0}) == 4.0
-    assert bl.rewards.total_surplus(report, {}) == 2.0
-
-
 def test_removed_interfaces():
     for module in ("bidlab.cli", "bidlab.plugins"):
         assert importlib.util.find_spec(module) is None
@@ -230,10 +213,21 @@ def test_removed_interfaces():
     assert pyproject["project"]["name"] == "bidlab"
 
 
-@pytest.mark.parametrize("name", ["Brief"])
+@pytest.mark.parametrize("name", ["Brief", "BidRequest"])
 def test_removed_names(name):
     assert not hasattr(importlib.import_module("bidlab"), name)
     assert not hasattr(importlib.import_module("bidlab.types"), name)
+
+
+def test_rewards_module_removed():
+    assert not hasattr(importlib.import_module("bidlab"), "rewards")
+    assert importlib.util.find_spec("bidlab.rewards") is None
+
+
+def test_run_log_and_result_have_no_reward():
+    log = run(fingerprint_config("second"))
+    assert not hasattr(log, "rewards") and not hasattr(log, "episode_rewards")
+    assert "reward" not in {field.name for field in dataclasses.fields(BidResult)}
 
 
 def relative_links(markdown: str) -> list[str]:

@@ -1,11 +1,12 @@
 import numpy as np
 import pytest
 
-from bidlab import bidders, rewards
+from bidlab import bidders
 from bidlab.auctions import FirstPrice
 from bidlab.bidders import Linear, PidPacing, UcbMultiplier
 from bidlab.config import Campaign, SimConfig
 from bidlab.simulator import run
+from bidlab.types import BidResult, EpisodeReport
 
 STEPS = 2000
 
@@ -39,10 +40,15 @@ def test_pid_spends_near_budget():
     assert pid[int(0.8 * STEPS)] < budget
 
 
-def bandit_log(reward, episodes=80, seed=5):
-    me = Campaign(
-        "me", UcbMultiplier(), budget=1e6, event_value=5.0, step_reward=reward
-    )
+class ConversionBandit(UcbMultiplier):
+    """Rewards each conversion and ignores the price."""
+
+    def update(self, result):
+        self.episode_reward += float(result.converted)
+
+
+def bandit_log(bandit, episodes=80, seed=5):
+    me = Campaign("me", bandit, budget=1e6, event_value=5.0)
     return run(
         SimConfig(
             campaigns=(me, *competitors()), episodes=episodes, steps=300, seed=seed
@@ -55,8 +61,10 @@ def multiplier_per_episode(log):
 
 
 def test_bandit_improves():
-    log = bandit_log(rewards.surplus)
-    surplus = log.rewards[:, :, 0].sum(axis=1)
+    log = bandit_log(UcbMultiplier())
+    won = log.winner == 0
+    paid = np.where(won, log.price, 0.0).sum(axis=1)
+    surplus = np.where(won & log.converted, 5.0, 0.0).sum(axis=1) - paid
     fifth = len(surplus) // 5
     assert surplus[-fifth:].mean() > surplus[:fifth].mean()
 
@@ -68,12 +76,31 @@ def most_pulled_multiplier(log):
     return values[np.argmax(counts)]
 
 
-def test_bandit_uses_configured_reward():
-    by_surplus = most_pulled_multiplier(bandit_log(rewards.surplus, episodes=300))
+def test_bandit_update_override_changes_reward():
+    by_surplus = most_pulled_multiplier(bandit_log(UcbMultiplier(), episodes=300))
     by_conversions = most_pulled_multiplier(
-        bandit_log(rewards.conversions, episodes=300)
+        bandit_log(ConversionBandit(), episodes=300)
     )
     assert by_conversions > by_surplus
+
+
+def test_ucb_reward_is_episode_surplus():
+    bandit = UcbMultiplier()
+    bandit.bind(np.random.default_rng(0))
+    bandit.on_episode_start(Campaign("me", bandit, budget=10, event_value=5))
+    results = [
+        BidResult(
+            time=0.0, bid=1.0, won=True, price=0.4, converted=True, realized_value=5.0
+        ),
+        BidResult(time=1.0, bid=1.0, won=True, price=0.7, converted=False),
+        BidResult(time=2.0, bid=1.0, won=False, price=0.0, converted=False),
+    ]
+    bandit.update_batch(results)
+    bandit.on_episode_end(
+        EpisodeReport(budget=10, spend=1.1, wins=2, conversions=1, realized_value=5.0)
+    )
+    assert bandit.reward_sums[bandit.arm] == (5.0 - 0.4) + (0.0 - 0.7) + 0.0
+    assert bandit.pulls[bandit.arm] == 1
 
 
 def test_pid_spends_evenly_alone():

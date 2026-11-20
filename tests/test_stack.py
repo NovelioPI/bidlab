@@ -39,7 +39,7 @@ class Calls(Bidder):
     def update_batch(self, bid_results):
         Calls.calls.append((self.name, "batch", tuple(bid_results)))
 
-    def on_episode_end(self, report, episode_reward):
+    def on_episode_end(self, report):
         Calls.calls.append((self.name, "end", report))
 
 
@@ -67,7 +67,7 @@ class Counter(Bidder):
         self.forwards += 1
         return value
 
-    def on_episode_end(self, report, episode_reward):
+    def on_episode_end(self, report):
         Counter.reports.append(self.forwards)
 
 
@@ -220,7 +220,7 @@ def test_single_stage_equals_stack():
     stacked = run(
         config(Campaign("p", Stack(PidPacing()), budget=3.0, event_value=5.0), other())
     )
-    for name in ("bids", "true_values", "winner", "price", "converted", "rewards"):
+    for name in ("bids", "true_values", "winner", "price", "converted"):
         np.testing.assert_array_equal(getattr(single, name), getattr(stacked, name))
 
 

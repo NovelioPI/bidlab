@@ -9,10 +9,11 @@ import numpy as np
 import numpy.typing as npt
 
 from bidlab.auctions import FirstPrice
-from bidlab.rewards import cpa_score_of
 from bidlab.simulator import RunLog
 
 REGRET_MULTIPLIERS = np.round(np.arange(0.0, 3.0001, 0.05), 2)
+# The AuctionNet score cuts value by (target / cpa) to this power above target.
+CPA_PENALTY_EXPONENT = 3
 
 
 @dataclass(frozen=True)
@@ -43,13 +44,10 @@ class CampaignEpisodeMetrics:
         max(0, ``cpa`` / target − 1); 0 with no spend, +inf with spend and
         no conversion, NaN with no target.
     cpa_score : float
-        See `bidlab.rewards.cpa_score_of`; NaN with no target.
+        realized_value × min((target / cpa)³, 1), the AuctionNet score; NaN
+        with no target.
     regret : float
         See `regret`.
-    reward : float
-        Sum of the bidder's step rewards.
-    episode_reward : float
-        The campaign's episode reward; NaN when none is set.
     """
 
     episode: int
@@ -64,8 +62,6 @@ class CampaignEpisodeMetrics:
     cpa_violation: float
     cpa_score: float
     regret: float
-    reward: float
-    episode_reward: float
 
 
 @dataclass(frozen=True)
@@ -185,11 +181,9 @@ def campaign_metrics(log: RunLog) -> list[CampaignEpisodeMetrics]:
                     cpa_score=(
                         np.nan
                         if target is None
-                        else cpa_score_of(value, spend, conversions, target)
+                        else _cpa_score(value, spend, conversions, target)
                     ),
                     regret=regret(log, episode, i),
-                    reward=float(log.rewards[episode, :, i].sum()),
-                    episode_reward=float(log.episode_rewards[episode, i]),
                 )
             )
 
@@ -321,3 +315,16 @@ def regret(
     won = log.winner[episode] == campaign_index
     own_surplus = float((values[won] - log.price[episode][won]).sum())
     return float(replay_surplus.max() - own_surplus)
+
+
+def _cpa_score(
+    realized_value: float, spend: float, conversions: int, cpa_target: float
+) -> float:
+    if spend == 0:
+        return realized_value
+
+    if conversions == 0:
+        return 0.0
+
+    cpa = spend / conversions
+    return realized_value * min((cpa_target / cpa) ** CPA_PENALTY_EXPONENT, 1.0)

@@ -1,53 +1,11 @@
-"""Objects passed to a bidder: what it sees before a bid and what it learns after."""
+"""Objects passed to a bidder: what it learns after each auction and episode."""
 
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-from types import MappingProxyType
+from dataclasses import dataclass
 
 SECONDS_PER_HOUR = 3600.0
 HOURS_PER_DAY = 24.0
 
 # Bidders receive only these objects, so each holds one bidder's own data.
-
-
-@dataclass(frozen=True)
-class BidRequest:
-    """What one bidder sees before it bids on one impression.
-
-    Parameters
-    ----------
-    time : float
-        Seconds since the episode start. Auctions are spaced evenly over the
-        horizon, so the first is at 0.
-    value : float
-        The platform's value of this impression: `Campaign.event_value` times its
-        estimate of the conversion probability. The estimate is exact unless
-        `SimConfig.estimate_noise` is set. A bidder with its own model may
-        ignore it. Not to be confused with `Campaign.event_value`, the value of one
-        event.
-    features : Mapping[str, str | float], optional
-        Public features of the impression, the same for every bidder.
-        `bidlab.markets.Segmented` puts the segment name under ``"segment"``.
-
-    See Also
-    --------
-    Bidder.forward : Receives this object.
-
-    Examples
-    --------
-    Build a request by hand to unit-test a bidder:
-
-    >>> import bidlab as bl
-    >>> request = bl.BidRequest(time=0.0, value=0.5)
-    >>> bl.Linear(multiplier=0.8).forward(request.value, request)
-    0.4
-    """
-
-    time: float
-    value: float
-    features: Mapping[str, str | float] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
 
 
 @dataclass(frozen=True)
@@ -59,7 +17,7 @@ class BidResult:
     Parameters
     ----------
     time : float
-        `BidRequest.time` of the auction this result answers.
+        The ``time`` input of the auction this result answers.
     bid : float
         The bid the auction used: NaN and infinity become 0, and the bid is
         capped at the budget left.
@@ -72,8 +30,6 @@ class BidResult:
     realized_value : float, optional
         Realized value of this auction: `Campaign.event_value` when converted,
         else 0.
-    reward : float, optional
-        This step's reward from the campaign's ``step_reward`` function.
 
     See Also
     --------
@@ -81,12 +37,13 @@ class BidResult:
 
     Examples
     --------
+    A bidder computes its own reward from a result, such as the surplus:
+
     >>> import bidlab as bl
-    >>> request = bl.BidRequest(time=0.0, value=0.5)
     >>> result = bl.BidResult(
     ...     time=0.0, bid=0.6, won=True, price=0.5, converted=True, realized_value=5.0
     ... )
-    >>> bl.rewards.surplus(request, result, {})
+    >>> result.realized_value - result.price
     4.5
     """
 
@@ -96,7 +53,6 @@ class BidResult:
     price: float
     converted: bool
     realized_value: float = 0.0
-    reward: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -124,7 +80,7 @@ class EpisodeReport:
     --------
     >>> import bidlab as bl
     >>> report = bl.EpisodeReport(budget=20.0, spend=6.0, wins=4, conversions=2, realized_value=10.0)
-    >>> bl.rewards.total_surplus(report, {})
+    >>> report.realized_value - report.spend
     4.0
     """
 

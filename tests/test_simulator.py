@@ -4,13 +4,12 @@ from typing import Any, ClassVar
 import numpy as np
 import pytest
 
-from bidlab import rewards
 from bidlab.auctions import NO_WINNER, FirstPrice
 from bidlab.bidders import Bidder
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import Market, MarketDraw, Segment, Segmented
 from bidlab.simulator import BUILT_IN_INPUTS, run
-from bidlab.types import BidRequest, BidResult, EpisodeReport
+from bidlab.types import BidResult, EpisodeReport
 
 
 class Spy(Bidder):
@@ -23,7 +22,7 @@ class Spy(Bidder):
         self.results: list[BidResult] = []
         self.requests: list[dict[str, object]] = []
         self.starts: list[Campaign] = []
-        self.ends: list[tuple[EpisodeReport, float | None]] = []
+        self.ends: list[EpisodeReport] = []
 
     def bind(self, rng):
         # Each run binds a fresh copy, so this lists the copies the run used.
@@ -40,16 +39,8 @@ class Spy(Bidder):
     def update(self, result):
         self.results.append(result)
 
-    def on_episode_end(self, report, episode_reward):
-        self.ends.append((report, episode_reward))
-
-
-def double_price(request, result, params):
-    return 2 * result.price
-
-
-def total_spend(report, params):
-    return report.spend
+    def on_episode_end(self, report):
+        self.ends.append(report)
 
 
 class BatchSpy(Spy):
@@ -86,9 +77,8 @@ def run_spies(cfg):
 
 def test_log_shapes():
     log = run(config(campaign("a"), campaign("b"), episodes=2, steps=50))
-    assert log.bids.shape == log.true_values.shape == log.rewards.shape == (2, 50, 2)
+    assert log.bids.shape == log.true_values.shape == (2, 50, 2)
     assert log.winner.shape == log.price.shape == log.converted.shape == (2, 50)
-    assert log.episode_rewards.shape == (2, 2)
 
 
 def test_loser_result_has_no_price():
@@ -107,15 +97,6 @@ def test_result_fields_are_only_own_outcome():
         "price",
         "converted",
         "realized_value",
-        "reward",
-    ]
-
-
-def test_request_fields():
-    assert [f.name for f in dataclasses.fields(BidRequest)] == [
-        "time",
-        "value",
-        "features",
     ]
 
 
@@ -227,40 +208,10 @@ def test_adding_bidder_keeps_world_draws():
     np.testing.assert_array_equal(two.true_values, three.true_values[:, :, :2])
 
 
-def test_result_reward_equals_function_output():
-    log, spies = run_spies(
-        config(campaign("a", step_reward=double_price), campaign("b"))
-    )
-    rewards = [fb.reward for fb in spies[0].results]
-    expected = [2 * fb.price for fb in spies[0].results]
-    assert rewards == expected
-    np.testing.assert_array_equal(log.rewards[:, :, 0].ravel(), expected)
-
-
-def test_episode_reward_called_once_per_episode():
-    log, spies = run_spies(
-        config(campaign("a", episode_reward=total_spend), campaign("b"))
-    )
-    ends = spies[0].ends
-    assert len(ends) == 3
-    assert all(reward == report.spend for report, reward in ends)
-    np.testing.assert_array_equal(log.episode_rewards[:, 0], [s.spend for s, _ in ends])
-
-
-def test_no_episode_reward_passes_none():
-    log, spies = run_spies(config(campaign("a"), campaign("b")))
-    assert all(reward is None for _, reward in spies[0].ends)
-    assert np.all(np.isnan(log.episode_rewards))
-
-
-def test_cpa_target_reaches_reward_params():
-    _, spies = run_spies(
-        config(
-            campaign("a", cpa_target=0.5, episode_reward=rewards.cpa_score),
-            campaign("b"),
-        )
-    )
-    assert all(reward is not None for _, reward in spies[0].ends)
+def test_episode_end_gets_report_only():
+    _, spies = run_spies(config(campaign("a"), campaign("b")))
+    assert len(spies[0].ends) == 3
+    assert all(isinstance(report, EpisodeReport) for report in spies[0].ends)
 
 
 def test_reserve_above_all_bids_gives_no_sales():

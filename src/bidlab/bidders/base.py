@@ -180,18 +180,13 @@ class Bidder(ABC):
             This bidder's own outcome.
         """
 
-    def on_episode_end(
-        self, report: EpisodeReport, episode_reward: float | None
-    ) -> None:
+    def on_episode_end(self, report: EpisodeReport) -> None:
         """Learn from the episode's totals after its last auction.
 
         Parameters
         ----------
         report : EpisodeReport
             This bidder's totals for the episode.
-        episode_reward : float or None
-            The campaign's ``episode_reward`` for this episode, or None when the
-            campaign sets none.
         """
 
     @overload

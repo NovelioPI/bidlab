@@ -49,9 +49,7 @@ class Logs(Bidder):
         self.act("update")
 
     @override
-    def on_episode_end(
-        self, report: EpisodeReport, episode_reward: float | None
-    ) -> None:
+    def on_episode_end(self, report: EpisodeReport) -> None:
         self.act("on_episode_end")
 
 
@@ -151,9 +149,7 @@ class Both(Bidder):
         return value
 
     @override
-    def on_episode_end(
-        self, report: EpisodeReport, episode_reward: float | None
-    ) -> None:
+    def on_episode_end(self, report: EpisodeReport) -> None:
         self.log("x", 2.0)
 
 
@@ -435,7 +431,7 @@ def test_logging_leaves_run_unchanged():
         )
 
     on, off = (run(config(*campaigns(state), episodes=4)) for state in (True, False))
-    for name in ("bids", "price", "winner", "rewards"):
+    for name in ("bids", "price", "winner", "converted"):
         np.testing.assert_array_equal(getattr(on, name), getattr(off, name))
 
 
@@ -509,3 +505,26 @@ def test_equals_compares_logs():
     assert same.equals(results)
     assert not other.equals(results)
     assert not Results(columns=results.columns, rows=results.rows).equals(results)
+
+
+class SurplusLogger(Bidder):
+    """Logs its own surplus reward in update."""
+
+    @override
+    def forward(self, value: float) -> float:
+        return value
+
+    @override
+    def update(self, result: BidResult) -> None:
+        self.log("reward", result.realized_value - result.price)
+
+
+def test_reward_logged_in_update():
+    campaign = Campaign("s", SurplusLogger(), budget=1e6, event_value=5.0)
+    config = SimConfig(campaigns=[campaign], episodes=2, steps=20, auction=FirstPrice())
+    log = run(config)
+    won = log.winner == 0
+    expected = np.where(won & log.converted, 5.0, 0.0) - np.where(won, log.price, 0.0)
+    np.testing.assert_array_equal(log.logged["reward"]["s"], expected)
+    results = run_many(config, seeds=range(2))
+    assert results.logged["reward"]["s"].shape == (2, 2, 20)

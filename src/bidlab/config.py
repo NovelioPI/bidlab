@@ -6,17 +6,15 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from bidlab import rewards
 from bidlab.auctions import Auction, FirstPrice, SecondPrice
 from bidlab.bidders.base import Bidder, bind_tree
 from bidlab.markets import LogisticContext, Market
-from bidlab.rewards import EpisodeReward, StepReward
 from bidlab.types import HOURS_PER_DAY
 
 
 @dataclass(frozen=True)
 class Campaign:
-    """One advertiser's campaign: its bidder, budget, goals and rewards.
+    """One advertiser's campaign: its bidder, budget and goals.
 
     Parameters
     ----------
@@ -30,27 +28,19 @@ class Campaign:
         Budget per episode. Must be > 0.
     event_value : float
         What one event is worth to the advertiser. The only event today is a
-        conversion. Must be > 0. Not to be confused with `BidRequest.value`,
-        the value of one impression.
+        conversion. Must be > 0. Not to be confused with the ``value`` input
+        of `Bidder.forward`, the value of one impression.
     cpa_target : float, optional
-        Highest acceptable cost per conversion. Reward functions get it as
-        ``params["cpa_target"]``. Must be > 0 when set.
+        Highest acceptable cost per conversion; the ``cpa_score`` metric uses
+        it. Must be > 0 when set.
     segments : Sequence[str], optional
         Market segments the campaign bids in, stored as a tuple. None means
         every segment.
-    step_reward : StepReward, optional
-        Called every step, ``f(request, result, params) -> float``.
-        Defaults to `bidlab.rewards.surplus`.
-    episode_reward : EpisodeReward, optional
-        Called at the end of each episode, ``g(report, params) -> float``.
-    reward_params : dict[str, float], optional
-        Passed to both reward functions.
 
     Raises
     ------
     TypeError
-        If ``bidder`` is not a `Bidder` instance, ``segments`` is a string,
-        or a reward is not callable.
+        If ``bidder`` is not a `Bidder` instance or ``segments`` is a string.
     ValueError
         If a number is out of range or ``segments`` is empty.
 
@@ -58,8 +48,7 @@ class Campaign:
     --------
     >>> import bidlab as bl
     >>> campaign = bl.Campaign(
-    ...     "pid", bl.PidPacing(), budget=15, event_value=5, cpa_target=3,
-    ...     episode_reward=bl.rewards.cpa_score,
+    ...     "pid", bl.PidPacing(), budget=15, event_value=5, cpa_target=3
     ... )
     >>> campaign.budget
     15.0
@@ -71,9 +60,6 @@ class Campaign:
     event_value: float
     cpa_target: float | None = None
     segments: Sequence[str] | None = None
-    step_reward: StepReward = rewards.surplus
-    episode_reward: EpisodeReward | None = None
-    reward_params: dict[str, float] = field(default_factory=dict[str, float])
 
     def __post_init__(self) -> None:
         # Callers can pass any object at run time; the type hint does not check it.
@@ -104,14 +90,6 @@ class Campaign:
             object.__setattr__(self, field_name, float(number))
 
         self._check_segments()
-
-        if not callable(self.step_reward):
-            raise TypeError(f"campaign {self.name!r}: step_reward must be callable")
-
-        if self.episode_reward is not None and not callable(self.episode_reward):
-            raise TypeError(
-                f"campaign {self.name!r}: episode_reward must be callable or None"
-            )
 
     def _check_segments(self) -> None:
         if self.segments is None:
@@ -160,20 +138,6 @@ class Campaign:
         bind_tree(bidder, rng)
         return bidder
 
-    def merged_reward_params(self) -> dict[str, float]:
-        """Return the ``params`` the reward functions get.
-
-        Returns
-        -------
-        dict[str, float]
-            ``reward_params``, plus the campaign's ``cpa_target`` when set. A
-            ``cpa_target`` key in ``reward_params`` wins.
-        """
-        if self.cpa_target is None:
-            return dict(self.reward_params)
-
-        return {"cpa_target": self.cpa_target, **self.reward_params}
-
 
 @dataclass(frozen=True)
 class SimConfig:
@@ -202,7 +166,7 @@ class SimConfig:
     estimate_noise : float, optional
         How wrong the platform's estimate p̂ is: the standard deviation of
         normal noise added to logit(p). 0, the default, gives the exact p.
-        `BidRequest.value` uses p̂; `RunLog.true_values` keeps the true p.
+        The ``value`` input uses p̂; `RunLog.true_values` keeps the true p.
 
     Raises
     ------

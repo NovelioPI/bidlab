@@ -15,11 +15,9 @@ from bidlab.callbacks import Callback, checked_callbacks
 from bidlab.config import Campaign, SimConfig
 from bidlab.logs import LogBook, Logs
 from bidlab.markets import MarketDraw
-from bidlab.rewards import EpisodeReward, StepReward
 from bidlab.types import (
     HOURS_PER_DAY,
     SECONDS_PER_HOUR,
-    BidRequest,
     BidResult,
     EpisodeReport,
 )
@@ -31,7 +29,7 @@ BUILT_IN_INPUTS = frozenset(
 
 @dataclass(frozen=True)
 class RunLog:
-    """Arrays are (episodes, steps[, campaigns]); episode_rewards is (episodes, campaigns).
+    """Arrays are (episodes, steps[, campaigns]).
 
     Every array is read-only, so metrics computed from it always agree.
 
@@ -50,10 +48,6 @@ class RunLog:
         Price the winner paid per step; 0 when nobody won.
     converted : numpy.ndarray
         Whether the winner converted per step.
-    rewards : numpy.ndarray
-        Each bidder's step reward; 0 outside its segments.
-    episode_rewards : numpy.ndarray
-        Each bidder's episode reward; NaN when the campaign sets none.
     segment : numpy.ndarray
         Index into ``config.market.segment_names`` per step.
     logged : Mapping[str, Mapping[str, numpy.ndarray]]
@@ -79,8 +73,6 @@ class RunLog:
     winner: npt.NDArray[np.int64]
     price: npt.NDArray[np.float64]
     converted: npt.NDArray[np.bool_]
-    rewards: npt.NDArray[np.float64]
-    episode_rewards: npt.NDArray[np.float64]
     segment: npt.NDArray[np.int64]
     logged: Logs = field(default_factory=lambda: MappingProxyType({}))
 
@@ -90,9 +82,6 @@ class _Participant:
     # Its bidder is the running copy, so a bidder that reaches it finds itself.
     campaign: Campaign
     nodes: tuple[Bidder, ...]
-    step_reward: StepReward
-    episode_reward: EpisodeReward | None
-    reward_params: dict[str, float]
 
     def takes_part_in(self, segment: str) -> bool:
         segments = self.campaign.segments
@@ -114,7 +103,7 @@ def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
     """Simulate every episode of ``config`` and return the full log.
 
     On one OS and CPU type, the same config and seed give a bit-identical
-    log. Each bidder sees only its own request and result.
+    log. Each bidder sees only its own inputs and results.
 
     Parameters
     ----------
@@ -198,8 +187,6 @@ class _Simulation:
             winner=np.full(shape, NO_WINNER),
             price=np.zeros(shape),
             converted=np.zeros(shape, dtype=bool),
-            rewards=np.zeros((*shape, count)),
-            episode_rewards=np.full((config.episodes, count), np.nan),
             segment=np.zeros(shape, dtype=np.int64),
         )
 
@@ -216,9 +203,6 @@ class _Simulation:
         return _Participant(
             campaign=replace(campaign, bidder=bidder),
             nodes=tuple(node for _, node in nodes),
-            step_reward=campaign.step_reward,
-            episode_reward=campaign.episode_reward,
-            reward_params=campaign.merged_reward_params(),
         )
 
     def run_all(self) -> None:
@@ -234,8 +218,6 @@ class _Simulation:
             self.log.winner,
             self.log.price,
             self.log.converted,
-            self.log.rewards,
-            self.log.episode_rewards,
             self.log.segment,
         ):
             array.flags.writeable = False
@@ -263,11 +245,11 @@ class _Simulation:
         estimated = self._estimated_values(values, probabilities)
         time = step * self.seconds_per_step
         # Bidders outside their segments are not asked to bid, so they cannot learn from it.
-        requests = {
-            i: BidRequest(time=time, value=float(estimated[i]), features=draw.features)
-            for i, p in enumerate(self.participants)
-            if p.takes_part_in(draw.segment)
-        }
+        active = [
+            i
+            for i, participant in enumerate(self.participants)
+            if participant.takes_part_in(draw.segment)
+        ]
         shared = {
             **draw.features,
             "time": time,
@@ -278,10 +260,10 @@ class _Simulation:
             "segment": draw.segment,
         }
         bids = np.zeros(len(self.participants))
-        for i, request in requests.items():
+        for i in active:
             inputs = {
                 **shared,
-                "value": request.value,
+                "value": float(estimated[i]),
                 "budget_left": float(budget_left[i]),
             }
             bids[i] = call_forward(self.participants[i].campaign.bidder, inputs)
@@ -292,7 +274,6 @@ class _Simulation:
         )
         # A logged bid of 0 would win at reserve 0, so absent bidders bid -inf.
         auction_bids = np.full(len(self.participants), -np.inf)
-        active = list(requests)
         auction_bids[active] = bids[active]
         winner, price = self.config.auction.run(auction_bids, self.tie_rng)
         # One draw every step keeps the conversion stream aligned across runs.
@@ -301,7 +282,7 @@ class _Simulation:
         if winner != NO_WINNER:
             budget_left[winner] -= price
 
-        for i, request in requests.items():
+        for i in active:
             participant = self.participants[i]
             won = i == winner
             result = BidResult(
@@ -314,11 +295,9 @@ class _Simulation:
                 if converted and won
                 else 0.0,
             )
-            reward = participant.step_reward(request, result, participant.reward_params)
-            batch = [replace(result, reward=reward)]
+            batch = [result]
             for node in participant.nodes:
                 node.update_batch(batch)
-            self.log.rewards[episode, step, i] = reward
 
         self.log.bids[episode, step] = bids
         self.log.true_values[episode, step] = values
@@ -391,15 +370,8 @@ class _Simulation:
                 conversions=conversions,
                 realized_value=conversions * participant.campaign.event_value,
             )
-            episode_reward = None
-            if participant.episode_reward is not None:
-                episode_reward = participant.episode_reward(
-                    report, participant.reward_params
-                )
-                self.log.episode_rewards[episode, i] = episode_reward
-
             for node in participant.nodes:
-                node.on_episode_end(report, episode_reward)
+                node.on_episode_end(report)
             participant.check_tree()
             reports[participant.campaign.name] = report
 

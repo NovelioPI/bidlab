@@ -69,9 +69,7 @@ class Reports(Bidder):
         return value
 
     @override
-    def on_episode_end(
-        self, report: EpisodeReport, episode_reward: float | None
-    ) -> None:
+    def on_episode_end(self, report: EpisodeReport) -> None:
         Reports.seen.append(report)
 
 
@@ -226,5 +224,5 @@ def test_partial_callback():
 def test_callbacks_leave_run_unchanged():
     plain = run(config(*two()))
     watched = run(config(*two()), callbacks=[Record(), OnlyEnd()])
-    for name in ("bids", "price", "winner", "rewards"):
+    for name in ("bids", "price", "winner", "converted"):
         assert (getattr(plain, name) == getattr(watched, name)).all()

@@ -141,9 +141,7 @@ class Log(Bidder):
         Log.calls.append((self.name, "batch", bid_results))
 
     @override
-    def on_episode_end(
-        self, report: EpisodeReport, episode_reward: float | None
-    ) -> None:
+    def on_episode_end(self, report: EpisodeReport) -> None:
         Log.calls.append((self.name, "end", report))
 
 
@@ -180,9 +178,7 @@ class QuietParent(Bidder):
         pass
 
     @override
-    def on_episode_end(
-        self, report: EpisodeReport, episode_reward: float | None
-    ) -> None:
+    def on_episode_end(self, report: EpisodeReport) -> None:
         pass
 
 
@@ -357,9 +353,7 @@ class Grows(Bidder):
         self.grow("update_batch")
 
     @override
-    def on_episode_end(
-        self, report: EpisodeReport, episode_reward: float | None
-    ) -> None:
+    def on_episode_end(self, report: EpisodeReport) -> None:
         self.grow("on_episode_end")
 
 

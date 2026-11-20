@@ -17,7 +17,7 @@ Examples
 4
 """
 
-from bidlab import bidders, markets, rewards
+from bidlab import bidders, markets
 from bidlab.auctions import FirstPrice, SecondPrice
 from bidlab.bidders import Bidder, Linear, PidPacing, Stack, UcbMultiplier
 from bidlab.callbacks import Callback
@@ -26,10 +26,9 @@ from bidlab.metrics import campaign_metrics, platform_metrics, regret, segment_m
 from bidlab.results import Results
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
-from bidlab.types import BidRequest, BidResult, EpisodeReport
+from bidlab.types import BidResult, EpisodeReport
 
 __all__ = [
-    "BidRequest",
     "BidResult",
     "Bidder",
     "Callback",
@@ -49,7 +48,6 @@ __all__ = [
     "markets",
     "platform_metrics",
     "regret",
-    "rewards",
     "run",
     "run_many",
     "segment_metrics",
