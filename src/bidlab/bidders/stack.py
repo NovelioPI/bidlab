@@ -2,15 +2,16 @@
 
 from typing import override
 
-from bidlab.bidders.base import Bidder
-from bidlab.types import BidRequest
+from bidlab.bidders.base import Bidder, call_forward
 
 
 class Stack(Bidder):
     """A bidder that runs its bidders in order and outputs the last one's output.
 
-    The first bidder gets the incoming value, `BidRequest.value` at the top;
-    each later bidder gets the previous one's output. The bidders are the
+    The first bidder gets the incoming ``value``, the platform's value at
+    the top; each later bidder gets the previous one's output as ``value``.
+    Each bidder also gets the other inputs its ``forward`` names, as the
+    simulator passes them to a top bidder. The bidders are the
     stack's children, at paths ``"bidders.0"``, ``"bidders.1"`` and so on,
     so every hook reaches each of them, in order. Order matters: pacing then
     shading differs from shading then pacing. Stacks can nest.
@@ -57,8 +58,8 @@ class Stack(Bidder):
         self.bidders = bidders
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float, **inputs: object) -> float:
         for bidder in self.bidders:
-            value = bidder.forward(value, request)
+            value = call_forward(bidder, {**inputs, "value": value})
 
         return value

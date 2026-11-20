@@ -24,7 +24,7 @@ class DayAndNight(bl.markets.Market):
             name = "day" if step % STEPS_PER_DAY < DAY_STEPS else "night"
             rate = 0.08 if name == "day" else 0.03
             probabilities = rate * rng.uniform(0.5, 1.5, size=count)
-            yield bl.markets.MarketDraw({"segment": name}, probabilities, name)
+            yield bl.markets.MarketDraw({}, probabilities, name)
             step += 1
 
 

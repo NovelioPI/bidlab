@@ -6,7 +6,7 @@ Analogy: a PyTorch module that holds submodules.
 
 ## Children
 
-A bidder can hold children in attributes, lists or tuples. Call each child's `forward` yourself, with any extra keyword arguments it takes. `bl.Stack` is one such bidder.
+A bidder can hold children in attributes, lists or tuples. Call each child's `forward` yourself, with the arguments it takes; the simulator passes inputs only to the top bidder. `bl.Stack` is one such bidder: it passes each child the inputs that child names.
 
 The simulator does the rest:
 
@@ -20,7 +20,7 @@ import bidlab as bl
 
 
 class Shade(bl.Bidder):
-    def forward(self, value, request, factor=1.0):
+    def forward(self, value, factor=1.0):
         return value * factor
 
 
@@ -31,13 +31,10 @@ class NightShade(bl.Bidder):
         self.shade = Shade()
         self.pacing = bl.PidPacing()
 
-    def on_episode_start(self, brief):
-        self.brief = brief
-
-    def forward(self, value, request):
-        factor = 0.6 if self.brief.hour_of_day(request.time) < 6 else 0.9
-        shaded = self.shade.forward(value, request, factor=factor)
-        return self.pacing.forward(shaded, request)
+    def forward(self, value, hour_of_day, horizon):
+        factor = 0.6 if hour_of_day < 6 else 0.9
+        shaded = self.shade.forward(value, factor=factor)
+        return self.pacing.forward(shaded, horizon=horizon)
 ```
 
 ## Paths

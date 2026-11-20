@@ -2,8 +2,8 @@
 
 In a second-price auction a bidder never pays more than its bid. A bid of
 target/value times the value costs at most the target per expected conversion.
-`cpa_score` rewards an episode by its value, cut sharply when the CPA is above
-target.
+The `cpa_score` metric scores an episode by its value, cut sharply when the
+CPA is above target.
 """
 
 import bidlab as bl
@@ -13,14 +13,6 @@ VALUE = 5
 SAFETY = 0.8
 
 
-def strict_cpa_score(report: bl.EpisodeReport, params: dict[str, float]) -> float:
-    """`cpa_score` against a target lowered by the campaign's safety factor."""
-    target = params["cpa_target"] * params["safety"]
-    return bl.rewards.cpa_score_of(
-        report.realized_value, report.spend, report.conversions, target
-    )
-
-
 def campaign(name, bidder):
     return bl.Campaign(
         name,
@@ -28,7 +20,6 @@ def campaign(name, bidder):
         budget=50,
         event_value=VALUE,
         cpa_target=CPA_TARGET,
-        episode_reward=bl.rewards.cpa_score,
     )
 
 
@@ -36,15 +27,7 @@ config = bl.SimConfig(
     campaigns=[
         campaign("truthful", bl.Linear()),
         campaign("at_target", bl.Linear(multiplier=CPA_TARGET / VALUE)),
-        bl.Campaign(
-            "strict",
-            bl.Linear(multiplier=CPA_TARGET * SAFETY / VALUE),
-            budget=50,
-            event_value=VALUE,
-            cpa_target=CPA_TARGET,
-            episode_reward=strict_cpa_score,
-            reward_params={"safety": SAFETY},
-        ),
+        campaign("strict", bl.Linear(multiplier=CPA_TARGET * SAFETY / VALUE)),
         bl.Campaign("big", bl.Linear(), budget=50, event_value=VALUE),
     ],
     auction=bl.SecondPrice(reserve=0.01),

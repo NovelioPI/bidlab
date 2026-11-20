@@ -1,8 +1,8 @@
 """With a 12-hour day from 9:00, does an even-schedule bidder still have budget at 20:00, when truthful bidding has run out?
 
-`EvenSpend` tracks its own spend in `update`, one result at a time. It bids
-the value only while its spend is behind an even plan over the day, which it
-reads from `campaign.time_left`.
+`EvenSpend` tracks its own spend and surplus in `update`, one result at a
+time. It bids the value only while its spend is behind an even plan over the
+day, which it reads from its `time` and `horizon` inputs.
 """
 
 import dataclasses
@@ -16,18 +16,17 @@ OUT_OF_BUDGET = 0.99
 
 
 class EvenSpend(bl.Bidder):
-    def on_episode_start(self, brief):
-        self.brief = brief
+    def on_episode_start(self, campaign):
+        self.budget = campaign.budget
         self.spent = 0.0
-        self.day = brief.time_left(0.0)
 
-    def forward(self, value, request):
-        self.log("hour", self.brief.hour_of_day(request.time))
-        elapsed = 1 - self.brief.time_left(request.time) / self.day
-        return value if self.spent <= elapsed * self.brief.budget else 0.0
+    def forward(self, value, time, horizon, hour_of_day):
+        self.log("hour", hour_of_day)
+        return value if self.spent <= time / horizon * self.budget else 0.0
 
     def update(self, result):
-        self.log({"bid": result.bid, "reward": result.reward})
+        surplus = result.realized_value - result.price
+        self.log({"bid": result.bid, "reward": surplus})
         if result.won:
             self.spent += result.price
 

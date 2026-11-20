@@ -3,7 +3,6 @@
 from typing import override
 
 from bidlab.bidders.base import Bidder
-from bidlab.types import BidRequest
 
 
 class Linear(Bidder):
@@ -40,5 +39,5 @@ class Linear(Bidder):
         self.multiplier = multiplier
 
     @override
-    def forward(self, value: float, request: BidRequest) -> float:
+    def forward(self, value: float) -> float:
         return self.multiplier * value
