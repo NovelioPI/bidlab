@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from bidlab.config import SimConfig
 from bidlab.results import Results
-from bidlab.types import EpisodeStats
+from bidlab.types import EpisodeReport
 
 if TYPE_CHECKING:
     from bidlab.simulator import RunLog
@@ -23,10 +23,10 @@ class Callback:
     --------
     >>> import bidlab as bl
     >>> class Progress(bl.Callback):
-    ...     def on_episode_end(self, episode, stats):
-    ...         print(episode, stats["t"].wins > 0)
-    >>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))
-    >>> config = bl.SimConfig(bidders=[spec], episodes=2, steps=50)
+    ...     def on_episode_end(self, episode, reports):
+    ...         print(episode, reports["t"].wins > 0)
+    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
+    >>> config = bl.SimConfig(campaigns=[campaign], episodes=2, steps=50)
     >>> log = bl.run(config, callbacks=[Progress()])
     0 True
     1 True
@@ -41,15 +41,17 @@ class Callback:
             The run's config.
         """
 
-    def on_episode_end(self, episode: int, stats: Mapping[str, EpisodeStats]) -> None:
+    def on_episode_end(
+        self, episode: int, reports: Mapping[str, EpisodeReport]
+    ) -> None:
         """Run after every bidder's `Bidder.on_episode_end` for ``episode``.
 
         Parameters
         ----------
         episode : int
             The episode index, from 0.
-        stats : Mapping[str, EpisodeStats]
-            Each spec name's totals for the episode.
+        reports : Mapping[str, EpisodeReport]
+            Each campaign name's totals for the episode.
         """
 
     def on_run_end(self, log: "RunLog") -> None:

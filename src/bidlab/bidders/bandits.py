@@ -5,7 +5,7 @@ from typing import override
 import numpy as np
 
 from bidlab.bidders.base import Bidder
-from bidlab.types import Campaign, EpisodeStats, Feedback, Observation
+from bidlab.types import BidRequest, BidResult, Brief, EpisodeReport
 
 # np.arange excludes its end, so a small margin keeps max_multiplier in the grid.
 ARM_GRID_END_MARGIN = 1e-9
@@ -17,7 +17,7 @@ class UcbMultiplier(Bidder):
     """UCB1 over bid multipliers; one arm per episode, learned across episodes.
 
     Each arm is a fixed multiplier m, and the bidder outputs m × value for a
-    whole episode. An arm's reward is the episode reward when the spec sets
+    whole episode. An arm's reward is the episode reward when the campaign sets
     one, else the sum of step rewards. The exploration bonus is scaled by
     the spread of the arm means, so it works for any reward unit.
 
@@ -75,22 +75,24 @@ class UcbMultiplier(Bidder):
         self.episode_step_rewards = 0.0
 
     @override
-    def on_episode_start(self, campaign: Campaign) -> None:
+    def on_episode_start(self, brief: Brief) -> None:
         self.arm = self._choose_arm()
         self.episode_step_rewards = 0.0
         if self.log_state:
             self.log("multiplier", float(self.arms[self.arm]))
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         return float(self.arms[self.arm]) * value
 
     @override
-    def update(self, feedback: Feedback) -> None:
-        self.episode_step_rewards += feedback.reward
+    def update(self, result: BidResult) -> None:
+        self.episode_step_rewards += result.reward
 
     @override
-    def on_episode_end(self, stats: EpisodeStats, episode_reward: float | None) -> None:
+    def on_episode_end(
+        self, report: EpisodeReport, episode_reward: float | None
+    ) -> None:
         reward = self.episode_step_rewards if episode_reward is None else episode_reward
         self.pulls[self.arm] += 1
         self.reward_sums[self.arm] += reward

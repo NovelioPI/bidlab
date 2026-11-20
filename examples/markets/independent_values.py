@@ -13,11 +13,12 @@ BIDDERS = 3
 BUDGET = 1e9
 
 config = bl.SimConfig(
-    bidders=[
-        bl.BidderSpec(
+    campaigns=[
+        bl.Campaign(
             name,
-            bl.Truthful(multiplier=multiplier),
-            bl.Campaign(budget=BUDGET, value=1),
+            bl.Linear(multiplier=multiplier),
+            budget=BUDGET,
+            event_value=1,
         )
         for name, multiplier in (
             ("truthful", 1.0),
@@ -33,7 +34,7 @@ config = bl.SimConfig(
 
 
 def mean(results, bidder, column):
-    values = [row[column] for row in results.rows if row["bidder"] == bidder]
+    values = [row[column] for row in results.rows if row["campaign"] == bidder]
     return sum(values) / len(values)
 
 

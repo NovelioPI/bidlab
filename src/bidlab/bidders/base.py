@@ -7,7 +7,7 @@ from typing import Any, Protocol, overload
 
 import numpy as np
 
-from bidlab.types import Campaign, EpisodeStats, Feedback, Observation
+from bidlab.types import BidRequest, BidResult, Brief, EpisodeReport
 
 _LOGGER = "_bidlab_logger"
 
@@ -29,7 +29,7 @@ class Bidder(ABC):
     """Base class for a bidding method: implement `forward`.
 
     A bidder turns a value into another value. Alone, it gets the platform's
-    value, `Observation.value`, and its output is the bid. In a `Stack`, each
+    value, `BidRequest.value`, and its output is the bid. In a `Stack`, each
     bidder gets the previous one's output. A value model, such as a pCVR
     model, returns its own value and may ignore the one it gets. A
     bid-control method, such as pacing or shading, turns a value into a bid.
@@ -48,11 +48,11 @@ class Bidder(ABC):
     parent first, and gives each child its own ``rng``. Do not call a child's
     `on_episode_start`, `update_batch` or `on_episode_end` yourself, or it
     runs twice. Create children in ``__init__``: a child added during a run
-    raises `ValueError`. Outside a run, `BidderSpec.build` binds the whole
+    raises `ValueError`. Outside a run, `Campaign.build` binds the whole
     tree, and `bind` binds only this bidder.
 
     Save any number with `log`, such as a learned multiplier. The run keeps
-    it in `RunLog.logs`, and `run_many` in `Results.logs`.
+    it in `RunLog.logged`, and `run_many` in `Results.logged`.
 
     Attributes
     ----------
@@ -64,7 +64,7 @@ class Bidder(ABC):
     --------
     Stack : Chains bidders.
     named_bidders : Lists this bidder's children.
-    BidderSpec : Puts a bidder in a simulation.
+    Campaign : Puts a bidder in a simulation.
 
     Examples
     --------
@@ -72,11 +72,11 @@ class Bidder(ABC):
     >>> class Floor(bl.Bidder):
     ...     def __init__(self, minimum):
     ...         self.minimum = minimum
-    ...     def forward(self, value, observation):
+    ...     def forward(self, value, request):
     ...         return max(value, self.minimum)
-    >>> bidder = bl.Stack(bl.Truthful(multiplier=0.5), Floor(0.3))
-    >>> spec = bl.BidderSpec("floored", bidder, bl.Campaign(budget=10, value=5))
-    >>> log = bl.run(bl.SimConfig(bidders=[spec], episodes=1, steps=20))
+    >>> bidder = bl.Stack(bl.Linear(multiplier=0.5), Floor(0.3))
+    >>> campaign = bl.Campaign("floored", bidder, budget=10, event_value=5)
+    >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=1, steps=20))
     >>> bool((log.bids >= 0.3).all())
     True
     """
@@ -93,25 +93,25 @@ class Bidder(ABC):
         """
         self.rng = rng
 
-    def on_episode_start(self, campaign: Campaign) -> None:
+    def on_episode_start(self, brief: Brief) -> None:
         """Reset per-episode state before the first auction of an episode.
 
         Parameters
         ----------
-        campaign : Campaign
+        brief : Brief
             The bidder's fixed facts, with the schedule filled in.
         """
 
     @abstractmethod
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         """Turn the incoming value into this bidder's output.
 
         Parameters
         ----------
         value : float
-            `Observation.value`, or the previous bidder's output in a
+            `BidRequest.value`, or the previous bidder's output in a
             `Stack`.
-        observation : Observation
+        request : BidRequest
             What this bidder can see about the impression.
 
         Returns
@@ -122,40 +122,42 @@ class Bidder(ABC):
             budget left is capped at it.
         """
 
-    def update_batch(self, feedbacks: Sequence[Feedback]) -> None:
+    def update_batch(self, bid_results: Sequence[BidResult]) -> None:
         """Learn from the outcomes of auctions this bidder took part in.
 
-        Today each batch holds the feedback of one auction. The default calls
+        Today each batch holds the result of one auction. The default calls
         `update` once per item, in time order.
 
         Parameters
         ----------
-        feedbacks : Sequence[Feedback]
+        results : Sequence[BidResult]
             This bidder's own outcomes. Each holds the price only when the
-            bidder won. In a `Stack`, `Feedback.bid` is the final bid.
+            bidder won. In a `Stack`, `BidResult.bid` is the final bid.
         """
-        for feedback in feedbacks:
-            self.update(feedback)
+        for result in bid_results:
+            self.update(result)
 
-    def update(self, feedback: Feedback) -> None:
+    def update(self, result: BidResult) -> None:
         """Learn from the outcome of one auction this bidder took part in.
 
         Parameters
         ----------
-        feedback : Feedback
+        result : BidResult
             This bidder's own outcome.
         """
 
-    def on_episode_end(self, stats: EpisodeStats, episode_reward: float | None) -> None:
+    def on_episode_end(
+        self, report: EpisodeReport, episode_reward: float | None
+    ) -> None:
         """Learn from the episode's totals after its last auction.
 
         Parameters
         ----------
-        stats : EpisodeStats
+        report : EpisodeReport
             This bidder's totals for the episode.
         episode_reward : float or None
-            The spec's ``episode_reward`` for this episode, or None when the
-            spec sets none.
+            The campaign's ``episode_reward`` for this episode, or None when the
+            campaign sets none.
         """
 
     @overload
@@ -176,7 +178,7 @@ class Bidder(ABC):
         *,
         log_prefix: bool = True,
     ) -> None:
-        """Save a number, or a dict of numbers, in the run's `RunLog.logs`.
+        """Save a number, or a dict of numbers, in the run's `RunLog.logged`.
 
         A value logged in `forward`, `update_batch` or `update` is saved at
         the current auction step; one logged in `on_episode_start` or
@@ -203,12 +205,12 @@ class Bidder(ABC):
         --------
         >>> import bidlab as bl
         >>> class Half(bl.Bidder):
-        ...     def forward(self, value, observation):
+        ...     def forward(self, value, request):
         ...         self.log("factor", 0.5)
         ...         return value / 2
-        >>> spec = bl.BidderSpec("half", Half(), bl.Campaign(budget=10, value=5))
-        >>> log = bl.run(bl.SimConfig(bidders=[spec], episodes=2, steps=50))
-        >>> log.logs["factor"]["half"].shape, float(log.logs["factor"]["half"][1, 49])
+        >>> campaign = bl.Campaign("half", Half(), budget=10, event_value=5)
+        >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=2, steps=50))
+        >>> log.logged["factor"]["half"].shape, float(log.logged["factor"]["half"][1, 49])
         ((2, 50), 0.5)
         """
         values = _checked_values(name_or_values, value)
@@ -244,7 +246,7 @@ class Bidder(ABC):
         Examples
         --------
         >>> import bidlab as bl
-        >>> bidder = bl.Stack(bl.Truthful(), bl.Stack(bl.PidPacing()))
+        >>> bidder = bl.Stack(bl.Linear(), bl.Stack(bl.PidPacing()))
         >>> [path for path, _ in bidder.named_bidders()]
         ['', 'bidders.0', 'bidders.1', 'bidders.1.bidders.0']
         """

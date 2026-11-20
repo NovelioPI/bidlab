@@ -16,25 +16,25 @@ REGRET_MULTIPLIERS = np.round(np.arange(0.0, 3.0001, 0.05), 2)
 
 
 @dataclass(frozen=True)
-class BidderEpisodeMetrics:
+class CampaignEpisodeMetrics:
     """One bidder's metrics for one episode.
 
     Attributes
     ----------
     episode : int
         Episode index.
-    bidder : str
-        The spec's name.
+    campaign : str
+        The campaign's name.
     spend : float
         Sum of prices paid.
     wins : int
         Impressions won.
     conversions : int
         Realized conversions on won impressions.
-    value : float
+    realized_value : float
         ``conversions`` × value per conversion.
     surplus : float
-        ``value`` − ``spend``.
+        ``realized_value`` − ``spend``.
     budget_used : float
         ``spend`` / budget; never above 1.
     cpa : float
@@ -49,15 +49,15 @@ class BidderEpisodeMetrics:
     reward : float
         Sum of the bidder's step rewards.
     episode_reward : float
-        The spec's episode reward; NaN when none is set.
+        The campaign's episode reward; NaN when none is set.
     """
 
     episode: int
-    bidder: str
+    campaign: str
     spend: float
     wins: int
     conversions: int
-    value: float
+    realized_value: float
     surplus: float
     budget_used: float
     cpa: float
@@ -69,15 +69,15 @@ class BidderEpisodeMetrics:
 
 
 @dataclass(frozen=True)
-class BidderSegmentMetrics:
+class CampaignSegmentMetrics:
     """One bidder's metrics for one episode, over one market segment's steps.
 
     Attributes
     ----------
     episode : int
         Episode index.
-    bidder : str
-        The spec's name.
+    campaign : str
+        The campaign's name.
     segment : str
         Name from the market's ``segment_names``.
     spend : float
@@ -91,7 +91,7 @@ class BidderSegmentMetrics:
     """
 
     episode: int
-    bidder: str
+    campaign: str
     segment: str
     spend: float
     wins: int
@@ -124,8 +124,8 @@ def platform_metrics(log: RunLog) -> list[PlatformEpisodeMetrics]:
     Examples
     --------
     >>> import bidlab as bl
-    >>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))
-    >>> log = bl.run(bl.SimConfig(bidders=[spec], episodes=2, steps=50))
+    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
+    >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=2, steps=50))
     >>> [row.revenue for row in bl.platform_metrics(log)]
     [0.0, 0.0]
     """
@@ -133,7 +133,7 @@ def platform_metrics(log: RunLog) -> list[PlatformEpisodeMetrics]:
     for episode in range(log.winner.shape[0]):
         winner = log.winner[episode]
         sold = winner >= 0
-        winner_values = log.values[episode, sold, winner[sold]]
+        winner_values = log.true_values[episode, sold, winner[sold]]
         rows.append(
             PlatformEpisodeMetrics(
                 episode=episode,
@@ -145,41 +145,41 @@ def platform_metrics(log: RunLog) -> list[PlatformEpisodeMetrics]:
     return rows
 
 
-def bidder_metrics(log: RunLog) -> list[BidderEpisodeMetrics]:
+def campaign_metrics(log: RunLog) -> list[CampaignEpisodeMetrics]:
     """One row per episode and bidder; definitions are in docs/metrics.md.
 
     Examples
     --------
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
-    ...     bidders=[
-    ...         bl.BidderSpec("a", bl.Truthful(), bl.Campaign(budget=10, value=5)),
-    ...         bl.BidderSpec("b", bl.PidPacing(), bl.Campaign(budget=10, value=5)),
+    ...     campaigns=[
+    ...         bl.Campaign("a", bl.Linear(), budget=10, event_value=5),
+    ...         bl.Campaign("b", bl.PidPacing(), budget=10, event_value=5),
     ...     ],
     ...     episodes=2,
     ...     steps=50,
     ... )
-    >>> [(row.episode, row.bidder) for row in bl.bidder_metrics(bl.run(config))]
+    >>> [(row.episode, row.campaign) for row in bl.campaign_metrics(bl.run(config))]
     [(0, 'a'), (0, 'b'), (1, 'a'), (1, 'b')]
     """
     rows = []
     for episode in range(log.winner.shape[0]):
-        for i, spec in enumerate(log.config.bidders):
+        for i, campaign in enumerate(log.config.campaigns):
             won = log.winner[episode] == i
             spend = float(log.price[episode][won].sum())
             conversions = int((log.converted[episode] & won).sum())
-            value = conversions * spec.campaign.value
-            target = spec.campaign.cpa_target
+            value = conversions * campaign.event_value
+            target = campaign.cpa_target
             rows.append(
-                BidderEpisodeMetrics(
+                CampaignEpisodeMetrics(
                     episode=episode,
-                    bidder=spec.name,
+                    campaign=campaign.name,
                     spend=spend,
                     wins=int(won.sum()),
                     conversions=conversions,
-                    value=value,
+                    realized_value=value,
                     surplus=value - spend,
-                    budget_used=spend / spec.campaign.budget,
+                    budget_used=spend / campaign.budget,
                     cpa=spend / conversions if conversions else np.nan,
                     cpa_violation=_cpa_violation(spend, conversions, target),
                     cpa_score=(
@@ -196,40 +196,40 @@ def bidder_metrics(log: RunLog) -> list[BidderEpisodeMetrics]:
     return rows
 
 
-def segment_metrics(log: RunLog) -> list[BidderSegmentMetrics]:
+def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
     """One row per episode, bidder and market segment.
 
     For one episode and bidder, each metric summed over segments equals the
-    value in `bidder_metrics`.
+    value in `campaign_metrics`.
 
     Examples
     --------
     >>> import bidlab as bl
     >>> from bidlab.markets import Segment, Segmented
     >>> market = Segmented((Segment("day", 0.6), Segment("night", 0.4)))
-    >>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))
-    >>> log = bl.run(bl.SimConfig(bidders=[spec], market=market, episodes=1, steps=50))
+    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
+    >>> log = bl.run(bl.SimConfig(campaigns=[campaign], market=market, episodes=1, steps=50))
     >>> [row.segment for row in bl.segment_metrics(log)]
     ['day', 'night']
     """
     rows = []
     names = log.config.market.segment_names
     for episode in range(log.winner.shape[0]):
-        for i, spec in enumerate(log.config.bidders):
+        for i, campaign in enumerate(log.config.campaigns):
             won = log.winner[episode] == i
             for index, name in enumerate(names):
                 won_here = won & (log.segment[episode] == index)
                 spend = float(log.price[episode][won_here].sum())
                 conversions = int((log.converted[episode] & won_here).sum())
                 rows.append(
-                    BidderSegmentMetrics(
+                    CampaignSegmentMetrics(
                         episode=episode,
-                        bidder=spec.name,
+                        campaign=campaign.name,
                         segment=name,
                         spend=spend,
                         wins=int(won_here.sum()),
                         conversions=conversions,
-                        surplus=conversions * spec.campaign.value - spend,
+                        surplus=conversions * campaign.event_value - spend,
                     )
                 )
 
@@ -252,7 +252,7 @@ def _cpa_violation(spend: float, conversions: int, target: float | None) -> floa
 def regret(
     log: RunLog,
     episode: int,
-    bidder: int,
+    campaign_index: int,
     multipliers: npt.NDArray[np.float64] = REGRET_MULTIPLIERS,
 ) -> float:
     """Best fixed-multiplier expected surplus minus the bidder's own expected surplus.
@@ -267,8 +267,8 @@ def regret(
         The run to replay.
     episode : int
         Episode index.
-    bidder : int
-        Bidder index in ``log.config.bidders``.
+    campaign_index : int
+        Campaign index in ``log.config.campaigns``.
     multipliers : numpy.ndarray, optional
         Multipliers to try; 0, 0.05, ..., 3 by default.
 
@@ -284,24 +284,24 @@ def regret(
     multiplier beats it:
 
     >>> import bidlab as bl
-    >>> spec = bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))
-    >>> log = bl.run(bl.SimConfig(bidders=[spec], episodes=1, steps=50))
-    >>> round(bl.regret(log, episode=0, bidder=0), 9)
+    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
+    >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=1, steps=50))
+    >>> round(bl.regret(log, episode=0, campaign_index=0), 9)
     0.0
     """
-    spec = log.config.bidders[bidder]
+    campaign = log.config.campaigns[campaign_index]
     auction = log.config.auction
-    values = log.values[episode, :, bidder]
-    others = np.delete(log.bids[episode], bidder, axis=1)
+    values = log.true_values[episode, :, campaign_index]
+    others = np.delete(log.bids[episode], campaign_index, axis=1)
     highest_other = others.max(axis=1) if others.shape[1] else np.zeros(len(values))
     # A targeted bidder cannot win outside its segments, so neither can its replay.
     names = log.config.market.segment_names
     allowed = [
-        i for i, name in enumerate(names) if name in (spec.campaign.segments or names)
+        i for i, name in enumerate(names) if name in (campaign.segments or names)
     ]
     takes_part = np.isin(log.segment[episode], allowed)
 
-    budget_left = np.full(multipliers.size, spec.campaign.budget)
+    budget_left = np.full(multipliers.size, campaign.budget)
     replay_surplus = np.zeros(multipliers.size)
     for step, value in enumerate(values):
         bids = np.minimum(multipliers * value, budget_left)
@@ -318,6 +318,6 @@ def regret(
         replay_surplus += np.where(wins, value - prices, 0.0)
         budget_left -= np.where(wins, prices, 0.0)
 
-    won = log.winner[episode] == bidder
+    won = log.winner[episode] == campaign_index
     own_surplus = float((values[won] - log.price[episode][won]).sum())
     return float(replay_surplus.max() - own_surplus)

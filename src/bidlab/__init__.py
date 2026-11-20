@@ -4,9 +4,9 @@ Examples
 --------
 >>> import bidlab as bl
 >>> config = bl.SimConfig(
-...     bidders=[
-...         bl.BidderSpec("truthful", bl.Truthful(), bl.Campaign(budget=50, value=5)),
-...         bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=15, value=5)),
+...     campaigns=[
+...         bl.Campaign("truthful", bl.Linear(), budget=50, event_value=5),
+...         bl.Campaign("pid", bl.PidPacing(), budget=15, event_value=5),
 ...     ],
 ...     auction=bl.SecondPrice(reserve=0.01),
 ...     episodes=2,
@@ -19,34 +19,34 @@ Examples
 
 from bidlab import bidders, markets, rewards
 from bidlab.auctions import FirstPrice, SecondPrice
-from bidlab.bidders import Bidder, PidPacing, Stack, Truthful, UcbMultiplier
+from bidlab.bidders import Bidder, Linear, PidPacing, Stack, UcbMultiplier
 from bidlab.callbacks import Callback
-from bidlab.config import BidderSpec, SimConfig
-from bidlab.metrics import bidder_metrics, platform_metrics, regret, segment_metrics
+from bidlab.config import Campaign, SimConfig
+from bidlab.metrics import campaign_metrics, platform_metrics, regret, segment_metrics
 from bidlab.results import Results
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
-from bidlab.types import Campaign, EpisodeStats, Feedback, Observation
+from bidlab.types import BidRequest, BidResult, Brief, EpisodeReport
 
 __all__ = [
+    "BidRequest",
+    "BidResult",
     "Bidder",
-    "BidderSpec",
+    "Brief",
     "Callback",
     "Campaign",
-    "EpisodeStats",
-    "Feedback",
+    "EpisodeReport",
     "FirstPrice",
-    "Observation",
+    "Linear",
     "PidPacing",
     "Results",
     "RunLog",
     "SecondPrice",
     "SimConfig",
     "Stack",
-    "Truthful",
     "UcbMultiplier",
-    "bidder_metrics",
     "bidders",
+    "campaign_metrics",
     "markets",
     "platform_metrics",
     "regret",

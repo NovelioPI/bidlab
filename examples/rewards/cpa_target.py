@@ -13,33 +13,39 @@ VALUE = 5
 SAFETY = 0.8
 
 
-def strict_cpa_score(stats: bl.EpisodeStats, params: dict[str, float]) -> float:
-    """`cpa_score` against a target lowered by the spec's safety factor."""
+def strict_cpa_score(report: bl.EpisodeReport, params: dict[str, float]) -> float:
+    """`cpa_score` against a target lowered by the campaign's safety factor."""
     target = params["cpa_target"] * params["safety"]
-    return bl.rewards.cpa_score_of(stats.value, stats.spend, stats.conversions, target)
+    return bl.rewards.cpa_score_of(
+        report.realized_value, report.spend, report.conversions, target
+    )
 
 
-def spec(name, bidder):
-    return bl.BidderSpec(
+def campaign(name, bidder):
+    return bl.Campaign(
         name,
         bidder,
-        bl.Campaign(budget=50, value=VALUE, cpa_target=CPA_TARGET),
+        budget=50,
+        event_value=VALUE,
+        cpa_target=CPA_TARGET,
         episode_reward=bl.rewards.cpa_score,
     )
 
 
 config = bl.SimConfig(
-    bidders=[
-        spec("truthful", bl.Truthful()),
-        spec("at_target", bl.Truthful(multiplier=CPA_TARGET / VALUE)),
-        bl.BidderSpec(
+    campaigns=[
+        campaign("truthful", bl.Linear()),
+        campaign("at_target", bl.Linear(multiplier=CPA_TARGET / VALUE)),
+        bl.Campaign(
             "strict",
-            bl.Truthful(multiplier=CPA_TARGET * SAFETY / VALUE),
-            bl.Campaign(budget=50, value=VALUE, cpa_target=CPA_TARGET),
+            bl.Linear(multiplier=CPA_TARGET * SAFETY / VALUE),
+            budget=50,
+            event_value=VALUE,
+            cpa_target=CPA_TARGET,
             episode_reward=strict_cpa_score,
             reward_params={"safety": SAFETY},
         ),
-        bl.BidderSpec("big", bl.Truthful(), bl.Campaign(budget=50, value=VALUE)),
+        bl.Campaign("big", bl.Linear(), budget=50, event_value=VALUE),
     ],
     auction=bl.SecondPrice(reserve=0.01),
     episodes=10,
@@ -48,7 +54,7 @@ config = bl.SimConfig(
 
 
 def mean(results, bidder, column):
-    values = [float(row[column]) for row in results.rows if row["bidder"] == bidder]
+    values = [float(row[column]) for row in results.rows if row["campaign"] == bidder]
     return sum(values) / len(values)
 
 

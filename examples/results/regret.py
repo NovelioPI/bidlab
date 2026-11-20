@@ -12,12 +12,10 @@ import bidlab as bl
 TOLERANCE = 1e-9
 
 config = bl.SimConfig(
-    bidders=[
-        bl.BidderSpec("truthful", bl.Truthful(), bl.Campaign(budget=1e9, value=5)),
-        bl.BidderSpec(
-            "shaded", bl.Truthful(multiplier=0.5), bl.Campaign(budget=1e9, value=5)
-        ),
-        bl.BidderSpec("other", bl.Truthful(), bl.Campaign(budget=1e9, value=5)),
+    campaigns=[
+        bl.Campaign("truthful", bl.Linear(), budget=1e9, event_value=5),
+        bl.Campaign("shaded", bl.Linear(multiplier=0.5), budget=1e9, event_value=5),
+        bl.Campaign("other", bl.Linear(), budget=1e9, event_value=5),
     ],
     auction=bl.SecondPrice(),
     episodes=3,
@@ -26,19 +24,23 @@ config = bl.SimConfig(
 
 if __name__ == "__main__":
     log = bl.run(config)
-    print(f"config: {len(log.config.bidders)} bidders, {log.config.episodes} episodes")
-    print(f"bids and values per bidder: {log.bids.shape}, {log.values.shape}")
+    print(
+        f"config: {len(log.config.campaigns)} campaigns, {log.config.episodes} episodes"
+    )
+    print(
+        f"bids and true values per campaign: {log.bids.shape}, {log.true_values.shape}"
+    )
     print(f"winner, price, converted per step: {log.winner.shape}")
     print(f"rewards: {log.rewards.shape}, episode rewards: {log.episode_rewards.shape}")
-    print(f"first segments: {log.segment[0, :3]}, logs: {dict(log.logs)}")
+    print(f"first segments: {log.segment[0, :3]}, logged: {dict(log.logged)}")
     print(f"auctions with no winner: {(log.winner == -1).sum()}")
     print(f"price paid: {log.price[log.converted].mean():.3f} on converted steps")
-    bidder = bl.bidder_metrics(log)[0]
+    row = bl.campaign_metrics(log)[0]
     print(
-        f"{bidder.bidder}, episode 0: surplus {bidder.surplus:.2f}, regret {bidder.regret:.2g}"
+        f"{row.campaign}, episode 0: surplus {row.surplus:.2f}, regret {row.regret:.2g}"
     )
     segment = bl.segment_metrics(log)[0]
-    print(f"{segment.bidder} in segment {segment.segment!r}: {segment.wins} wins")
+    print(f"{segment.campaign} in segment {segment.segment!r}: {segment.wins} wins")
     platform = bl.platform_metrics(log)[0]
     print(f"platform: revenue {platform.revenue:.1f}, welfare {platform.welfare:.1f}")
 

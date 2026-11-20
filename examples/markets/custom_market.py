@@ -18,25 +18,27 @@ class DayAndNight(bl.markets.Market):
     def segment_names(self):
         return ("day", "night")
 
-    def draws(self, bidders, rng):
+    def draws(self, count, rng):
         step = 0
         while True:
             name = "day" if step % STEPS_PER_DAY < DAY_STEPS else "night"
             rate = 0.08 if name == "day" else 0.03
-            probabilities = rate * rng.uniform(0.5, 1.5, size=bidders)
+            probabilities = rate * rng.uniform(0.5, 1.5, size=count)
             yield bl.markets.MarketDraw({"segment": name}, probabilities, name)
             step += 1
 
 
 config = bl.SimConfig(
-    bidders=[
-        bl.BidderSpec("truthful", bl.Truthful(), bl.Campaign(budget=40, value=5)),
-        bl.BidderSpec(
+    campaigns=[
+        bl.Campaign("truthful", bl.Linear(), budget=40, event_value=5),
+        bl.Campaign(
             "night_only",
-            bl.Truthful(),
-            bl.Campaign(budget=40, value=5, segments=("night",)),
+            bl.Linear(),
+            budget=40,
+            event_value=5,
+            segments=("night",),
         ),
-        bl.BidderSpec("bandit", bl.UcbMultiplier(), bl.Campaign(budget=40, value=5)),
+        bl.Campaign("bandit", bl.UcbMultiplier(), budget=40, event_value=5),
     ],
     market=DayAndNight(),
     episodes=10,
@@ -45,12 +47,12 @@ config = bl.SimConfig(
 
 if __name__ == "__main__":
     results = bl.run_many(config, seeds=range(5))
-    assert results.segments is not None
-    print(results.segments.summary())
+    assert results.segment_rows is not None
+    print(results.segment_rows.summary())
     spend = {"day": 0.0, "night": 0.0}
     wins = {"day": 0.0, "night": 0.0}
-    for row in results.segments.rows:
-        if row["bidder"] == "truthful":
+    for row in results.segment_rows.rows:
+        if row["campaign"] == "truthful":
             segment = str(row["segment"])
             spend[segment] += float(row["spend"])
             wins[segment] += float(row["wins"])
