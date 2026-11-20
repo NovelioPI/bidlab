@@ -9,9 +9,7 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.markets import Segment, Segmented
 from bidlab.runner import run_many
 from bidlab.simulator import run
-from bidlab.types import BidResult, Brief, EpisodeReport
-
-CAMPAIGN = Brief(budget=1e6, event_value=5.0)
+from bidlab.types import BidResult, EpisodeReport
 
 
 class Pass(Bidder):
@@ -130,8 +128,8 @@ class Log(Bidder):
         self.name = name
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
-        Log.calls.append((self.name, "start", brief))
+    def on_episode_start(self, campaign: Campaign) -> None:
+        Log.calls.append((self.name, "start", campaign))
 
     @override
     def forward(self, value: float, **inputs: object) -> float:
@@ -170,7 +168,7 @@ class QuietParent(Bidder):
         self.rng = rng
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
+    def on_episode_start(self, campaign: Campaign) -> None:
         pass
 
     @override
@@ -346,7 +344,7 @@ class Grows(Bidder):
             self.late = Pass()
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
+    def on_episode_start(self, campaign: Campaign) -> None:
         self.grow("on_episode_start")
 
     @override
@@ -439,6 +437,28 @@ def test_user_tree_unchanged():
     )
     assert mixer.forwards == 0
     assert not any(hasattr(node, "rng") for _, node in mixer.named_bidders())
+
+
+class ResetsThroughCampaign(Bidder):
+    """Resets a counter through ``campaign.bidder``, the trap a user might write."""
+
+    def __init__(self):
+        self.wins = 99
+
+    @override
+    def on_episode_start(self, campaign: Campaign) -> None:
+        assert isinstance(campaign.bidder, ResetsThroughCampaign)
+        campaign.bidder.wins = 0
+
+    @override
+    def forward(self, value: float) -> float:
+        return value
+
+
+def test_user_bidder_unchanged_through_campaign():
+    bidder = ResetsThroughCampaign()
+    run(config(Campaign("r", bidder, budget=1e6, event_value=5.0)))
+    assert bidder.wins == 99
 
 
 def test_tree_hook_order():

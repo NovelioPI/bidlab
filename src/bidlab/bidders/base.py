@@ -5,11 +5,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from numbers import Real
-from typing import Any, Protocol, overload
+from typing import TYPE_CHECKING, Any, Protocol, overload
 
 import numpy as np
 
-from bidlab.types import BidResult, Brief, EpisodeReport
+from bidlab.types import BidResult, EpisodeReport
+
+if TYPE_CHECKING:
+    from bidlab.config import Campaign
 
 _LOGGER = "_bidlab_logger"
 _FORWARD_PLAN = "_bidlab_forward_plan"
@@ -98,13 +101,15 @@ class Bidder(ABC):
         """
         self.rng = rng
 
-    def on_episode_start(self, brief: Brief) -> None:
+    def on_episode_start(self, campaign: "Campaign") -> None:
         """Reset per-episode state before the first auction of an episode.
 
         Parameters
         ----------
-        brief : Brief
-            The bidder's fixed facts, with the schedule filled in.
+        campaign : Campaign
+            The campaign this bidder runs for: its budget, value, CPA target
+            and segments. Its ``bidder`` is the running copy, the top bidder
+            of this tree, not the object the user built.
         """
 
     # Each bidder declares its own inputs, so the base accepts any signature.

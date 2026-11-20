@@ -7,9 +7,6 @@ from bidlab.bidders import Bidder, Linear, PidPacing, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.runner import run_many
 from bidlab.simulator import run
-from bidlab.types import Brief
-
-CAMPAIGN = Brief(budget=1e6, event_value=5.0)
 
 
 class Add(Bidder):
@@ -32,8 +29,8 @@ class Calls(Bidder):
     def __init__(self, name):
         self.name = name
 
-    def on_episode_start(self, brief):
-        Calls.calls.append((self.name, "start", brief))
+    def on_episode_start(self, campaign):
+        Calls.calls.append((self.name, "start", campaign))
 
     def forward(self, value, **inputs):
         Calls.calls.append((self.name, "forward", inputs))

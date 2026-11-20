@@ -21,7 +21,6 @@ from bidlab.types import (
     SECONDS_PER_HOUR,
     BidRequest,
     BidResult,
-    Brief,
     EpisodeReport,
 )
 
@@ -88,25 +87,24 @@ class RunLog:
 
 @dataclass(frozen=True)
 class _Participant:
-    name: str
-    bidder: Bidder
+    # Its bidder is the running copy, so a bidder that reaches it finds itself.
+    campaign: Campaign
     nodes: tuple[Bidder, ...]
-    brief: Brief
     step_reward: StepReward
     episode_reward: EpisodeReward | None
     reward_params: dict[str, float]
 
     def takes_part_in(self, segment: str) -> bool:
-        segments = self.brief.segments
+        segments = self.campaign.segments
         return segments is None or segment in segments
 
     def check_tree(self) -> None:
         # Risk: if a late child were bound here, then its stream would depend on timing.
         known = {id(node) for node in self.nodes}
-        for path, node in self.bidder.named_bidders():
+        for path, node in self.campaign.bidder.named_bidders():
             if id(node) not in known:
                 raise ValueError(
-                    f"campaign {self.name!r}: child bidder at {path!r} appeared after "
+                    f"campaign {self.campaign.name!r}: child bidder at {path!r} appeared after "
                     "the run started; create child bidders in __init__ and reset "
                     "their state in on_episode_start"
                 )
@@ -211,16 +209,13 @@ class _Simulation:
         # Risk: if this child is spawned after the bidder is bound, then a stack's
         # inner bidders take it and the platform-estimate stream shifts.
         self.estimate_seeds.append(seed.spawn(1)[0])
-        brief = campaign.brief(self.config.horizon_hours, self.config.start_hour)
         bidder = campaign.build(np.random.default_rng(seed))
         nodes = tuple(bidder.named_bidders())
         for path, node in nodes:
             attach_logger(node, self.book.logger(campaign.name, path))
         return _Participant(
-            name=campaign.name,
-            bidder=bidder,
+            campaign=replace(campaign, bidder=bidder),
             nodes=tuple(node for _, node in nodes),
-            brief=brief,
             step_reward=campaign.step_reward,
             episode_reward=campaign.episode_reward,
             reward_params=campaign.merged_reward_params(),
@@ -246,11 +241,11 @@ class _Simulation:
             array.flags.writeable = False
 
     def _run_episode(self, episode: int) -> None:
-        budget_left = np.array([p.brief.budget for p in self.participants])
+        budget_left = np.array([p.campaign.budget for p in self.participants])
         self.book.at_episode(episode)
         for participant in self.participants:
             for node in participant.nodes:
-                node.on_episode_start(participant.brief)
+                node.on_episode_start(participant.campaign)
             participant.check_tree()
 
         for step in range(self.config.steps):
@@ -289,7 +284,7 @@ class _Simulation:
                 "value": request.value,
                 "budget_left": float(budget_left[i]),
             }
-            bids[i] = call_forward(self.participants[i].bidder, inputs)
+            bids[i] = call_forward(self.participants[i].campaign.bidder, inputs)
         # Risk: if bids are not capped at the remaining budget, then spend can exceed it.
 
         bids = np.clip(
@@ -315,7 +310,7 @@ class _Simulation:
                 won=won,
                 price=price if won else 0.0,
                 converted=converted and won,
-                realized_value=participant.brief.event_value
+                realized_value=participant.campaign.event_value
                 if converted and won
                 else 0.0,
             )
@@ -390,11 +385,11 @@ class _Simulation:
             won = winner == i
             conversions = int(np.sum(self.log.converted[episode] & won))
             report = EpisodeReport(
-                budget=participant.brief.budget,
+                budget=participant.campaign.budget,
                 spend=float(np.sum(self.log.price[episode][won])),
                 wins=int(np.sum(won)),
                 conversions=conversions,
-                realized_value=conversions * participant.brief.event_value,
+                realized_value=conversions * participant.campaign.event_value,
             )
             episode_reward = None
             if participant.episode_reward is not None:
@@ -406,7 +401,7 @@ class _Simulation:
             for node in participant.nodes:
                 node.on_episode_end(report, episode_reward)
             participant.check_tree()
-            reports[participant.name] = report
+            reports[participant.campaign.name] = report
 
         read_only = MappingProxyType(reports)
         for callback in self.callbacks:

@@ -10,7 +10,7 @@ from bidlab.bidders import Bidder
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import Market, MarketDraw, Segment, Segmented
 from bidlab.simulator import BUILT_IN_INPUTS, run
-from bidlab.types import BidRequest, BidResult, Brief, EpisodeReport
+from bidlab.types import BidRequest, BidResult, EpisodeReport
 
 
 class Spy(Bidder):
@@ -22,7 +22,7 @@ class Spy(Bidder):
         self.multiplier = multiplier
         self.results: list[BidResult] = []
         self.requests: list[dict[str, object]] = []
-        self.starts: list[Brief] = []
+        self.starts: list[Campaign] = []
         self.ends: list[tuple[EpisodeReport, float | None]] = []
 
     def bind(self, rng):
@@ -30,8 +30,8 @@ class Spy(Bidder):
         super().bind(rng)
         Spy.instances.append(self)
 
-    def on_episode_start(self, brief):
-        self.starts.append(brief)
+    def on_episode_start(self, campaign):
+        self.starts.append(campaign)
 
     def forward(self, value, **inputs):
         self.requests.append({"value": value, **inputs})
@@ -119,11 +119,12 @@ def test_request_fields():
     ]
 
 
-def test_episode_start_gets_campaign_with_schedule():
-    a = campaign("a", cpa_target=2.0)
-    _, spies = run_spies(config(a, campaign("b"), horizon_hours=12, start_hour=6))
-    expected = a.brief(horizon_hours=12.0, start_hour=6.0)
-    assert spies[0].starts == [expected] * 3
+def test_episode_start_gets_campaign_with_running_bidder():
+    a = campaign("a", cpa_target=2.0, segments=("all",))
+    _, spies = run_spies(config(a, campaign("b")))
+    assert spies[0].starts == [dataclasses.replace(a, bidder=spies[0])] * 3
+    assert all(start.bidder is spies[0] for start in spies[0].starts)
+    assert a.bidder is not spies[0]
 
 
 def test_value_input_is_true_value_without_noise():

@@ -131,7 +131,6 @@ PUBLIC_NAMES = {
     "SimConfig",
     "Stack",
     "Campaign",
-    "Brief",
     "markets",
     "FirstPrice",
     "SecondPrice",
@@ -229,6 +228,12 @@ def test_removed_interfaces():
     assert "yaml" not in dependencies
     assert "scripts" not in pyproject["project"]
     assert pyproject["project"]["name"] == "bidlab"
+
+
+@pytest.mark.parametrize("name", ["Brief"])
+def test_removed_names(name):
+    assert not hasattr(importlib.import_module("bidlab"), name)
+    assert not hasattr(importlib.import_module("bidlab.types"), name)
 
 
 def relative_links(markdown: str) -> list[str]:

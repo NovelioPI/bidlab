@@ -11,7 +11,7 @@ from bidlab.auctions import Auction, FirstPrice, SecondPrice
 from bidlab.bidders.base import Bidder, bind_tree
 from bidlab.markets import LogisticContext, Market
 from bidlab.rewards import EpisodeReward, StepReward
-from bidlab.types import HOURS_PER_DAY, Brief
+from bidlab.types import HOURS_PER_DAY
 
 
 @dataclass(frozen=True)
@@ -90,10 +90,20 @@ class Campaign:
                 f"got {type(bidder).__name__}"
             )
 
-        # Brief owns the checks, so a campaign and its brief cannot disagree.
-        brief = self.brief()
-        for field_name in ("budget", "event_value", "cpa_target", "segments"):
-            object.__setattr__(self, field_name, getattr(brief, field_name))
+        # An int budget would make integer numpy arrays that reject float prices.
+        for field_name in ("budget", "event_value", "cpa_target"):
+            number = getattr(self, field_name)
+            if number is None:
+                continue
+
+            if number <= 0:
+                raise ValueError(
+                    f"campaign {self.name!r}: {field_name} must be > 0, got {number}"
+                )
+
+            object.__setattr__(self, field_name, float(number))
+
+        self._check_segments()
 
         if not callable(self.step_reward):
             raise TypeError(f"campaign {self.name!r}: step_reward must be callable")
@@ -103,30 +113,22 @@ class Campaign:
                 f"campaign {self.name!r}: episode_reward must be callable or None"
             )
 
-    def brief(
-        self, horizon_hours: float | None = None, start_hour: float | None = None
-    ) -> Brief:
-        """Return the facts the bidder gets in `Bidder.on_episode_start`.
+    def _check_segments(self) -> None:
+        if self.segments is None:
+            return
 
-        Parameters
-        ----------
-        horizon_hours, start_hour : float, optional
-            The schedule; the simulator passes `SimConfig`'s.
+        if isinstance(self.segments, str):
+            raise TypeError(
+                f"campaign {self.name!r}: segments must be a tuple of names, "
+                f"got the string {self.segments!r}"
+            )
 
-        Returns
-        -------
-        Brief
-            This campaign's budget, value, CPA target and segments, with the
-            schedule.
-        """
-        return Brief(
-            budget=self.budget,
-            event_value=self.event_value,
-            cpa_target=self.cpa_target,
-            segments=self.segments,
-            horizon_hours=horizon_hours,
-            start_hour=start_hour,
-        )
+        object.__setattr__(self, "segments", tuple(self.segments))
+        if not self.segments:
+            raise ValueError(
+                f"campaign {self.name!r}: segments must list at least one segment; "
+                "use None to bid everywhere"
+            )
 
     def build(self, rng: np.random.Generator) -> Bidder:
         """Return a fresh copy of the bidder for one run; the simulator calls this.

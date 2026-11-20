@@ -11,9 +11,7 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
-from bidlab.types import BidResult, Brief, EpisodeReport
-
-CAMPAIGN = Brief(budget=1e6, event_value=5.0)
+from bidlab.types import BidResult, EpisodeReport
 
 Action = Callable[[Bidder, int], None]
 
@@ -31,7 +29,7 @@ class Logs(Bidder):
             self.action(self, self.auction)
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
+    def on_episode_start(self, campaign: Campaign) -> None:
         self.auction = 0
         self.act("on_episode_start")
 
@@ -163,7 +161,7 @@ class EpisodeFirst(Bidder):
     """Logs one name per episode, then per step."""
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
+    def on_episode_start(self, campaign: Campaign) -> None:
         self.log("x", 2.0)
 
     @override
@@ -445,7 +443,7 @@ class Sometimes(Bidder):
     """Logs only in runs whose first draw from its stream is below one half."""
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
+    def on_episode_start(self, campaign: Campaign) -> None:
         self.logging = self.rng.random() < 0.5
 
     @override

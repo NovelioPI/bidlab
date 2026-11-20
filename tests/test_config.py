@@ -11,7 +11,7 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.markets import LogisticContext, Segment, Segmented
 from bidlab.rewards import cpa_score_of
 from bidlab.simulator import run
-from bidlab.types import BidRequest, BidResult, Brief
+from bidlab.types import BidRequest, BidResult
 
 
 class Recorder(Bidder):
@@ -176,10 +176,8 @@ def test_campaign_holds_bidder_and_defaults():
     bidder = Recorder()
     campaign = Campaign("a", bidder, budget=10, event_value=5, segments=["news"])
     assert campaign.bidder is bidder
-    assert campaign.brief() == Brief(10, 5, segments=("news",))
-    assert campaign.brief(12, 6) == Brief(
-        10, 5, segments=("news",), horizon_hours=12, start_hour=6
-    )
+    assert campaign.segments == ("news",)
+    assert campaign.cpa_target is None
     assert campaign.step_reward is rewards.surplus
     assert campaign.episode_reward is None
     assert campaign.reward_params == {}
@@ -299,18 +297,7 @@ def test_unknown_segment_rejected():
 
 
 def test_segments_list_stored_as_tuple():
-    assert Brief(1, 1, segments=["news"]).segments == ("news",)
     assert Campaign("a", Linear(), 1, 1, segments=["news"]).segments == ("news",)
-
-
-def test_brief_stores_floats_and_defaults():
-    brief = Brief(budget=10, event_value=5)
-    assert (brief.budget, brief.event_value) == (10.0, 5.0)
-    assert isinstance(brief.budget, float) and isinstance(brief.event_value, float)
-    assert brief.cpa_target is None
-    assert brief.segments is None
-    assert brief.horizon_hours is None
-    assert brief.start_hour is None
 
 
 @pytest.mark.parametrize(
@@ -321,42 +308,15 @@ def test_brief_stores_floats_and_defaults():
         ({"event_value": 0}, "event_value"),
         ({"cpa_target": 0}, "cpa_target"),
         ({"cpa_target": -2}, "cpa_target"),
-        ({"horizon_hours": 0}, "horizon_hours"),
         ({"segments": ()}, "segments"),
-        ({"start_hour": -0.5}, "start_hour"),
-        ({"start_hour": 24}, "start_hour"),
     ],
 )
-def test_brief_and_campaign_reject_bad_values(kwargs, field_name):
+def test_campaign_rejects_bad_values(kwargs, field_name):
     arguments = {"budget": 10, "event_value": 5} | kwargs
-    with pytest.raises(ValueError, match=field_name):
-        Brief(**arguments)
-    if field_name in ("horizon_hours", "start_hour"):
-        return
-    with pytest.raises(ValueError, match=field_name):
+    with pytest.raises(ValueError, match=f"campaign 'a': {field_name}"):
         Campaign("a", Linear(), **arguments)
 
 
-def test_brief_and_campaign_reject_string_segments():
-    with pytest.raises(TypeError, match="segments"):
-        Brief(10, 5, segments="news")
-    with pytest.raises(TypeError, match="segments"):
+def test_campaign_rejects_string_segments():
+    with pytest.raises(TypeError, match="campaign 'a': segments"):
         Campaign("a", Linear(), 10, 5, segments="news")
-
-
-def test_time_left():
-    brief = Brief(10, 5, horizon_hours=24, start_hour=0)
-    assert brief.time_left(1000.0) == 86400 - 1000.0
-
-
-def test_hour_of_day_wraps():
-    brief = Brief(10, 5, horizon_hours=24, start_hour=22)
-    assert brief.hour_of_day(3 * 3600) == 1.0
-
-
-@pytest.mark.parametrize("schedule", [{}, {"horizon_hours": 24}, {"start_hour": 0}])
-def test_helpers_need_schedule(schedule):
-    brief = Brief(10, 5, **schedule)
-    for helper in (brief.time_left, brief.hour_of_day):
-        with pytest.raises(ValueError, match="simulator sets"):
-            helper(0.0)

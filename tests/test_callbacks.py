@@ -10,9 +10,7 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
-from bidlab.types import Brief, EpisodeReport
-
-CAMPAIGN = Brief(budget=1e6, event_value=5.0)
+from bidlab.types import EpisodeReport
 
 
 class Record(Callback):

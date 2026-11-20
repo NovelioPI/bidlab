@@ -1,11 +1,14 @@
 """Bandit bidders that learn a bid multiplier across episodes."""
 
-from typing import override
+from typing import TYPE_CHECKING, override
 
 import numpy as np
 
 from bidlab.bidders.base import Bidder
-from bidlab.types import BidResult, Brief, EpisodeReport
+from bidlab.types import BidResult, EpisodeReport
+
+if TYPE_CHECKING:
+    from bidlab.config import Campaign
 
 # np.arange excludes its end, so a small margin keeps max_multiplier in the grid.
 ARM_GRID_END_MARGIN = 1e-9
@@ -75,7 +78,7 @@ class UcbMultiplier(Bidder):
         self.episode_step_rewards = 0.0
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
+    def on_episode_start(self, campaign: "Campaign") -> None:
         self.arm = self._choose_arm()
         self.episode_step_rewards = 0.0
         if self.log_state:

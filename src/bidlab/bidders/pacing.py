@@ -1,11 +1,14 @@
 """Budget pacing bidders that steer spend toward a plan."""
 
-from typing import override
+from typing import TYPE_CHECKING, override
 
 import numpy as np
 
 from bidlab.bidders.base import Bidder
-from bidlab.types import BidResult, Brief
+from bidlab.types import BidResult
+
+if TYPE_CHECKING:
+    from bidlab.config import Campaign
 
 
 class PidPacing(Bidder):
@@ -80,9 +83,8 @@ class PidPacing(Bidder):
         self.log_state = log_state
 
     @override
-    def on_episode_start(self, brief: Brief) -> None:
-        self.budget = brief.budget
-        self.horizon = brief.time_left(0.0)
+    def on_episode_start(self, campaign: "Campaign") -> None:
+        self.budget = campaign.budget
         self.updates = 0
         self.spent = 0.0
         self.integral = 0.0
@@ -90,7 +92,9 @@ class PidPacing(Bidder):
         self.multiplier = self.initial_multiplier
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float, horizon: float) -> float:
+        # update needs the horizon, and only forward gets the inputs.
+        self.horizon = horizon
         if self.log_state:
             self.log("multiplier", self.multiplier)
 
