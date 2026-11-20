@@ -11,19 +11,20 @@ HOURS_PER_DAY = 24.0
 
 
 @dataclass(frozen=True)
-class Campaign:
-    """An advertiser's fixed facts, given to its bidder once per episode.
+class Brief:
+    """A campaign's facts that its bidder sees, given once per episode.
 
-    The simulator fills ``horizon_hours`` and ``start_hour`` from `SimConfig`
-    before it passes the campaign to `Bidder.on_episode_start`.
+    The simulator builds it with `Campaign.brief`, with ``horizon_hours`` and
+    ``start_hour`` from `SimConfig`, and passes it to
+    `Bidder.on_episode_start`. Build one by hand only to unit-test a bidder.
 
     Parameters
     ----------
     budget : float
         Budget per episode. Must be > 0.
-    value : float
+    event_value : float
         What one event is worth to the advertiser. The only event today is a
-        conversion. Must be > 0. Not to be confused with `Observation.value`,
+        conversion. Must be > 0. Not to be confused with `BidRequest.value`,
         the value of one impression.
     cpa_target : float, optional
         Highest acceptable cost per conversion. Reward functions get it as
@@ -47,13 +48,13 @@ class Campaign:
     Examples
     --------
     >>> import bidlab as bl
-    >>> campaign = bl.Campaign(budget=15, value=5, cpa_target=3)
-    >>> campaign.budget, campaign.horizon_hours
-    (15.0, None)
+    >>> brief = bl.Brief(budget=15, event_value=5, horizon_hours=24, start_hour=0)
+    >>> brief.budget, brief.time_left(0.0)
+    (15.0, 86400.0)
     """
 
     budget: float
-    value: float
+    event_value: float
     cpa_target: float | None = None
     segments: Sequence[str] | None = None
     horizon_hours: float | None = None
@@ -61,7 +62,7 @@ class Campaign:
 
     def __post_init__(self) -> None:
         # An int budget would make integer numpy arrays that reject float prices.
-        for field_name in ("budget", "value", "cpa_target", "horizon_hours"):
+        for field_name in ("budget", "event_value", "cpa_target", "horizon_hours"):
             number = getattr(self, field_name)
             if number is None:
                 continue
@@ -102,7 +103,7 @@ class Campaign:
         Parameters
         ----------
         time : float
-            Seconds since the episode start, as in `Observation.time`.
+            Seconds since the episode start, as in `BidRequest.time`.
 
         Raises
         ------
@@ -112,7 +113,7 @@ class Campaign:
         Examples
         --------
         >>> import bidlab as bl
-        >>> bl.Campaign(10, 5, horizon_hours=24, start_hour=0).time_left(3600.0)
+        >>> bl.Brief(10, 5, horizon_hours=24, start_hour=0).time_left(3600.0)
         82800.0
         """
         horizon_hours, _ = self._schedule()
@@ -124,7 +125,7 @@ class Campaign:
         Parameters
         ----------
         time : float
-            Seconds since the episode start, as in `Observation.time`.
+            Seconds since the episode start, as in `BidRequest.time`.
 
         Raises
         ------
@@ -134,7 +135,7 @@ class Campaign:
         Examples
         --------
         >>> import bidlab as bl
-        >>> bl.Campaign(10, 5, horizon_hours=24, start_hour=22).hour_of_day(3 * 3600.0)
+        >>> bl.Brief(10, 5, horizon_hours=24, start_hour=22).hour_of_day(3 * 3600.0)
         1.0
         """
         _, start_hour = self._schedule()
@@ -144,14 +145,14 @@ class Campaign:
         if self.horizon_hours is None or self.start_hour is None:
             raise ValueError(
                 "the simulator sets horizon_hours and start_hour; call this on "
-                "the campaign passed to on_episode_start"
+                "the brief passed to on_episode_start"
             )
 
         return self.horizon_hours, self.start_hour
 
 
 @dataclass(frozen=True)
-class Observation:
+class BidRequest:
     """What one bidder sees before it bids on one impression.
 
     Parameters
@@ -160,10 +161,10 @@ class Observation:
         Seconds since the episode start. Auctions are spaced evenly over the
         horizon, so the first is at 0.
     value : float
-        The platform's value of this impression: `Campaign.value` times its
+        The platform's value of this impression: `Campaign.event_value` times its
         estimate of the conversion probability. The estimate is exact unless
         `SimConfig.estimate_noise` is set. A bidder with its own model may
-        ignore it. Not to be confused with `Campaign.value`, the value of one
+        ignore it. Not to be confused with `Campaign.event_value`, the value of one
         event.
     features : Mapping[str, str | float], optional
         Public features of the impression, the same for every bidder.
@@ -175,11 +176,11 @@ class Observation:
 
     Examples
     --------
-    Build an observation by hand to unit-test a bidder:
+    Build a request by hand to unit-test a bidder:
 
     >>> import bidlab as bl
-    >>> observation = bl.Observation(time=0.0, value=0.5)
-    >>> bl.Truthful(multiplier=0.8).forward(observation.value, observation)
+    >>> request = bl.BidRequest(time=0.0, value=0.5)
+    >>> bl.Linear(multiplier=0.8).forward(request.value, request)
     0.4
     """
 
@@ -191,7 +192,7 @@ class Observation:
 
 
 @dataclass(frozen=True)
-class Feedback:
+class BidResult:
     """What one bidder learns after an auction it took part in.
 
     A loser never sees the winning price.
@@ -199,7 +200,7 @@ class Feedback:
     Parameters
     ----------
     time : float
-        `Observation.time` of the auction this feedback answers.
+        `BidRequest.time` of the auction this result answers.
     bid : float
         The bid the auction used: NaN and infinity become 0, and the bid is
         capped at the budget left.
@@ -209,11 +210,11 @@ class Feedback:
         Price this bidder paid; 0 when it lost.
     converted : bool
         True only when this bidder won and the impression converted.
-    value : float, optional
-        Realized value of this auction: `Campaign.value` when converted,
+    realized_value : float, optional
+        Realized value of this auction: `Campaign.event_value` when converted,
         else 0.
     reward : float, optional
-        This step's reward from the bidder's ``reward`` function.
+        This step's reward from the campaign's ``step_reward`` function.
 
     See Also
     --------
@@ -222,11 +223,11 @@ class Feedback:
     Examples
     --------
     >>> import bidlab as bl
-    >>> observation = bl.Observation(time=0.0, value=0.5)
-    >>> feedback = bl.Feedback(
-    ...     time=0.0, bid=0.6, won=True, price=0.5, converted=True, value=5.0
+    >>> request = bl.BidRequest(time=0.0, value=0.5)
+    >>> result = bl.BidResult(
+    ...     time=0.0, bid=0.6, won=True, price=0.5, converted=True, realized_value=5.0
     ... )
-    >>> bl.rewards.surplus(observation, feedback, {})
+    >>> bl.rewards.surplus(request, result, {})
     4.5
     """
 
@@ -235,12 +236,12 @@ class Feedback:
     won: bool
     price: float
     converted: bool
-    value: float = 0.0
+    realized_value: float = 0.0
     reward: float = 0.0
 
 
 @dataclass(frozen=True)
-class EpisodeStats:
+class EpisodeReport:
     """One bidder's totals for one episode.
 
     Parameters
@@ -253,8 +254,8 @@ class EpisodeStats:
         Number of impressions the bidder won.
     conversions : int
         Number of won impressions that converted.
-    value : float
-        ``conversions`` times `Campaign.value`.
+    realized_value : float
+        ``conversions`` times `Campaign.event_value`.
 
     See Also
     --------
@@ -263,8 +264,8 @@ class EpisodeStats:
     Examples
     --------
     >>> import bidlab as bl
-    >>> stats = bl.EpisodeStats(budget=20.0, spend=6.0, wins=4, conversions=2, value=10.0)
-    >>> bl.rewards.total_surplus(stats, {})
+    >>> report = bl.EpisodeReport(budget=20.0, spend=6.0, wins=4, conversions=2, realized_value=10.0)
+    >>> bl.rewards.total_surplus(report, {})
     4.0
     """
 
@@ -272,4 +273,4 @@ class EpisodeStats:
     spend: float
     wins: int
     conversions: int
-    value: float
+    realized_value: float

@@ -1,6 +1,6 @@
 """Does noise in the platform's value cost a truthful bidder surplus?
 
-`observation.value` is the platform's estimate of the value. With
+`request.value` is the platform's estimate of the value. With
 `estimate_noise` above 0 the estimate is wrong, so a truthful bidder overbids on
 some impressions and underbids on others. Metrics always use the true value.
 """
@@ -12,9 +12,9 @@ import bidlab as bl
 NOISE = 1.0
 
 config = bl.SimConfig(
-    bidders=[
-        bl.BidderSpec("truthful", bl.Truthful(), bl.Campaign(budget=1e9, value=5)),
-        bl.BidderSpec("other", bl.Truthful(), bl.Campaign(budget=1e9, value=5)),
+    campaigns=[
+        bl.Campaign("truthful", bl.Linear(), budget=1e9, event_value=5),
+        bl.Campaign("other", bl.Linear(), budget=1e9, event_value=5),
     ],
     auction=bl.SecondPrice(),
     episodes=5,
@@ -23,7 +23,7 @@ config = bl.SimConfig(
 
 
 def mean(results, bidder, column):
-    values = [float(row[column]) for row in results.rows if row["bidder"] == bidder]
+    values = [float(row[column]) for row in results.rows if row["campaign"] == bidder]
     return sum(values) / len(values)
 
 

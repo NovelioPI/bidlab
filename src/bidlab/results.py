@@ -26,7 +26,7 @@ CONFIDENCE = 0.95
 
 @dataclass(frozen=True)
 class Results:
-    """Rows from `run_many`: one per seed and bidder, averaged over episodes.
+    """Rows from `run_many`: one per seed and campaign, averaged over episodes.
 
     Compare two tables with `equals`, not ``==``: some metrics are NaN by
     design.
@@ -37,10 +37,10 @@ class Results:
         Column names, in order.
     rows : tuple[Mapping[str, str | int | float], ...]
         Read-only rows, ordered by seed, then bidder.
-    segments : Results or None
+    segment_rows : Results or None
         One row per seed, bidder and market segment; None inside that table.
-    logs : Mapping[str, Mapping[str, numpy.ndarray]]
-        Values bidders saved with `Bidder.log`, as in `RunLog.logs` with a
+    logged : Mapping[str, Mapping[str, numpy.ndarray]]
+        Values bidders saved with `Bidder.log`, as in `RunLog.logged` with a
         leading seeds axis, in row order. NaN for a seed that never logged
         the name. Read-only.
 
@@ -48,32 +48,32 @@ class Results:
     --------
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
-    ...     bidders=[bl.BidderSpec("t", bl.Truthful(), bl.Campaign(budget=10, value=5))],
+    ...     campaigns=[bl.Campaign("t", bl.Linear(), budget=10, event_value=5)],
     ...     episodes=2,
     ...     steps=50,
     ... )
     >>> results = bl.run_many(config, seeds=range(3))
     >>> len(results), results.columns[:3]
-    (3, ('seed', 'bidder', 'spend'))
+    (3, ('seed', 'campaign', 'spend'))
     >>> results.equals(bl.run_many(config, seeds=range(3)))
     True
     """
 
     columns: tuple[str, ...]
     rows: tuple[ResultRow, ...]
-    segments: "Results | None" = None
-    logs: Logs = field(default_factory=lambda: MappingProxyType({}))
+    segment_rows: "Results | None" = None
+    logged: Logs = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:
         read_only = tuple(MappingProxyType(dict(row)) for row in self.rows)
         object.__setattr__(self, "rows", read_only)
-        for arrays in self.logs.values():
+        for arrays in self.logged.values():
             for array in arrays.values():
                 array.flags.writeable = False
         logs = {
-            name: MappingProxyType(dict(arrays)) for name, arrays in self.logs.items()
+            name: MappingProxyType(dict(arrays)) for name, arrays in self.logged.items()
         }
-        object.__setattr__(self, "logs", MappingProxyType(logs))
+        object.__setattr__(self, "logged", MappingProxyType(logs))
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -83,7 +83,7 @@ class Results:
         if self.columns != other.columns or len(self.rows) != len(other.rows):
             return False
 
-        if not _same_logs(self.logs, other.logs):
+        if not _same_logs(self.logged, other.logged):
             return False
 
         return all(
@@ -93,10 +93,10 @@ class Results:
         )
 
     def summary(self) -> str:
-        """Mean ± 95% Student-t half-width across seeds, per bidder (and segment)."""
-        keys, metrics = ("bidder",), SUMMARY_METRICS
+        """Mean ± 95% Student-t half-width across seeds, per campaign (and segment)."""
+        keys, metrics = ("campaign",), SUMMARY_METRICS
         if "segment" in self.columns:
-            keys, metrics = ("bidder", "segment"), SEGMENT_SUMMARY_METRICS
+            keys, metrics = ("campaign", "segment"), SEGMENT_SUMMARY_METRICS
         groups = list(
             dict.fromkeys(tuple(str(row[k]) for k in keys) for row in self.rows)
         )
@@ -169,8 +169,8 @@ def _same_logs(mine: Logs, theirs: Logs) -> bool:
     return all(
         mine[name].keys() == theirs[name].keys()
         and all(
-            np.array_equal(mine[name][spec], theirs[name][spec], equal_nan=True)
-            for spec in mine[name]
+            np.array_equal(mine[name][campaign], theirs[name][campaign], equal_nan=True)
+            for campaign in mine[name]
         )
         for name in mine
     )

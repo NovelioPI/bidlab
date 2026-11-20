@@ -19,10 +19,10 @@ uv sync --extra pandas       # adds Results.to_pandas()
 import bidlab as bl
 
 config = bl.SimConfig(
-    bidders=[
-        bl.BidderSpec("truthful", bl.Truthful(), bl.Campaign(budget=50, value=5)),
-        bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=15, value=5)),
-        bl.BidderSpec("bandit", bl.UcbMultiplier(), bl.Campaign(budget=50, value=5)),
+    campaigns=[
+        bl.Campaign("truthful", bl.Linear(), budget=50, event_value=5),
+        bl.Campaign("pid", bl.PidPacing(), budget=15, event_value=5),
+        bl.Campaign("bandit", bl.UcbMultiplier(), budget=50, event_value=5),
     ],
     auction=bl.SecondPrice(reserve=0.01),
     episodes=5,
@@ -38,31 +38,31 @@ print(results.summary())
 ## How one step works
 
 1. The market draws the impression's public features and each bidder's conversion probability pᵢ. The default market, `LogisticContext`, uses pᵢ = σ(x · φᵢ + βᵢ) for a random context x.
-2. Each bidder sees its own `Observation`. It holds the `time` in seconds since the episode start and the public `features`. Its `value` is the platform's value of the impression, w × pᵢ.
+2. Each bidder sees its own `BidRequest`. It holds the `time` in seconds since the episode start and the public `features`. Its `value` is the platform's value of the impression, w × pᵢ.
 3. Each bid is capped at the bidder's remaining budget. The bidder does not see that amount; it tracks its own spend.
 4. The auction picks a winner: `FirstPrice` or `SecondPrice`, with an optional reserve price.
 5. The winner converts with probability p of the winner.
-6. Each bidder gets its own `Feedback`: the auction's `time`, its bid, and whether it won. It also holds the price it paid, whether it converted, the realized `value`, and its reward. A loser never sees the winning price.
+6. Each bidder gets its own `BidResult`: the auction's `time`, its bid, and whether it won. It also holds the price it paid, whether it converted, its `realized_value`, and its reward. A loser never sees the winning price.
 
-`observation.value` is exact by default. [Simulation](docs/guides/simulation.md) covers the clock, noise in that value, and reproducibility.
+`request.value` is exact by default. [Simulation](docs/guides/simulation.md) covers the clock, noise in that value, and reproducibility.
 
 ## Write a bidder
 
-Subclass `bl.Bidder` and implement `forward(value, observation)`. Alone, a bidder gets `observation.value`, and its output is the bid.
+Subclass `bl.Bidder` and implement `forward(value, request)`. Alone, a bidder gets `request.value`, and its output is the bid.
 
 ```python
 class FlatBid(bl.Bidder):
     def __init__(self, amount):
         self.amount = amount
 
-    def forward(self, value, observation):
+    def forward(self, value, request):
         return self.amount
 
 
 flat = bl.SimConfig(
-    bidders=[
-        bl.BidderSpec("flat", FlatBid(0.2), bl.Campaign(budget=50, value=5)),
-        bl.BidderSpec("truthful", bl.Truthful(), bl.Campaign(budget=50, value=5)),
+    campaigns=[
+        bl.Campaign("flat", FlatBid(0.2), budget=50, event_value=5),
+        bl.Campaign("truthful", bl.Linear(), budget=50, event_value=5),
     ],
     episodes=2,
     steps=200,
@@ -70,7 +70,7 @@ flat = bl.SimConfig(
 print(bl.run_many(flat, seeds=range(2)).summary())
 ```
 
-[Bidders](docs/guides/bidders.md) covers the other hooks, learning from feedback, and stacking bidders with `bl.Stack`.
+[Bidders](docs/guides/bidders.md) covers the other hooks, learning from results, and stacking bidders with `bl.Stack`.
 
 ## Guides
 

@@ -12,11 +12,11 @@ A market draws each step's public features and each bidder's private conversion 
 | `bl.markets.Segmented(segments)` | A segment per step by its `share`; its `lift` is added to every bidder's logit |
 | `bl.markets.IndependentValues(distribution)` | Each pᵢ drawn on its own from a scipy frozen distribution, clipped to [0, 1] |
 
-`IndependentValues(scipy.stats.uniform(0, 1))` with `Campaign(value=1)` is the textbook independent private values setting.
+`IndependentValues(scipy.stats.uniform(0, 1))` with a campaign `event_value` of 1 is the textbook independent private values setting.
 
 ## Segments and targeting
 
-A segmented market puts the segment name in `observation.features["segment"]`. A campaign with `segments` bids only in those segments. Elsewhere its bidder is not called, and its logged bid is 0.
+A segmented market puts the segment name in `request.features["segment"]`. A campaign with `segments` bids only in those segments. Elsewhere its bidder is not called, and its logged bid is 0.
 
 ```python
 import bidlab as bl
@@ -28,12 +28,14 @@ market = bl.markets.Segmented(
     )
 )
 segmented = bl.SimConfig(
-    bidders=[
-        bl.BidderSpec("everywhere", bl.Truthful(), bl.Campaign(budget=50, value=5)),
-        bl.BidderSpec(
+    campaigns=[
+        bl.Campaign("everywhere", bl.Linear(), budget=50, event_value=5),
+        bl.Campaign(
             "sports_only",
-            bl.Truthful(),
-            bl.Campaign(budget=50, value=5, segments=("sports",)),
+            bl.Linear(),
+            budget=50,
+            event_value=5,
+            segments=("sports",),
         ),
     ],
     market=market,
@@ -41,10 +43,10 @@ segmented = bl.SimConfig(
     steps=200,
 )
 segment_results = bl.run_many(segmented, seeds=range(2))
-print(len(segment_results.segments))  # 8 rows: seeds × bidders × segments
+print(len(segment_results.segment_rows))  # 8 rows: seeds × bidders × segments
 ```
 
-`results.segments` is a second table with spend, wins, conversions and surplus per seed, bidder and segment. A market without segments reports one segment, `"all"`.
+`results.segment_rows` is a second table with spend, wins, conversions and surplus per seed, bidder and segment. A market without segments reports one segment, `"all"`.
 
 A targeted bidder sees only its segments' auctions. `PidPacing` plans spend by time, so it still spreads the budget over the whole horizon.
 
@@ -54,27 +56,27 @@ Subclass `bl.markets.Market`. Its `draws` generator yields one `MarketDraw` per 
 
 ```python
 class Daytime(bl.markets.Market):
-    def draws(self, bidders, rng):
+    def draws(self, count, rng):
         step = 0
         while True:
             hour = step % 24
             rate = 0.08 if 9 <= hour < 18 else 0.02
             yield bl.markets.MarketDraw(
-                {"hour": hour}, rng.uniform(0.5, 1.5, size=bidders) * rate
+                {"hour": hour}, rng.uniform(0.5, 1.5, size=count) * rate
             )
             step += 1
 
 
 daytime = bl.SimConfig(
-    bidders=[bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=15, value=5))],
+    campaigns=[bl.Campaign("pid", bl.PidPacing(), budget=15, event_value=5)],
     market=Daytime(),
     episodes=2,
     steps=96,
 )
-print(bl.run(daytime).values.shape)  # (2, 96, 1)
+print(bl.run(daytime).true_values.shape)  # (2, 96, 1)
 ```
 
-A custom market can define its own segments. Override the `segment_names` property, and pass `segment=` to each `MarketDraw`. Targeting and `results.segments` then work as they do for `Segmented`.
+A custom market can define its own segments. Override the `segment_names` property, and pass `segment=` to each `MarketDraw`. Targeting and `results.segment_rows` then work as they do for `Segmented`.
 
 ## Examples
 

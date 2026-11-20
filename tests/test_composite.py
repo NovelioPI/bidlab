@@ -4,21 +4,21 @@ from typing import Any, ClassVar, override
 import numpy as np
 import pytest
 
-from bidlab.bidders import Bidder, PidPacing, Stack, Truthful
-from bidlab.config import BidderSpec, SimConfig
+from bidlab.bidders import Bidder, Linear, PidPacing, Stack
+from bidlab.config import Campaign, SimConfig
 from bidlab.markets import Segment, Segmented
 from bidlab.runner import run_many
 from bidlab.simulator import run
-from bidlab.types import Campaign, EpisodeStats, Feedback, Observation
+from bidlab.types import BidRequest, BidResult, Brief, EpisodeReport
 
-CAMPAIGN = Campaign(budget=1e6, value=5.0)
+CAMPAIGN = Brief(budget=1e6, event_value=5.0)
 
 
 class Pass(Bidder):
     """Passes the value through."""
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         return value
 
 
@@ -29,7 +29,7 @@ class Holder(Bidder):
         self.held = held
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         return value
 
 
@@ -39,10 +39,10 @@ class Parent(Bidder):
     def __init__(self):
         self.shade = Pass()
         self.rate = 0.5
-        self.parts = [Truthful(), "x", PidPacing()]
+        self.parts = [Linear(), "x", PidPacing()]
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         return value
 
 
@@ -103,9 +103,9 @@ def test_hidden_child_raises(held: object):
     "held", [{"model": Pass()}, [[Pass()]]], ids=["dict", "list-in-list"]
 )
 def test_hidden_child_raises_at_build(held: object):
-    spec = BidderSpec("h", Holder(held), CAMPAIGN)
+    campaign = Campaign("h", Holder(held), budget=1e6, event_value=5.0)
     with pytest.raises(TypeError, match="attribute, list or tuple"):
-        spec.build(np.random.default_rng(0))
+        campaign.build(np.random.default_rng(0))
 
 
 def test_containers_without_bidders_allowed():
@@ -130,21 +130,23 @@ class Log(Bidder):
         self.name = name
 
     @override
-    def on_episode_start(self, campaign: Campaign) -> None:
-        Log.calls.append((self.name, "start", campaign))
+    def on_episode_start(self, brief: Brief) -> None:
+        Log.calls.append((self.name, "start", brief))
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
-        Log.calls.append((self.name, "forward", observation))
+    def forward(self, value: float, request: BidRequest) -> float:
+        Log.calls.append((self.name, "forward", request))
         return value
 
     @override
-    def update_batch(self, feedbacks: Sequence[Feedback]) -> None:
-        Log.calls.append((self.name, "batch", feedbacks))
+    def update_batch(self, bid_results: Sequence[BidResult]) -> None:
+        Log.calls.append((self.name, "batch", bid_results))
 
     @override
-    def on_episode_end(self, stats: EpisodeStats, episode_reward: float | None) -> None:
-        Log.calls.append((self.name, "end", stats))
+    def on_episode_end(
+        self, report: EpisodeReport, episode_reward: float | None
+    ) -> None:
+        Log.calls.append((self.name, "end", report))
 
 
 class LogParent(Log):
@@ -168,19 +170,21 @@ class QuietParent(Bidder):
         self.rng = rng
 
     @override
-    def on_episode_start(self, campaign: Campaign) -> None:
+    def on_episode_start(self, brief: Brief) -> None:
         pass
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
-        return self.b.forward(self.a.forward(value, observation), observation)
+    def forward(self, value: float, request: BidRequest) -> float:
+        return self.b.forward(self.a.forward(value, request), request)
 
     @override
-    def update_batch(self, feedbacks: Sequence[Feedback]) -> None:
+    def update_batch(self, bid_results: Sequence[BidResult]) -> None:
         pass
 
     @override
-    def on_episode_end(self, stats: EpisodeStats, episode_reward: float | None) -> None:
+    def on_episode_end(
+        self, report: EpisodeReport, episode_reward: float | None
+    ) -> None:
         pass
 
 
@@ -194,7 +198,7 @@ class Draws(Bidder):
         self.draw = draw
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         if self.draw:
             Draws.draws.setdefault(self.name, []).append(self.rng.random())
 
@@ -202,13 +206,13 @@ class Draws(Bidder):
 
 
 class Watch(Bidder):
-    """Records each observation's value."""
+    """Records each request's value."""
 
     values: ClassVar[list[float]] = []
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
-        Watch.values.append(observation.value)
+    def forward(self, value: float, request: BidRequest) -> float:
+        Watch.values.append(request.value)
         return value
 
 
@@ -217,7 +221,7 @@ class Shade(Bidder):
 
     @override
     def forward(
-        self, value: float, observation: Observation, *, factor: float = 1.0
+        self, value: float, request: BidRequest, *, factor: float = 1.0
     ) -> float:
         return value * factor
 
@@ -229,8 +233,8 @@ class HalfShade(Bidder):
         self.shade = Shade()
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
-        return self.shade.forward(value, observation, factor=0.5)
+    def forward(self, value: float, request: BidRequest) -> float:
+        return self.shade.forward(value, request, factor=0.5)
 
 
 class Fan(Bidder):
@@ -240,9 +244,9 @@ class Fan(Bidder):
         self.children = children
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         for child in self.children:
-            child.forward(value, observation)
+            child.forward(value, request)
 
         return value
 
@@ -251,7 +255,7 @@ class Jitter(Bidder):
     """Multiplies the value by a random factor from its own stream."""
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         return value * self.rng.uniform(0.5, 1.5)
 
 
@@ -263,9 +267,9 @@ class Mixer(Bidder):
         self.forwards = 0
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         self.forwards += 1
-        first, second = (part.forward(value, observation) for part in self.parts)
+        first, second = (part.forward(value, request) for part in self.parts)
         return (first + second) / 2
 
 
@@ -278,12 +282,12 @@ class Counts(Bidder):
         self.name = name
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         Counts.counts.setdefault(self.name, [0, 0])[0] += 1
         return value
 
     @override
-    def update_batch(self, feedbacks: Sequence[Feedback]) -> None:
+    def update_batch(self, bid_results: Sequence[BidResult]) -> None:
         Counts.counts.setdefault(self.name, [0, 0])[1] += 1
 
 
@@ -296,17 +300,17 @@ class Unused(Counts):
 
 
 class Bids(Bidder):
-    """Records every feedback bid it gets."""
+    """Records every result bid it gets."""
 
     bids: ClassVar[list[float]] = []
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         return value
 
     @override
-    def update(self, feedback: Feedback) -> None:
-        Bids.bids.append(feedback.bid)
+    def update(self, result: BidResult) -> None:
+        Bids.bids.append(result.bid)
 
 
 class HalfOfChild(Bidder):
@@ -316,8 +320,8 @@ class HalfOfChild(Bidder):
         self.child = Bids()
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
-        return self.child.forward(value, observation) / 2
+    def forward(self, value: float, request: BidRequest) -> float:
+        return self.child.forward(value, request) / 2
 
 
 class Spawning(Draws):
@@ -344,20 +348,22 @@ class Grows(Bidder):
             self.late = Pass()
 
     @override
-    def on_episode_start(self, campaign: Campaign) -> None:
+    def on_episode_start(self, brief: Brief) -> None:
         self.grow("on_episode_start")
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         self.grow("forward")
         return value
 
     @override
-    def update_batch(self, feedbacks: Sequence[Feedback]) -> None:
+    def update_batch(self, bid_results: Sequence[BidResult]) -> None:
         self.grow("update_batch")
 
     @override
-    def on_episode_end(self, stats: EpisodeStats, episode_reward: float | None) -> None:
+    def on_episode_end(
+        self, report: EpisodeReport, episode_reward: float | None
+    ) -> None:
         self.grow("on_episode_end")
 
 
@@ -369,25 +375,27 @@ class Tally(Bidder):
         self.history: list[float] = []
 
     @override
-    def forward(self, value: float, observation: Observation) -> float:
+    def forward(self, value: float, request: BidRequest) -> float:
         self.seen += 1
         self.history.append(value)
-        self.last = observation
+        self.last = request
         return value
 
 
-def other() -> BidderSpec:
-    return BidderSpec("other", Truthful(multiplier=0.9), Campaign(1e6, 4.0))
+def other() -> Campaign:
+    return Campaign("other", Linear(multiplier=0.9), budget=1e6, event_value=4.0)
 
 
-def config(*specs: BidderSpec, **kwargs: Any) -> SimConfig:
+def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
     defaults: dict[str, Any] = {"episodes": 2, "steps": 50, "seed": 3}
-    return SimConfig(bidders=specs, **(defaults | kwargs))
+    return SimConfig(campaigns=campaigns, **(defaults | kwargs))
 
 
 def test_every_node_has_own_stream():
     tree = Stack(Pass(), Holder([Pass(), Holder(Pass())]))
-    built = BidderSpec("t", tree, CAMPAIGN).build(np.random.default_rng(0))
+    built = Campaign("t", tree, budget=1e6, event_value=5.0).build(
+        np.random.default_rng(0)
+    )
     draws = [tuple(node.rng.random(100)) for _, node in built.named_bidders()]
     assert len(draws) == 6
     assert len(set(draws)) == 6
@@ -401,35 +409,50 @@ def test_child_draws_leave_others_unchanged():
         tree = Fan([Draws("child", draw=draw), Fan([Draws("deep", draw=draw)])])
         stack = Stack(tree, Watch())
         logs.append(
-            run(config(BidderSpec("d", stack, CAMPAIGN), other(), estimate_noise=0.5))
+            run(
+                config(
+                    Campaign("d", stack, budget=1e6, event_value=5.0),
+                    other(),
+                    estimate_noise=0.5,
+                )
+            )
         )
         seen.append(list(Watch.values))
         if draw:
             assert [len(Draws.draws[name]) for name in ("child", "deep")] == [100, 100]
     drawing, quiet = logs
     np.testing.assert_array_equal(drawing.bids[:, :, 1], quiet.bids[:, :, 1])
-    np.testing.assert_array_equal(drawing.values, quiet.values)
+    np.testing.assert_array_equal(drawing.true_values, quiet.true_values)
     np.testing.assert_array_equal(drawing.converted, quiet.converted)
     assert seen[0] == seen[1]
 
 
 def test_composite_parallel_equals_serial():
-    spec = BidderSpec("m", Stack(Mixer(), PidPacing()), Campaign(5.0, 5.0))
-    serial = run_many(config(spec, other()), seeds=range(3))
-    parallel = run_many(config(spec, other()), seeds=range(3), workers=2)
+    campaign = Campaign("m", Stack(Mixer(), PidPacing()), budget=5.0, event_value=5.0)
+    serial = run_many(config(campaign, other()), seeds=range(3))
+    parallel = run_many(config(campaign, other()), seeds=range(3), workers=2)
     assert parallel.equals(serial)
 
 
 def test_user_tree_unchanged():
     mixer = Mixer()
-    run_many(config(BidderSpec("m", Stack(mixer), CAMPAIGN), other()), seeds=range(2))
+    run_many(
+        config(Campaign("m", Stack(mixer), budget=1e6, event_value=5.0), other()),
+        seeds=range(2),
+    )
     assert mixer.forwards == 0
     assert not any(hasattr(node, "rng") for _, node in mixer.named_bidders())
 
 
 def test_tree_hook_order():
     Log.calls.clear()
-    run(config(BidderSpec("x", LogParent(), CAMPAIGN), episodes=1, steps=2))
+    run(
+        config(
+            Campaign("x", LogParent(), budget=1e6, event_value=5.0),
+            episodes=1,
+            steps=2,
+        )
+    )
     auction = [
         ("parent", "forward"),
         ("parent", "batch"),
@@ -453,7 +476,13 @@ def test_tree_hook_order():
 
 def test_children_get_hooks_without_super():
     Log.calls.clear()
-    run(config(BidderSpec("x", QuietParent(), CAMPAIGN), episodes=1, steps=2))
+    run(
+        config(
+            Campaign("x", QuietParent(), budget=1e6, event_value=5.0),
+            episodes=1,
+            steps=2,
+        )
+    )
     auction = [("a", "forward"), ("b", "forward"), ("a", "batch"), ("b", "batch")]
     assert [(name, hook) for name, hook, _ in Log.calls] == [
         ("a", "start"),
@@ -465,24 +494,31 @@ def test_children_get_hooks_without_super():
     ]
 
 
-def test_child_feedback_has_final_bid():
+def test_child_result_has_final_bid():
     Bids.bids.clear()
-    log = run(config(BidderSpec("h", HalfOfChild(), CAMPAIGN), other()))
+    log = run(
+        config(Campaign("h", HalfOfChild(), budget=1e6, event_value=5.0), other())
+    )
     assert Bids.bids == log.bids[:, :, 0].ravel().tolist()
-    assert Bids.bids == (log.values[:, :, 0].ravel() / 2).tolist()
+    assert Bids.bids == (log.true_values[:, :, 0].ravel() / 2).tolist()
 
 
 def test_unused_child_still_learns():
     Counts.counts.clear()
-    run(config(BidderSpec("u", Unused(), CAMPAIGN), other()))
+    run(config(Campaign("u", Unused(), budget=1e6, event_value=5.0), other()))
     assert Counts.counts == {"parent": [100, 100], "child": [0, 100]}
 
 
 def test_tree_skipped_outside_segments():
     Counts.counts.clear()
     market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)))
-    campaign = Campaign(1e6, 5.0, segments=["news"])
-    log = run(config(BidderSpec("u", Unused(), campaign), other(), market=market))
+    log = run(
+        config(
+            Campaign("u", Unused(), budget=1e6, event_value=5.0, segments=["news"]),
+            other(),
+            market=market,
+        )
+    )
     news = int(np.sum(log.segment == market.segment_names.index("news")))
     assert 0 < news < 100
     assert Counts.counts == {"parent": [news, news], "child": [0, news]}
@@ -492,15 +528,17 @@ def test_bind_override_keeps_child_streams():
     seen = []
     for parent in (Spawning("parent"), Holder(Draws("child"))):
         Draws.draws.clear()
-        built = BidderSpec("s", parent, CAMPAIGN).build(np.random.default_rng(7))
+        built = Campaign("s", parent, budget=1e6, event_value=5.0).build(
+            np.random.default_rng(7)
+        )
         child = next(node for path, node in built.named_bidders() if path)
         assert isinstance(child, Draws)
-        child.forward(1.0, Observation(time=0.0, value=1.0))
+        child.forward(1.0, BidRequest(time=0.0, value=1.0))
         seen.append(Draws.draws["child"])
     assert seen[0] == seen[1]
 
     rng = np.random.default_rng(7)
-    built = BidderSpec("s", Spawning("parent"), CAMPAIGN).build(rng)
+    built = Campaign("s", Spawning("parent"), budget=1e6, event_value=5.0).build(rng)
     assert built.rng is rng
 
 
@@ -508,16 +546,16 @@ def test_bind_override_keeps_child_streams():
     "hook", ["on_episode_start", "forward", "update_batch", "on_episode_end"]
 )
 def test_late_child_raises(hook: str):
-    spec = BidderSpec("grower", Grows(hook), CAMPAIGN)
+    campaign = Campaign("grower", Grows(hook), budget=1e6, event_value=5.0)
     with pytest.raises(ValueError, match=r"'grower'.*'late'.*__init__"):
-        run(config(spec, other(), episodes=1))
+        run(config(campaign, other(), episodes=1))
 
 
 def test_plain_attribute_changes_allowed():
-    log = run(config(BidderSpec("t", Tally(), CAMPAIGN), other()))
+    log = run(config(Campaign("t", Tally(), budget=1e6, event_value=5.0), other()))
     assert log.bids.shape == (2, 50, 2)
 
 
 def test_parent_passes_forward_argument():
-    log = run(config(BidderSpec("h", HalfShade(), CAMPAIGN), other()))
-    np.testing.assert_array_equal(log.bids[:, :, 0], log.values[:, :, 0] * 0.5)
+    log = run(config(Campaign("h", HalfShade(), budget=1e6, event_value=5.0), other()))
+    np.testing.assert_array_equal(log.bids[:, :, 0], log.true_values[:, :, 0] * 0.5)

@@ -18,31 +18,29 @@ class SpendShare(bl.Callback):
         self.shares = []
 
     def on_run_start(self, config):
-        names = [spec.name for spec in config.bidders]
+        names = [campaign.name for campaign in config.campaigns]
         print(f"run: {names}, {config.episodes} episodes of {config.steps} auctions")
 
-    def on_episode_end(self, episode, stats):
-        pid = stats["pid"]
+    def on_episode_end(self, episode, reports):
+        pid = reports["pid"]
         self.shares.append(pid.spend / pid.budget)
         print(
             f"episode {episode}: spent {pid.spend:.2f} of {pid.budget:.0f},"
-            f" {pid.wins} wins, {pid.conversions} conversions worth {pid.value:.1f}"
+            f" {pid.wins} wins, {pid.conversions} conversions worth {pid.realized_value:.1f}"
         )
 
     def on_run_end(self, log: bl.RunLog):
-        print(f"stored names: {sorted(log.logs)}")
+        print(f"stored names: {sorted(log.logged)}")
 
     def on_seed_end(self, seed: int, results: bl.Results):
         print(f"seed {seed} done")
 
 
 config = bl.SimConfig(
-    bidders=[
-        bl.BidderSpec("pid", bl.PidPacing(), bl.Campaign(budget=15, value=5)),
-        bl.BidderSpec(
-            "quiet", bl.PidPacing(log_state=False), bl.Campaign(budget=15, value=5)
-        ),
-        bl.BidderSpec("big", bl.Truthful(), bl.Campaign(budget=50, value=5)),
+    campaigns=[
+        bl.Campaign("pid", bl.PidPacing(), budget=15, event_value=5),
+        bl.Campaign("quiet", bl.PidPacing(log_state=False), budget=15, event_value=5),
+        bl.Campaign("big", bl.Linear(), budget=50, event_value=5),
     ],
     episodes=5,
     steps=480,
@@ -51,13 +49,13 @@ config = bl.SimConfig(
 if __name__ == "__main__":
     watcher = SpendShare()
     log = bl.run(config, callbacks=[watcher])
-    multiplier = log.logs["multiplier"]["pid"]
+    multiplier = log.logged["multiplier"]["pid"]
     per_block = int(config.steps * BLOCK_HOURS / config.horizon_hours)
     blocks = multiplier[-1].reshape(-1, per_block).mean(axis=1)
     print(f"last-episode multiplier per {BLOCK_HOURS} hours: {np.round(blocks, 2)}")
 
     results = bl.run_many(config, seeds=range(3), callbacks=[watcher])
-    print(f"multiplier over seeds: {results.logs['multiplier']['pid'].shape}")
+    print(f"multiplier over seeds: {results.logged['multiplier']['pid'].shape}")
     print(results.summary())
 
     shares = watcher.shares

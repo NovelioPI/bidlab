@@ -7,7 +7,7 @@ import numpy as np
 import numpy.typing as npt
 
 Logs = Mapping[str, Mapping[str, npt.NDArray[np.float64]]]
-"""Stored name, then spec name, to the logged values."""
+"""Stored name, then campaign name, to the logged values."""
 
 _Store = dict[str, dict[str, npt.NDArray[np.float64]]]
 
@@ -35,9 +35,9 @@ class LogBook:
         self.episode_values: _Store = {}
         self.owners: dict[tuple[str, str], str] = {}
 
-    def logger(self, spec: str, path: str) -> "NodeLogger":
-        """Return the logger for the bidder at ``path`` in spec ``spec``."""
-        return NodeLogger(self, spec, path)
+    def logger(self, campaign: str, path: str) -> "NodeLogger":
+        """Return the logger for the bidder at ``path`` in campaign ``campaign``."""
+        return NodeLogger(self, campaign, path)
 
     def at_episode(self, episode: int) -> None:
         """Point the clock at an episode hook of ``episode``."""
@@ -53,8 +53,8 @@ class LogBook:
         """Ignore later writes, from a bidder copy kept after its run ended."""
         self.closed = True
 
-    def write(self, spec: str, path: str, name: str, value: float) -> None:
-        """Store ``value`` under ``name`` for spec ``spec`` at the clock.
+    def write(self, campaign: str, path: str, name: str, value: float) -> None:
+        """Store ``value`` under ``name`` for campaign ``campaign`` at the clock.
 
         Raises
         ------
@@ -65,10 +65,10 @@ class LogBook:
         if self.closed:
             return
 
-        owner = self.owners.setdefault((spec, name), path)
+        owner = self.owners.setdefault((campaign, name), path)
         if owner != path:
             raise ValueError(
-                f"bidder {spec!r}: {name!r} is logged by the bidders at {owner!r} "
+                f"campaign {campaign!r}: {name!r} is logged by the bidders at {owner!r} "
                 f"and {path!r}; give one a different name or keep its path prefix"
             )
 
@@ -81,17 +81,17 @@ class LogBook:
             cell = (self.episode, self.step)
             size = (self.episodes, self.steps)
 
-        if spec in other.get(name, {}):
+        if campaign in other.get(name, {}):
             raise ValueError(
-                f"bidder {spec!r}: {name!r} is logged both per step and per "
+                f"campaign {campaign!r}: {name!r} is logged both per step and per "
                 f"episode; this {shape} log needs a different name"
             )
 
         arrays = mine.setdefault(name, {})
-        if spec not in arrays:
-            arrays[spec] = np.full(size, np.nan)
+        if campaign not in arrays:
+            arrays[campaign] = np.full(size, np.nan)
 
-        arrays[spec][cell] = value
+        arrays[campaign][cell] = value
 
     def result(self) -> Logs:
         """Return every logged array, read-only."""
@@ -111,12 +111,12 @@ class LogBook:
 class NodeLogger:
     """Writes one bidder's logged values to its run's `LogBook`."""
 
-    def __init__(self, book: LogBook, spec: str, path: str):
+    def __init__(self, book: LogBook, campaign: str, path: str):
         self.book = book
-        self.spec = spec
+        self.campaign = campaign
         self.path = path
 
     def write(self, name: str, value: float, log_prefix: bool) -> None:
         """Store ``value`` under ``name``, prefixed with the path unless told not to."""
         stored = f"{self.path}.{name}" if self.path and log_prefix else name
-        self.book.write(self.spec, self.path, stored, value)
+        self.book.write(self.campaign, self.path, stored, value)

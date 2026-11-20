@@ -2,7 +2,7 @@
 
 | Family | Bidders |
 |---|---|
-| `baselines` | `Truthful` |
+| `baselines` | `Linear` |
 | `pacing` | `PidPacing` |
 | `bandits` | `UcbMultiplier` |
 """
@@ -10,15 +10,15 @@
 from bidlab.bidders import bandits, baselines, pacing
 from bidlab.bidders.bandits import UcbMultiplier
 from bidlab.bidders.base import Bidder
-from bidlab.bidders.baselines import Truthful
+from bidlab.bidders.baselines import Linear
 from bidlab.bidders.pacing import PidPacing
 from bidlab.bidders.stack import Stack
 
 __all__ = [
     "Bidder",
+    "Linear",
     "PidPacing",
     "Stack",
-    "Truthful",
     "UcbMultiplier",
     "bandits",
     "baselines",
