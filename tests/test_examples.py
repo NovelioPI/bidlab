@@ -11,6 +11,8 @@ import pytest
 import bidlab as bl
 
 ROOT = Path(__file__).parent.parent
+GUIDES = sorted((ROOT / "docs" / "guides").glob("*.md"))
+DOCS = [ROOT / "README.md", *GUIDES]
 
 
 # Script: (expected answer, guides that must link it).
@@ -185,6 +187,50 @@ def test_examples_cover_public_api():
 def test_coverage_exclusions_exist():
     stale = sorted(COVERAGE_EXCLUSIONS.keys() - public_api())
     assert not stale, f"excluded names no longer in bidlab: {stale}"
+
+
+def python_blocks(path):
+    return re.findall(r"```python\n(.*?)```", path.read_text(), flags=re.DOTALL)
+
+
+def local_links(path):
+    targets = re.findall(r"\]\(([^)#\s]+)", path.read_text())
+    return [target for target in targets if not target.startswith("http")]
+
+
+@pytest.mark.parametrize("path", DOCS, ids=lambda path: path.name)
+def test_guide_script_runs(path, tmp_path):
+    script = tmp_path / "script.py"
+    script.write_text("\n".join(python_blocks(path)))
+    result = subprocess.run(
+        [sys.executable, str(script)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_local_links_resolve():
+    broken = [
+        f"{path.relative_to(ROOT)}: {target}"
+        for path in DOCS
+        for target in local_links(path)
+        if not (path.parent / target).exists()
+    ]
+    assert not broken, f"links to missing files: {broken}"
+
+
+def test_examples_linked_from_guides():
+    missing = []
+    for name, (_, guides) in EXAMPLES.items():
+        for guide in guides:
+            targets = local_links(ROOT / "docs" / "guides" / guide)
+            if f"../../examples/{name}" not in targets:
+                missing.append(f"{guide} does not link {name}")
+    assert not missing, missing
 
 
 def test_readme_code_runs(tmp_path):
