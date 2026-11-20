@@ -34,7 +34,7 @@ class ConversionBandit(UcbMultiplier):
 
     @override
     def update(self, result: BidResult) -> None:
-        self.episode_reward += float(result.converted)
+        self.arm_reward += float(result.converted)
 
 
 def fingerprint_config(kind):

@@ -21,7 +21,7 @@ class UcbMultiplier(Bidder):
 
     Each arm is a fixed multiplier m, and the bidder outputs m × value for a
     whole episode. An arm's reward is the episode's surplus: the sum of
-    ``realized_value - price`` over its results, kept in ``episode_reward``.
+    ``realized_value - price`` over its results, kept in ``arm_reward``.
     Override `update` to reward something else. The exploration bonus is scaled by
     the spread of the arm means, so it works for any reward unit.
 
@@ -76,12 +76,12 @@ class UcbMultiplier(Bidder):
         self.pulls = np.zeros(self.arms.size)
         self.reward_sums = np.zeros(self.arms.size)
         self.arm = 0
-        self.episode_reward = 0.0
+        self.arm_reward = 0.0
 
     @override
     def on_episode_start(self, campaign: "Campaign") -> None:
         self.arm = self._choose_arm()
-        self.episode_reward = 0.0
+        self.arm_reward = 0.0
         if self.log_state:
             self.log("multiplier", float(self.arms[self.arm]))
 
@@ -91,12 +91,12 @@ class UcbMultiplier(Bidder):
 
     @override
     def update(self, result: BidResult) -> None:
-        self.episode_reward += result.realized_value - result.price
+        self.arm_reward += result.realized_value - result.price
 
     @override
     def on_episode_end(self, report: EpisodeReport) -> None:
         self.pulls[self.arm] += 1
-        self.reward_sums[self.arm] += self.episode_reward
+        self.reward_sums[self.arm] += self.arm_reward
 
     def _choose_arm(self) -> int:
         untried = np.flatnonzero(self.pulls == 0)

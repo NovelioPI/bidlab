@@ -44,7 +44,7 @@ class ConversionBandit(UcbMultiplier):
     """Rewards each conversion and ignores the price."""
 
     def update(self, result):
-        self.episode_reward += float(result.converted)
+        self.arm_reward += float(result.converted)
 
 
 def bandit_log(bandit, episodes=80, seed=5):
