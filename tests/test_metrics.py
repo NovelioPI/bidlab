@@ -32,6 +32,7 @@ def hand_log(kind="second", reserve=0.0, budget=10.0, cpa_target=None):
         true_values=values,
         winner=np.array([[0, 1, 0]]),
         price=np.array([[0.5, 0.2, 0.3]]),
+        clicked=np.array([[True, True, True]]),
         converted=np.array([[True, False, False]]),
         segment=np.zeros((1, 3), dtype=np.int64),
     )
@@ -141,6 +142,7 @@ def one_episode_log(episode, campaigns, auction):
         true_values=np.array([episode.values], dtype=float),
         winner=np.array([episode.winner]),
         price=np.array([episode.price], dtype=float),
+        clicked=np.array([episode.winner]) != -1,
         converted=np.zeros((1, steps), dtype=bool),
         segment=np.zeros((1, steps), dtype=np.int64),
     )

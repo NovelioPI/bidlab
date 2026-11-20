@@ -10,7 +10,7 @@ from scipy.special import expit, logit
 
 from bidlab.auctions import NO_WINNER
 from bidlab.bidders import Bidder
-from bidlab.bidders.base import attach_logger, call_forward
+from bidlab.bidders.base import attach_logger, call_forward, takes_input
 from bidlab.callbacks import Callback, checked_callbacks
 from bidlab.config import Campaign, SimConfig
 from bidlab.logs import LogBook, Logs
@@ -20,10 +20,21 @@ from bidlab.types import (
     SECONDS_PER_HOUR,
     BidResult,
     EpisodeReport,
+    MarketTruth,
 )
 
 BUILT_IN_INPUTS = frozenset(
-    {"value", "time", "time_left", "horizon", "hour_of_day", "budget_left", "segment"}
+    {
+        "value",
+        "time",
+        "time_left",
+        "horizon",
+        "hour_of_day",
+        "budget_left",
+        "segment",
+        "market",
+        "features",
+    }
 )
 
 
@@ -41,13 +52,17 @@ class RunLog:
         Bids after cleaning and capping; 0 for a bidder outside its segments.
     true_values : numpy.ndarray
         Each bidder's true expected value per step: `Campaign.event_value` × the
-        true conversion probability.
+        true pCTR × the true pCVR, with pCTR 1 when the market has no click
+        stage.
     winner : numpy.ndarray
         Index of the winning bidder per step; -1 when nobody won.
     price : numpy.ndarray
         Price the winner paid per step; 0 when nobody won.
+    clicked : numpy.ndarray
+        Whether the winner was clicked per step; every win is a click when the
+        market has no click stage. False when nobody won.
     converted : numpy.ndarray
-        Whether the winner converted per step.
+        Whether the winner converted per step; only a click can convert.
     segment : numpy.ndarray
         Index into ``config.market.segment_names`` per step.
     logged : Mapping[str, Mapping[str, numpy.ndarray]]
@@ -72,6 +87,7 @@ class RunLog:
     true_values: npt.NDArray[np.float64]
     winner: npt.NDArray[np.int64]
     price: npt.NDArray[np.float64]
+    clicked: npt.NDArray[np.bool_]
     converted: npt.NDArray[np.bool_]
     segment: npt.NDArray[np.int64]
     logged: Logs = field(default_factory=lambda: MappingProxyType({}))
@@ -120,7 +136,8 @@ def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
         `Callback` instance.
     ValueError
         If the market yields a draw with the wrong shape, a probability
-        outside [0, 1], or an unknown segment.
+        outside [0, 1], a feature named like a built-in input, or an unknown
+        segment.
     RuntimeError
         If the market stops yielding draws before the run ends.
 
@@ -167,6 +184,12 @@ class _Simulation:
         )
         self.tie_rng = np.random.default_rng(tie_seed)
         self.conversion_rng = np.random.default_rng(conversion_seed)
+        # A child stream, so markets without a click stage keep every draw.
+        self.click_rng = np.random.default_rng(conversion_seed.spawn(1)[0])
+        # Without a click stage, every won impression counts as clicked.
+        self.every_click = np.ones(count)
+        # Filled at each campaign's first auction, where a bad forward signature raises.
+        self.reads_market: list[bool | None] = [None] * count
         self.estimate_seeds: list[np.random.SeedSequence] = []
         self.book = LogBook(config.episodes, config.steps)
         self.participants = [
@@ -175,6 +198,9 @@ class _Simulation:
         ]
         self.estimate_rngs = [
             np.random.default_rng(seed) for seed in self.estimate_seeds
+        ]
+        self.ctr_estimate_rngs = [
+            np.random.default_rng(seed.spawn(1)[0]) for seed in self.estimate_seeds
         ]
         self.segment_index = {
             name: index for index, name in enumerate(config.market.segment_names)
@@ -186,6 +212,7 @@ class _Simulation:
             true_values=np.zeros((*shape, count)),
             winner=np.full(shape, NO_WINNER),
             price=np.zeros(shape),
+            clicked=np.zeros(shape, dtype=bool),
             converted=np.zeros(shape, dtype=bool),
             segment=np.zeros(shape, dtype=np.int64),
         )
@@ -217,6 +244,7 @@ class _Simulation:
             self.log.true_values,
             self.log.winner,
             self.log.price,
+            self.log.clicked,
             self.log.converted,
             self.log.segment,
         ):
@@ -240,9 +268,10 @@ class _Simulation:
     ) -> None:
         draw = self._next_draw(episode, step)
         self.book.at_step(episode, step)
-        probabilities = draw.probabilities
-        values = self.event_values * probabilities
-        estimated = self._estimated_values(values, probabilities)
+        pctr = self.every_click if draw.pctr is None else draw.pctr
+        pcvr = draw.pcvr
+        values = self.event_values * pctr * pcvr
+        estimated = self._estimated_values(values, draw)
         time = step * self.seconds_per_step
         # Bidders outside their segments are not asked to bid, so they cannot learn from it.
         active = [
@@ -252,6 +281,7 @@ class _Simulation:
         ]
         shared = {
             **draw.features,
+            "features": draw.features,
             "time": time,
             "time_left": self.horizon - time,
             "horizon": self.horizon,
@@ -261,12 +291,16 @@ class _Simulation:
         }
         bids = np.zeros(len(self.participants))
         for i in active:
+            bidder = self.participants[i].campaign.bidder
             inputs = {
                 **shared,
                 "value": float(estimated[i]),
                 "budget_left": float(budget_left[i]),
             }
-            bids[i] = call_forward(self.participants[i].campaign.bidder, inputs)
+            # Building the truth for bidders that never read it would slow every run.
+            if self._reads_market(i):
+                inputs["market"] = MarketTruth(float(pctr[i]), float(pcvr[i]))
+            bids[i] = call_forward(bidder, inputs)
         # Risk: if bids are not capped at the remaining budget, then spend can exceed it.
 
         bids = np.clip(
@@ -276,9 +310,7 @@ class _Simulation:
         auction_bids = np.full(len(self.participants), -np.inf)
         auction_bids[active] = bids[active]
         winner, price = self.config.auction.run(auction_bids, self.tie_rng)
-        # One draw every step keeps the conversion stream aligned across runs.
-        conversion_draw = self.conversion_rng.random()
-        converted = winner != NO_WINNER and conversion_draw < probabilities[winner]
+        clicked, converted = self._click_and_conversion(draw, winner)
         if winner != NO_WINNER:
             budget_left[winner] -= price
 
@@ -294,6 +326,7 @@ class _Simulation:
                 realized_value=participant.campaign.event_value
                 if converted and won
                 else 0.0,
+                clicked=clicked and won,
             )
             batch = [result]
             for node in participant.nodes:
@@ -303,24 +336,45 @@ class _Simulation:
         self.log.true_values[episode, step] = values
         self.log.winner[episode, step] = winner
         self.log.price[episode, step] = price
+        self.log.clicked[episode, step] = clicked
         self.log.converted[episode, step] = converted
         self.log.segment[episode, step] = self.segment_index[draw.segment]
 
+    def _reads_market(self, index: int) -> bool:
+        reads_market = self.reads_market[index]
+        if reads_market is None:
+            bidder = self.participants[index].campaign.bidder
+            reads_market = self.reads_market[index] = takes_input(bidder, "market")
+
+        return reads_market
+
+    def _click_and_conversion(self, draw: MarketDraw, winner: int) -> tuple[bool, bool]:
+        # One draw every step keeps the conversion stream aligned across runs.
+        conversion_draw = self.conversion_rng.random()
+        if draw.pctr is None:
+            converted = winner != NO_WINNER and conversion_draw < draw.pcvr[winner]
+            return winner != NO_WINNER, converted
+
+        # Only a click stage draws a click, every step, so other runs keep their streams.
+        click_draw = self.click_rng.random()
+        clicked = winner != NO_WINNER and click_draw < draw.pctr[winner]
+        return clicked, clicked and conversion_draw < draw.pcvr[winner]
+
     def _estimated_values(
-        self,
-        values: npt.NDArray[np.float64],
-        probabilities: npt.NDArray[np.float64],
+        self, values: npt.NDArray[np.float64], draw: MarketDraw
     ) -> npt.NDArray[np.float64]:
         noise = self.config.estimate_noise
         # Without noise, the true values pass through untouched, bit for bit.
         if noise == 0:
             return values
 
-        # Every bidder draws every step, taking part or not, so no stream shifts.
-        errors = np.array([rng.standard_normal() for rng in self.estimate_rngs])
-        # logit(0) and logit(1) are infinite, so p = 0 and p = 1 stay exact.
-        estimates = expit(logit(probabilities) + noise * errors)
-        return self.event_values * estimates
+        pcvr = _with_noise(draw.pcvr, noise, self.estimate_rngs)
+        if draw.pctr is None:
+            return self.event_values * pcvr
+
+        # Each stage gets its own error, from its own stream.
+        pctr = _with_noise(draw.pctr, noise, self.ctr_estimate_rngs)
+        return self.event_values * pctr * pcvr
 
     def _next_draw(self, episode: int, step: int) -> MarketDraw:
         market = type(self.config.market).__name__
@@ -330,16 +384,19 @@ class _Simulation:
         except StopIteration:
             raise RuntimeError(f"{where}: the market stopped yielding draws") from None
 
-        probabilities = draw.probabilities
-        if probabilities.shape != (len(self.participants),):
-            raise ValueError(
-                f"{where}: got probabilities of shape {probabilities.shape}, "
-                f"expected ({len(self.participants)},)"
-            )
-        # The negated check also catches NaN, which fails every comparison.
+        for name, rates in (("pcvr", draw.pcvr), ("pctr", draw.pctr)):
+            if rates is None:
+                continue
 
-        if not np.all((probabilities >= 0.0) & (probabilities <= 1.0)):
-            raise ValueError(f"{where}: probabilities must lie in [0, 1]")
+            if rates.shape != (len(self.participants),):
+                raise ValueError(
+                    f"{where}: got {name} of shape {rates.shape}, "
+                    f"expected ({len(self.participants)},)"
+                )
+
+            # The negated check also catches NaN, which fails every comparison.
+            if not np.all((rates >= 0.0) & (rates <= 1.0)):
+                raise ValueError(f"{where}: {name} must lie in [0, 1]")
 
         clashes = draw.features.keys() & BUILT_IN_INPUTS
         if clashes:
@@ -378,3 +435,14 @@ class _Simulation:
         read_only = MappingProxyType(reports)
         for callback in self.callbacks:
             callback.on_episode_end(episode, read_only)
+
+
+def _with_noise(
+    rates: npt.NDArray[np.float64],
+    noise: float,
+    rngs: Sequence[np.random.Generator],
+) -> npt.NDArray[np.float64]:
+    # Every bidder draws every step, taking part or not, so no stream shifts.
+    errors = np.array([rng.standard_normal() for rng in rngs])
+    # logit(0) and logit(1) are infinite, so p = 0 and p = 1 stay exact.
+    return expit(logit(rates) + noise * errors)

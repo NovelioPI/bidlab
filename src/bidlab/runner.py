@@ -28,7 +28,7 @@ BIDDER_COLUMNS = tuple(
     if f.name not in ("episode", "campaign")
 )
 COLUMNS = ("seed", "campaign", *BIDDER_COLUMNS, "revenue", "welfare")
-SEGMENT_METRIC_COLUMNS = ("spend", "wins", "conversions", "surplus")
+SEGMENT_METRIC_COLUMNS = ("spend", "wins", "clicks", "conversions", "surplus")
 SEGMENT_COLUMNS = ("seed", "campaign", "segment", *SEGMENT_METRIC_COLUMNS)
 
 RowBuilder = dict[str, str | int | float]

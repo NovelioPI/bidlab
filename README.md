@@ -37,11 +37,11 @@ print(results.summary())
 
 ## How one step works
 
-1. The market draws the impression's public features and each bidder's conversion probability pᵢ. The default market, `LogisticContext`, uses pᵢ = σ(x · φᵢ + βᵢ) for a random context x.
-2. Each bidder's `forward` gets the inputs it names, such as `value`, `time`, `budget_left` and each public feature. Its `value` is the platform's value of the impression, w × pᵢ.
+1. The market draws the impression's public features and each campaign's conversion probability pᵢ, and optionally a click probability qᵢ. The default market, `LogisticMarket`, uses pᵢ = σ(x · φᵢ + βᵢ) for a random feature vector x, with no click stage (qᵢ = 1).
+2. Each bidder's `forward` gets the inputs it names, such as `value`, `time`, `budget_left` and each public feature. Its `value` is the platform's value of the impression, w × qᵢ × pᵢ.
 3. Each bid is capped at the bidder's remaining budget. The bidder does not see that amount; it tracks its own spend.
 4. The auction picks a winner: `FirstPrice` or `SecondPrice`, with an optional reserve price.
-5. The winner converts with probability p of the winner.
+5. The winner is clicked with probability q, then converts with probability p of the winner.
 6. Each bidder gets its own `BidResult`: the auction's `time`, its bid, and whether it won. It also holds the price it paid, whether it converted, and its `realized_value`. A bidder computes its own reward from it. A loser never sees the winning price.
 
 The `value` input is exact by default. [Simulation](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/simulation.md) covers the clock, noise in that value, and reproducibility.
@@ -94,6 +94,7 @@ Each script runs on its own, prints its results, and ends with the answer to its
 |---|---|
 | [getting_started/basic.py](https://github.com/NovelioPI/bidlab/blob/main/examples/getting_started/basic.py) | When the budget is tight, does PID pacing earn more surplus than truthful bidding? |
 | [bidders/segment_rate.py](https://github.com/NovelioPI/bidlab/blob/main/examples/bidders/segment_rate.py) | Does a bidder that counts conversions per segment learn that sports converts better than news? |
+| [bidders/value_estimators.py](https://github.com/NovelioPI/bidlab/blob/main/examples/bidders/value_estimators.py) | Does a two-stage model on the public features estimate conversions better than counting? |
 | [composite/night_shade.py](https://github.com/NovelioPI/bidlab/blob/main/examples/composite/night_shade.py) | When a parent shades harder at night, does its child PID raise its multiplier at night? |
 | [markets/segments.py](https://github.com/NovelioPI/bidlab/blob/main/examples/markets/segments.py) | Does a sports-only bidder win any auction outside sports? |
 | [markets/custom_market.py](https://github.com/NovelioPI/bidlab/blob/main/examples/markets/custom_market.py) | Does the all-day bidder pay more per win at night, when the night-only bidder joins? |

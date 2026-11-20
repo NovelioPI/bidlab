@@ -9,7 +9,7 @@ from scipy import stats
 
 from bidlab.bidders import Bidder, Linear, PidPacing
 from bidlab.config import Campaign, SimConfig
-from bidlab.markets import Market, MarketDraw, Segment, Segmented
+from bidlab.markets import LogisticMarket, Market, MarketDraw, Segment, Segmented
 from bidlab.results import Results
 from bidlab.runner import COLUMNS, SEGMENT_COLUMNS, run_many
 from bidlab.simulator import run
@@ -213,6 +213,7 @@ def test_segments_table_columns():
         "segment",
         "spend",
         "wins",
+        "clicks",
         "conversions",
         "surplus",
     )
@@ -263,6 +264,7 @@ def test_segments_summary_and_csv(tmp_path):
         "segment",
         "spend",
         "wins",
+        "clicks",
         "conversions",
         "surplus",
     ]
@@ -335,3 +337,37 @@ def test_no_reward_columns():
     for columns in (results.columns, segments.columns, results.summary().split()):
         assert "reward" not in columns and "episode_reward" not in columns
     assert {"surplus", "cpa_score"} <= set(results.columns)
+
+
+def test_clicks_column():
+    plain = run_many(config(), seeds=range(2))
+    assert plain.columns.index("clicks") == plain.columns.index("wins") + 1
+    assert all(row["clicks"] == row["wins"] for row in plain.rows)
+
+    clicking = dataclasses.replace(config(), market=LogisticMarket(ctr_bias_mean=-1.0))
+    results = run_many(clicking, seeds=range(2))
+    for row in results.rows:
+        log = run(dataclasses.replace(clicking, seed=row["seed"]))
+        index = [c.name for c in clicking.campaigns].index(str(row["campaign"]))
+        clicked_wins = (log.clicked & (log.winner == index)).sum(axis=1)
+        assert row["clicks"] == pytest.approx(clicked_wins.mean())
+    assert any(float(row["clicks"]) < float(row["wins"]) for row in results.rows)
+
+
+def test_segment_clicks_sum_to_main():
+    segmented = segmented_config()
+    assert isinstance(segmented.market, Segmented)
+    base = LogisticMarket(ctr_bias_mean=-1.0)
+    clicking = dataclasses.replace(
+        segmented, market=dataclasses.replace(segmented.market, base=base)
+    )
+    results = run_many(clicking, seeds=range(3))
+    for row in results.rows:
+        own = [
+            float(segment["clicks"])
+            for segment in segments_table(results).rows
+            if segment["seed"] == row["seed"] and segment["campaign"] == row["campaign"]
+        ]
+        assert len(own) == 2
+        assert sum(own) == pytest.approx(row["clicks"], abs=1e-9)
+    assert any(float(row["clicks"]) < float(row["wins"]) for row in results.rows)
