@@ -87,4 +87,4 @@ On one OS and CPU type, the same seed gives a bit-identical log. Other platforms
 |---|---|
 | [getting_started/basic.py](../../examples/getting_started/basic.py) | When the budget is tight, does PID pacing earn more surplus than truthful bidding? |
 | [simulation/estimate_noise.py](../../examples/simulation/estimate_noise.py) | Does noise in the platform's value cost a truthful bidder surplus? |
-| [simulation/clock.py](../../examples/simulation/clock.py) | Does an even-schedule bidder still have budget at 20:00, when truthful bidding has run out? |
+| [simulation/clock.py](../../examples/simulation/clock.py) | With a 12-hour day from 9:00, does an even-schedule bidder still have budget at 20:00, when truthful bidding has run out? |
