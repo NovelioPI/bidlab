@@ -38,9 +38,9 @@ print(results.summary())
 ## How one step works
 
 1. The market draws the impression's public features and each campaign's conversion probability pᵢ, and optionally a click probability qᵢ. The default market, `LogisticMarket`, uses pᵢ = σ(x · φᵢ + βᵢ) for a random feature vector x, with no click stage (qᵢ = 1).
-2. Each bidder's `forward` gets the inputs it names, such as `value`, `time`, `budget_left` and each public feature. Its `value` is the platform's value of the impression: the campaign's base value w times the chance of its event, which is 1 for an impression, qᵢ for a click, and qᵢ × pᵢ for a conversion, the default.
+2. Each bidder's `forward` gets the inputs it names, such as `value`, `time`, `budget_left`, `floor` and each public feature. Its `value` is the platform's value of the impression: the campaign's base value w times the chance of its event, which is 1 for an impression, qᵢ for a click, and qᵢ × pᵢ for a conversion, the default.
 3. Each bid is capped at the bidder's remaining budget. The bidder does not see that amount; it tracks its own spend.
-4. The auction picks a winner: `FirstPrice` or `SecondPrice`, with an optional reserve price.
+4. The auction picks a winner: `FirstPrice` or `SecondPrice`, with an optional reserve price. A market can add a floor and a hidden market price, the highest bid from outside; a campaign must beat it to win.
 5. The winner is clicked with probability q, then converts with probability p of the winner.
 6. Each bidder gets its own `BidResult`: the auction's `time`, its bid, and whether it won. It also holds the price it paid, whether it was clicked and converted, and its `realized_value`. A bidder computes its own reward from it. A loser never sees the winning price.
 
