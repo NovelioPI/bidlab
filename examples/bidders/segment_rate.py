@@ -1,8 +1,8 @@
 """Does a bidder that counts conversions per segment learn that sports converts better than news?
 
-`SegmentRate` ignores the platform's value. It learns each segment's conversion
-rate from its own wins, and `PidPacing` after it in the `Stack` turns that value
-into a paced bid.
+`SegmentRate` is an estimator: it learns each segment's conversion rate from
+its own wins, and `PidPacing` after it in the `Stack` turns that value into a
+paced bid.
 """
 
 import bidlab as bl
@@ -22,7 +22,7 @@ class SegmentRate(bl.Bidder):
         conversions = self.conversions.get(segment, 0) + self.prior
         return conversions / (self.wins.get(segment, 0) + 1)
 
-    def forward(self, value, segment, time):
+    def forward(self, segment, time):
         # BidResult carries the auction time but not the segment.
         self.pending[time] = segment
         return self.rate(segment) * self.base_value
@@ -55,7 +55,12 @@ config = bl.SimConfig(
             budget=15,
             base_value=5,
         ),
-        bl.Campaign("platform", bl.PidPacing(), budget=15, base_value=5),
+        bl.Campaign(
+            "platform",
+            bl.Stack(bl.OracleValue(), bl.PidPacing()),
+            budget=15,
+            base_value=5,
+        ),
     ],
     market=market,
     episodes=5,

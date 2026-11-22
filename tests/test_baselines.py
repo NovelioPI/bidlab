@@ -3,7 +3,7 @@ import pytest
 
 from bidlab import bidders
 from bidlab.auctions import FirstPrice
-from bidlab.bidders import Linear, PidPacing, UcbMultiplier
+from bidlab.bidders import Linear, OracleValue, PidPacing, Stack, UcbMultiplier
 from bidlab.config import Campaign, SimConfig
 from bidlab.simulator import run
 from bidlab.types import BidResult, EpisodeReport
@@ -13,14 +13,24 @@ STEPS = 2000
 
 def competitors():
     return (
-        Campaign("x", Linear(), budget=1e6, base_value=4.0),
-        Campaign("y", Linear(multiplier=0.8), budget=1e6, base_value=6.0),
-        Campaign("z", Linear(multiplier=0.9), budget=1e6, base_value=5.0),
+        Campaign("x", Stack(OracleValue(), Linear()), budget=1e6, base_value=4.0),
+        Campaign(
+            "y",
+            Stack(OracleValue(), Linear(multiplier=0.8)),
+            budget=1e6,
+            base_value=6.0,
+        ),
+        Campaign(
+            "z",
+            Stack(OracleValue(), Linear(multiplier=0.9)),
+            budget=1e6,
+            base_value=5.0,
+        ),
     )
 
 
 def spend_curve(bidder, budget, seed=11):
-    me = Campaign("me", bidder, budget=budget, base_value=5.0)
+    me = Campaign("me", Stack(OracleValue(), bidder), budget=budget, base_value=5.0)
     log = run(
         SimConfig(campaigns=(me, *competitors()), episodes=1, steps=STEPS, seed=seed)
     )
@@ -48,7 +58,7 @@ class ConversionBandit(UcbMultiplier):
 
 
 def bandit_log(bandit, episodes=80, seed=5):
-    me = Campaign("me", bandit, budget=1e6, base_value=5.0)
+    me = Campaign("me", Stack(OracleValue(), bandit), budget=1e6, base_value=5.0)
     return run(
         SimConfig(
             campaigns=(me, *competitors()), episodes=episodes, steps=300, seed=seed
@@ -116,7 +126,7 @@ def test_ucb_reward_is_episode_surplus():
 
 
 def test_pid_spends_evenly_alone():
-    pid = Campaign("pid", PidPacing(), budget=10, base_value=5)
+    pid = Campaign("pid", Stack(OracleValue(), PidPacing()), budget=10, base_value=5)
     log = run(SimConfig(campaigns=(pid,), auction=FirstPrice(), episodes=1, steps=200))
     first, second = log.price[0, :100].sum(), log.price[0, 100:].sum()
     assert 4 <= first <= 6
@@ -147,7 +157,7 @@ def test_stage_arguments_validated(build, argument):
 def test_pid_gains_as_arguments():
     pid = PidPacing(kp=30, ki=1, kd=0.5)
     assert (pid.kp, pid.ki, pid.kd) == (30.0, 1.0, 0.5)
-    campaign = Campaign("pid", pid, budget=10.0, base_value=5.0)
+    campaign = Campaign("pid", Stack(OracleValue(), pid), budget=10.0, base_value=5.0)
     log = run(SimConfig(campaigns=[campaign], episodes=1, steps=50))
     assert log.bids.shape == (1, 50, 1)
 

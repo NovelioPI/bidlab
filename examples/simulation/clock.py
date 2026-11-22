@@ -1,7 +1,7 @@
 """With a 12-hour day from 9:00, does an even-schedule bidder still have budget at 20:00, when truthful bidding has run out?
 
-`EvenSpend` tracks its own spend and surplus in `update`, one result at a
-time. It bids the value only while its spend is behind an even plan over the
+`EvenSpend` sits after `OracleValue` in a `Stack`. It tracks its own spend and
+surplus in `update`, one result at a time. It bids the value only while its spend is behind an even plan over the
 day, which it reads from its `time` and `horizon` inputs.
 """
 
@@ -33,9 +33,15 @@ class EvenSpend(bl.Bidder):
 
 config = bl.SimConfig(
     campaigns=[
-        bl.Campaign("even", EvenSpend(), budget=15, base_value=5),
-        bl.Campaign("truthful", bl.Linear(), budget=15, base_value=5),
-        bl.Campaign("big", bl.Linear(), budget=50, base_value=5),
+        bl.Campaign(
+            "even", bl.Stack(bl.OracleValue(), EvenSpend()), budget=15, base_value=5
+        ),
+        bl.Campaign(
+            "truthful", bl.Stack(bl.OracleValue(), bl.Linear()), budget=15, base_value=5
+        ),
+        bl.Campaign(
+            "big", bl.Stack(bl.OracleValue(), bl.Linear()), budget=50, base_value=5
+        ),
     ],
     episodes=5,
     steps=480,
@@ -57,9 +63,9 @@ if __name__ == "__main__":
     still_bidding = []
     for seed in range(5):
         log = bl.run(dataclasses.replace(config, seed=seed))
-        hours = log.logged["hour"]["even"]
-        paused = (log.logged["bid"]["even"] == 0).mean()
-        reward = log.logged["reward"]["even"].sum(axis=1).mean()
+        hours = log.logged["bidders.1.hour"]["even"]
+        paused = (log.logged["bidders.1.bid"]["even"] == 0).mean()
+        reward = log.logged["bidders.1.reward"]["even"].sum(axis=1).mean()
         print(
             f"seed {seed}: even paused in {paused:.0%} of auctions, reward {reward:.1f} per day"
         )

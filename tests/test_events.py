@@ -2,9 +2,8 @@ from typing import Any, ClassVar
 
 import numpy as np
 import pytest
-from scipy.special import logit
 
-from bidlab.bidders import Bidder, Linear
+from bidlab.bidders import Bidder, Linear, OracleValue, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import LogisticMarket, Market, MarketDraw
 from bidlab.metrics import campaign_metrics
@@ -62,7 +61,12 @@ def event_factor(event, pctr, pcvr):
 
 def campaign(name, event: EventName = "conversion", base_value=5.0, **kwargs):
     return Campaign(
-        name, Spy(), budget=100.0, base_value=base_value, event=event, **kwargs
+        name,
+        Stack(OracleValue(), Spy()),
+        budget=100.0,
+        base_value=base_value,
+        event=event,
+        **kwargs,
     )
 
 
@@ -74,12 +78,17 @@ def run_spies(*campaigns, **kwargs):
 
 
 def test_default_event_is_conversion():
-    assert Campaign("a", Linear(), budget=10, base_value=5).event is Event.CONVERSION
+    assert (
+        Campaign("a", Stack(OracleValue(), Linear()), budget=10, base_value=5).event
+        is Event.CONVERSION
+    )
 
 
 @pytest.mark.parametrize("event", [*Event, *EVENT_NAMES])
 def test_event_accepts_member_and_string(event):
-    stored = Campaign("a", Linear(), budget=10, base_value=5, event=event).event
+    stored = Campaign(
+        "a", Stack(OracleValue(), Linear()), budget=10, base_value=5, event=event
+    ).event
     assert stored is Event(event)
     assert stored == str(event)
 
@@ -91,13 +100,15 @@ def test_event_accepts_member_and_string(event):
 def test_bad_event_rejected(event, error):
     names = "'impression', 'click', 'conversion'"
     with pytest.raises(error, match=f"event must be one of {names}, got"):
-        Campaign("a", Linear(), budget=10, base_value=5, event=event)
+        Campaign(
+            "a", Stack(OracleValue(), Linear()), budget=10, base_value=5, event=event
+        )
 
 
 @pytest.mark.parametrize("base_value", [0, -1.0])
 def test_base_value_must_be_positive(base_value):
     with pytest.raises(ValueError, match="base_value must be > 0"):
-        Campaign("a", Linear(), budget=10, base_value=base_value)
+        Campaign("a", Stack(OracleValue(), Linear()), budget=10, base_value=base_value)
 
 
 def test_bidder_sees_event_and_base_value():
@@ -130,34 +141,12 @@ def test_value_input_follows_event():
             assert request["value"] == 2.0 * event_factor(event, truth.pctr, truth.pcvr)
 
 
-def noisy_rates(event, pctr=0.3):
-    _, (spy,) = run_spies(
-        campaign("a", event=event, base_value=2.0),
-        market=FixedMarket([pctr], [0.2]),
-        episodes=1,
-        steps=20_000,
-        estimate_noise=0.5,
-    )
-    return np.array([request["value"] for request in spy.requests]) / 2.0
-
-
-def test_noise_follows_event():
-    assert (noisy_rates("impression") == 1.0).all()
-    click_errors = logit(noisy_rates("click")) - logit(0.3)
-    assert abs(click_errors.std() - 0.5) < 0.05
-    # A pCTR of 1 has an infinite logit, so noise leaves it exact and shows pCVR's error.
-    conversion_errors = logit(noisy_rates("conversion", pctr=1.0)) - logit(0.2)
-    assert abs(conversion_errors.std() - 0.5) < 0.05
-
-
-@pytest.mark.parametrize("noise", [0.0, 0.5])
-def test_event_changes_no_other_input(noise):
+def test_event_changes_no_other_input():
     def inputs(event):
         _, spies = run_spies(
             campaign("a", event=event),
             campaign("b"),
             market=LogisticMarket(ctr_bias_mean=-2.0),
-            estimate_noise=noise,
         )
         markets = [[r["market"] for r in spy.requests] for spy in spies]
         return markets, [r["value"] for r in spies[1].requests]
@@ -211,10 +200,19 @@ def test_episode_report_needs_clicks():
 
 
 def test_ctr_cpc_nan_without_wins_or_clicks():
-    loser = Campaign("loser", Linear(multiplier=0.0), budget=10.0, base_value=5.0)
+    loser = Campaign(
+        "loser",
+        Stack(OracleValue(), Linear(multiplier=0.0)),
+        budget=10.0,
+        base_value=5.0,
+    )
     # An impression campaign bids its base value, so it wins although pCTR is 0.
     winner = Campaign(
-        "winner", Linear(), budget=10.0, base_value=0.1, event="impression"
+        "winner",
+        Stack(OracleValue(), Linear()),
+        budget=10.0,
+        base_value=0.1,
+        event="impression",
     )
     cfg = SimConfig(
         campaigns=[loser, winner],

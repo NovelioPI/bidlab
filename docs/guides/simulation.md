@@ -1,6 +1,6 @@
 # Simulation
 
-This guide explains what happens inside a run: each step, the clock, estimate noise, parallel runs and reproducibility.
+This guide explains what happens inside a run: each step, the clock, parallel runs and reproducibility.
 
 ## One step in detail
 
@@ -38,7 +38,11 @@ class OfficeHours(bl.Bidder):
 
 
 office = bl.SimConfig(
-    campaigns=[bl.Campaign("office", OfficeHours(), budget=10, base_value=5)],
+    campaigns=[
+        bl.Campaign(
+            "office", bl.Stack(bl.OracleValue(), OfficeHours()), budget=10, base_value=5
+        )
+    ],
     episodes=2,
     steps=96,
     horizon_hours=12,
@@ -46,19 +50,6 @@ office = bl.SimConfig(
 )
 log = bl.run(office)
 print(log.bids[0, :12, 0])  # 0 until 9:00, which is step 24
-```
-
-## Estimate noise
-
-The `value` input is the platform's value: w times its estimate of the chance of the campaign's event, such as pCTR × pCVR for a conversion. See [Campaigns](campaigns.md). The estimate is exact by default.
-
-`SimConfig(estimate_noise=0.5)` adds normal noise with that standard deviation to logit(pCVR), and, with a click stage, an independent error of the same size to logit(pCTR). Only the stages a campaign's event uses enter its value, so an impression campaign's value stays exact. Use it to test how a bidder copes with a wrong value. Metrics always use the true value, in `RunLog.true_values`, and the `market` input always holds the true rates.
-
-```python
-import dataclasses
-
-noisy = dataclasses.replace(office, estimate_noise=0.5)
-print(bl.run(noisy).true_values.shape)  # (2, 96, 1)
 ```
 
 ## Parallel runs
@@ -77,7 +68,7 @@ A bidder that holds a large object, such as a model, is copied to each worker an
 
 ## Reproducibility
 
-Each source of randomness has its own seeded stream: the market, tie-breaking, conversions, each bidder's estimate error, and each bidder. A `Stack` splits its bidder's stream, so each inner bidder gets its own.
+Each source of randomness has its own seeded stream: the market, tie-breaking, conversions, and each bidder. A `Stack` splits its bidder's stream, so each inner bidder gets its own.
 
 On one OS and CPU type, the same seed gives a bit-identical log. Other platforms round some floats differently, so the last bits can differ. Adding a bidder does not change the impressions the others see.
 
@@ -86,5 +77,4 @@ On one OS and CPU type, the same seed gives a bit-identical log. Other platforms
 | Script | Question |
 |---|---|
 | [getting_started/basic.py](../../examples/getting_started/basic.py) | When the budget is tight, does PID pacing earn more surplus than truthful bidding? |
-| [simulation/estimate_noise.py](../../examples/simulation/estimate_noise.py) | Does noise in the platform's value cost a truthful bidder surplus? |
 | [simulation/clock.py](../../examples/simulation/clock.py) | With a 12-hour day from 9:00, does an even-schedule bidder still have budget at 20:00, when truthful bidding has run out? |

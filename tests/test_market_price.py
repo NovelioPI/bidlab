@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from bidlab.auctions import FirstPrice, SecondPrice
-from bidlab.bidders import Bidder, Linear
+from bidlab.bidders import Bidder, Linear, OracleValue, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import Market, MarketDraw
 from bidlab.metrics import campaign_metrics, platform_metrics, regret
@@ -176,7 +176,13 @@ REGRET_STEPS = 50
 
 
 def lone_truthful_log(auction):
-    campaign = Campaign("t", Linear(), budget=100.0, base_value=1.0, event="impression")
+    campaign = Campaign(
+        "t",
+        Stack(OracleValue(), Linear()),
+        budget=100.0,
+        base_value=1.0,
+        event="impression",
+    )
     config = SimConfig(
         campaigns=[campaign],
         episodes=1,
@@ -201,7 +207,13 @@ def test_regret_first_price_against_market():
 
 def test_regret_replay_meets_market_floor():
     # Only multipliers from 1.2 meet the floor, and they pay more than the value 1.
-    campaign = Campaign("t", Linear(), budget=100.0, base_value=1.0, event="impression")
+    campaign = Campaign(
+        "t",
+        Stack(OracleValue(), Linear()),
+        budget=100.0,
+        base_value=1.0,
+        event="impression",
+    )
     config = SimConfig(
         campaigns=[campaign],
         episodes=1,

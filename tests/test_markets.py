@@ -7,7 +7,7 @@ from scipy import stats
 from scipy.special import logit
 
 import bidlab as bl
-from bidlab.bidders import Linear
+from bidlab.bidders import Linear, OracleValue, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import (
     IndependentValues,
@@ -112,7 +112,8 @@ def test_independent_uniform_mean_and_correlation():
 def test_independent_uniform_values_reach_the_log():
     config = SimConfig(
         campaigns=[
-            Campaign(name, Linear(), budget=1e9, base_value=1.0) for name in ("a", "b")
+            Campaign(name, Stack(OracleValue(), Linear()), budget=1e9, base_value=1.0)
+            for name in ("a", "b")
         ],
         market=IndependentValues(stats.uniform(0, 1)),
         episodes=2,

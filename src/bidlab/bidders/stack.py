@@ -2,16 +2,17 @@
 
 from typing import override
 
-from bidlab.bidders.base import Bidder, call_forward
+from bidlab.bidders.base import Bidder, call_chain
 
 
 class Stack(Bidder):
     """A bidder that runs its bidders in order and outputs the last one's output.
 
-    The first bidder gets the incoming ``value``, the platform's value at
-    the top; each later bidder gets the previous one's output as ``value``.
-    Each bidder also gets the other inputs its ``forward`` names, as the
-    simulator passes them to a top bidder. The bidders are the
+    The first bidder gets the stack's inputs; at the top that means no
+    ``value``, so it is usually an estimator such as `OracleValue`. Each
+    later bidder gets the previous one's output as ``value``. Each bidder
+    also gets the other inputs its ``forward`` names, as the simulator
+    passes them to a top bidder. The bidders are the
     stack's children, at paths ``"bidders.0"``, ``"bidders.1"`` and so on,
     so every hook reaches each of them, in order. Order matters: pacing then
     shading differs from shading then pacing. Stacks can nest.
@@ -30,10 +31,10 @@ class Stack(Bidder):
 
     Examples
     --------
-    Pace the platform's value with a PID loop, after a fixed shade:
+    Pace the true value with a PID loop, after a fixed shade:
 
     >>> import bidlab as bl
-    >>> bidder = bl.Stack(bl.Linear(multiplier=0.9), bl.PidPacing())
+    >>> bidder = bl.Stack(bl.OracleValue(), bl.Linear(multiplier=0.9), bl.PidPacing())
     >>> campaign = bl.Campaign("paced", bidder, budget=10, base_value=5)
     >>> bl.run(bl.SimConfig(campaigns=[campaign], episodes=1, steps=50)).bids.shape
     (1, 50, 1)
@@ -58,8 +59,5 @@ class Stack(Bidder):
         self.bidders = bidders
 
     @override
-    def forward(self, value: float, **inputs: object) -> float:
-        for bidder in self.bidders:
-            value = call_forward(bidder, {**inputs, "value": value})
-
-        return value
+    def forward(self, **inputs: object) -> float:
+        return call_chain(self.bidders, inputs)

@@ -4,14 +4,16 @@ This guide shows how to write a bidder, stack bidders, estimate values, and use 
 
 ## The idea
 
-A bidder turns a value into another value. Alone, it gets the platform's value as its `value` input, and its output is the bid.
+A bidder turns its inputs into a number: the bid, or a value for the next bidder. The simulator passes no value; each bidder estimates its own.
 
-Combine bidders with `bl.Stack`: each gets the previous one's output, and the last one's output is the bid. Two kinds of bidder fit together this way:
+Combine bidders with `bl.Stack`: the first gets the inputs, each later one also gets the previous one's output as `value`, and the last one's output is the bid. Two kinds of bidder fit together this way:
 
 | Kind | Example | Turns |
 |---|---|---|
-| Value model | A conversion-rate model | Features into its own value; it may ignore the incoming one |
+| Value estimator | `bl.OracleValue`, a conversion-rate model | Inputs into a value |
 | Bid control | Pacing, shading | A value into a bid |
+
+`bl.Stack(bl.OracleValue(), bl.PidPacing())` paces the true value. Swap `OracleValue` for your own estimator to test how its errors cost the campaign.
 
 Bidders in a stack run in order, so pacing then shading differs from shading then pacing.
 
@@ -22,7 +24,7 @@ Subclass `bl.Bidder` and implement `forward`. Every other hook is optional.
 | Hook | Called |
 |---|---|
 | `on_episode_start(campaign)` | At the start of each episode, with the `Campaign`: budget, event, base value, CPA target, segments |
-| `forward(value, ...)` | At each auction the bidder takes part in, with the inputs it names; returns the bid or value |
+| `forward(...)` | At each auction the bidder takes part in, with the inputs it names; returns the bid or value |
 | `update_batch(results)` | After each step, with that step's `BidResult` list |
 | `update(result)` | Once per result, if you do not override `update_batch` |
 | `on_episode_end(report)` | At the end of each episode, with its `EpisodeReport` |
@@ -39,7 +41,7 @@ Like a PyTorch module, `forward` declares the inputs it needs as parameters. The
 
 | Input | Meaning |
 |---|---|
-| `value` | The platform's value of the impression; in a `Stack`, the previous bidder's output |
+| `value` | In a `Stack`, the previous bidder's output; the simulator does not pass it |
 | `time` | Seconds since the episode start |
 | `time_left` | Seconds left in the episode |
 | `horizon` | Episode length in seconds |
@@ -63,13 +65,16 @@ class EvenPacer(bl.Bidder):
         # Bid only while spend is behind an even plan over the episode.
         behind = budget_left / self.budget >= time_left / horizon
         return value if behind else 0.0
+
+
+paced = bl.Stack(bl.OracleValue(), EvenPacer())
 ```
 
 - A `forward` with `**inputs` gets every input.
 - A parameter with a default gets its default when the input is missing.
 - A parameter without a default and without an input raises `TypeError` at that auction, listing the inputs offered.
-- A market feature with the name of a built-in input raises `ValueError`.
-- A `Stack` passes each of its bidders the inputs it names, with `value` set to the previous output.
+- A market feature with the name of a built-in input, or `value`, raises `ValueError`.
+- A `Stack` passes each of its bidders the inputs it names, with `value` set to the previous output. Its first bidder gets no `value`, so a bid control such as `bl.Linear()` cannot come first; it raises `TypeError` that names `bl.OracleValue`.
 
 ## A value model before pacing
 
@@ -86,7 +91,7 @@ class SegmentRate(bl.Bidder):
     def on_episode_start(self, campaign):
         self.base_value = campaign.base_value
 
-    def forward(self, value, segment, time):
+    def forward(self, segment, time):
         self.pending[time] = segment
         wins = self.wins.get(segment, 0)
         rate = (self.conversions.get(segment, 0) + self.prior) / (wins + 1)
@@ -113,7 +118,12 @@ learning = bl.SimConfig(
             budget=15,
             base_value=5,
         ),
-        bl.Campaign("platform", bl.PidPacing(), budget=15, base_value=5),
+        bl.Campaign(
+            "oracle",
+            bl.Stack(bl.OracleValue(), bl.PidPacing()),
+            budget=15,
+            base_value=5,
+        ),
     ],
     market=market,
     episodes=3,
@@ -124,10 +134,11 @@ print(len(bl.run_many(learning, seeds=range(2))))  # 4 rows
 
 ## Value estimators
 
-A value estimator is a bidder: the first stage of a `Stack`, before a bid control. It ignores the incoming `value` and outputs `base_value` times its own estimate of the conversion chance. Three common kinds:
+A value estimator is a bidder: the first stage of a `Stack`, before a bid control. It outputs `base_value` times its own estimate of the chance of the campaign's event. Four common kinds:
 
 | Estimator | Estimate |
 |---|---|
+| Oracle | The true chance, from the `market` input: `bl.OracleValue` |
 | Fixed | One rate for every impression |
 | Counting | Conversions per win so far |
 | Model | A model on the public features, such as one logistic model per stage |
@@ -141,7 +152,7 @@ class FixedRate(bl.Bidder):
         self.rate = rate
         self.base_value = base_value
 
-    def forward(self, value):
+    def forward(self):
         return self.rate * self.base_value
 
 
@@ -152,7 +163,7 @@ class CountedRate(bl.Bidder):
         self.wins = 0
         self.conversions = 0
 
-    def forward(self, value):
+    def forward(self):
         return (self.conversions + self.prior) / (self.wins + 1) * self.base_value
 
     def update(self, result):
@@ -172,7 +183,7 @@ class ConversionModel(bl.Bidder):
     def predict(self, vector):
         return 1.0 / (1.0 + np.exp(-(self.weights @ vector) + 3.0))
 
-    def forward(self, value, features, time):
+    def forward(self, features, time):
         vector = features["vector"]
         self.pending[time] = vector
         return self.predict(vector) * self.base_value
@@ -204,6 +215,8 @@ estimated = bl.SimConfig(
 print(len(bl.run_many(estimated, seeds=range(2))))  # 6 rows
 ```
 
+`bl.OracleValue(noise=0.5)` adds normal noise with that standard deviation to logit(pCTR) and logit(pCVR), from its own random stream. Only the stages the campaign's event uses enter its value, and a pCTR of 1, from a market without a click stage, stays exact. Use it to test how a bid control copes with a known error. Metrics always use the true value, in `RunLog.true_values`.
+
 With a click stage, a model can learn each stage apart: clicks from every won impression, conversions from clicked ones, using `result.clicked`. The example [bidders/value_estimators.py](../../examples/bidders/value_estimators.py) does this and compares the three estimators with the market's truth.
 
 ## A bidder that uses randomness
@@ -220,7 +233,10 @@ class Jitter(bl.Bidder):
 
 
 jitter = bl.Campaign(
-    "jitter", bl.Stack(Jitter(), bl.PidPacing()), budget=15, base_value=5
+    "jitter",
+    bl.Stack(bl.OracleValue(), Jitter(), bl.PidPacing()),
+    budget=15,
+    base_value=5,
 )
 ```
 
@@ -228,11 +244,12 @@ jitter = bl.Campaign(
 
 | Class | Behavior | Arguments |
 |---|---|---|
+| `OracleValue` | Outputs the true value, `base_value` × the chance of the campaign's event, from the `market` input; with `noise`, a noisy estimate | `noise` (0.0) |
 | `Linear` | Outputs `multiplier` × value | `multiplier` (1.0) |
 | `PidPacing` | A PID loop moves a multiplier so spend tracks the budget evenly over the horizon; logs `"multiplier"` per auction | `initial_multiplier` (1.0), `kp` (20), `ki` (2), `kd` (0), `multiplier_range` ((0, 10)), `log_state` (True) |
 | `UcbMultiplier` | UCB1 over a grid of multipliers; one arm per episode, rewarded by the episode's surplus; override `update` for another reward; logs its arm as `"multiplier"` per episode | `min_multiplier` (0.2), `max_multiplier` (2.0), `multiplier_step` (0.2), `exploration` (1.0), `log_state` (True) |
 
-They live in `bl.bidders.baselines`, `bl.bidders.pacing` and `bl.bidders.bandits`, and `bl` exports each one.
+They live in `bl.bidders.baselines`, `bl.bidders.pacing` and `bl.bidders.bandits`, and `bl` exports each one. Every one but `OracleValue` needs a `value`, so it goes after an estimator in a `Stack`. There, its logged names carry its path, such as `"bidders.1.multiplier"`.
 
 A bidder can also hold other bidders and call them itself. See [Composite bidders](composite-bidders.md).
 
@@ -242,3 +259,4 @@ A bidder can also hold other bidders and call them itself. See [Composite bidder
 |---|---|
 | [bidders/segment_rate.py](../../examples/bidders/segment_rate.py) | Does a bidder that counts conversions per segment learn that sports converts better than news? |
 | [bidders/value_estimators.py](../../examples/bidders/value_estimators.py) | Does a two-stage model on the public features estimate conversions better than counting? |
+| [bidders/oracle_noise.py](../../examples/bidders/oracle_noise.py) | Does noise in the value estimate cost a truthful bidder surplus? |

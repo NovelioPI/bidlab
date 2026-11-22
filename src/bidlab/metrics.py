@@ -137,7 +137,9 @@ def platform_metrics(log: RunLog) -> list[PlatformEpisodeMetrics]:
     Examples
     --------
     >>> import bidlab as bl
-    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, base_value=5)
+    >>> campaign = bl.Campaign(
+    ...     "t", bl.Stack(bl.OracleValue(), bl.Linear()), budget=10, base_value=5
+    ... )
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=2, steps=50))
     >>> [row.revenue for row in bl.platform_metrics(log)]
     [0.0, 0.0]
@@ -166,8 +168,18 @@ def campaign_metrics(log: RunLog) -> list[CampaignEpisodeMetrics]:
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
     ...     campaigns=[
-    ...         bl.Campaign("a", bl.Linear(), budget=10, base_value=5),
-    ...         bl.Campaign("b", bl.PidPacing(), budget=10, base_value=5),
+    ...         bl.Campaign(
+    ...             "a",
+    ...             bl.Stack(bl.OracleValue(), bl.Linear()),
+    ...             budget=10,
+    ...             base_value=5,
+    ...         ),
+    ...         bl.Campaign(
+    ...             "b",
+    ...             bl.Stack(bl.OracleValue(), bl.PidPacing()),
+    ...             budget=10,
+    ...             base_value=5,
+    ...         ),
     ...     ],
     ...     episodes=2,
     ...     steps=50,
@@ -226,7 +238,9 @@ def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
     >>> import bidlab as bl
     >>> from bidlab.markets import Segment, Segmented
     >>> market = Segmented((Segment("day", 0.6), Segment("night", 0.4)))
-    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, base_value=5)
+    >>> campaign = bl.Campaign(
+    ...     "t", bl.Stack(bl.OracleValue(), bl.Linear()), budget=10, base_value=5
+    ... )
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], market=market, episodes=1, steps=50))
     >>> [row.segment for row in bl.segment_metrics(log)]
     ['day', 'night']
@@ -311,7 +325,9 @@ def regret(
     multiplier beats it:
 
     >>> import bidlab as bl
-    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, base_value=5)
+    >>> campaign = bl.Campaign(
+    ...     "t", bl.Stack(bl.OracleValue(), bl.Linear()), budget=10, base_value=5
+    ... )
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=1, steps=50))
     >>> round(bl.regret(log, episode=0, campaign_index=0), 9)
     0.0

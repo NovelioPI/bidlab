@@ -22,24 +22,27 @@ class FeatureMarket(Market):
             yield MarketDraw(self.features, pcvr=np.full(count, 0.5))
 
 
+BID = 0.1
+
+
 class Seen(Bidder):
     """Records the keyword arguments of every forward call."""
 
     calls: ClassVar[list[dict[str, Any]]] = []
 
     @override
-    def forward(self, value: float, **inputs: Any) -> float:
-        Seen.calls.append({"value": value, **inputs})
-        return value
+    def forward(self, **inputs: Any) -> float:
+        Seen.calls.append(dict(inputs))
+        return BID
 
 
 class TimeLeftOnly(Bidder):
     calls: ClassVar[list[dict[str, Any]]] = []
 
     @override
-    def forward(self, value: float, time_left: float) -> float:
+    def forward(self, time_left: float) -> float:
         TimeLeftOnly.calls.append(dict(locals()))
-        return value
+        return BID
 
 
 def run_one(bidder: Bidder, **kwargs: Any):
@@ -52,9 +55,7 @@ def test_forward_gets_only_declared_inputs():
     TimeLeftOnly.calls.clear()
     run_one(TimeLeftOnly())
     assert len(TimeLeftOnly.calls) == 20
-    assert all(
-        call.keys() == {"self", "value", "time_left"} for call in TimeLeftOnly.calls
-    )
+    assert all(call.keys() == {"self", "time_left"} for call in TimeLeftOnly.calls)
 
 
 def test_kwargs_gets_every_input():
@@ -69,11 +70,11 @@ class Spoils(Bidder):
     """Changes every input it gets."""
 
     @override
-    def forward(self, value: float, **inputs: Any) -> float:
+    def forward(self, **inputs: Any) -> float:
         for name in inputs:
             inputs[name] = -1.0
 
-        return value
+        return BID
 
 
 def test_kwargs_dict_is_per_call():
@@ -104,8 +105,8 @@ class FixedBid(Seen):
     """Records its inputs and always bids 3."""
 
     @override
-    def forward(self, value: float, **inputs: Any) -> float:
-        super().forward(value, **inputs)
+    def forward(self, **inputs: Any) -> float:
+        super().forward(**inputs)
         return 3.0
 
 
@@ -126,9 +127,9 @@ class Country(Bidder):
     countries: ClassVar[list[str]] = []
 
     @override
-    def forward(self, value: float, country: str) -> float:
+    def forward(self, country: str) -> float:
         Country.countries.append(country)
-        return value
+        return BID
 
 
 def test_feature_input_by_name():
@@ -148,9 +149,9 @@ class Optional(Bidder):
     countries: ClassVar[list[str]] = []
 
     @override
-    def forward(self, value: float, country: str = "none") -> float:
+    def forward(self, country: str = "none") -> float:
         Optional.countries.append(country)
-        return value
+        return BID
 
 
 def test_missing_input_uses_default():
@@ -162,7 +163,27 @@ def test_missing_input_uses_default():
 @pytest.mark.parametrize("name", sorted(BUILT_IN_INPUTS))
 def test_feature_named_like_builtin_raises(name):
     with pytest.raises(ValueError, match=rf"features \['{name}'\]"):
-        run_one(Linear(), market=FeatureMarket({name: 1.0}))
+        run_one(Seen(), market=FeatureMarket({name: 1.0}))
+
+
+def test_feature_named_value_rejected():
+    with pytest.raises(ValueError, match=r"features \['value'\]"):
+        run_one(Seen(), market=FeatureMarket({"value": 1.0}))
+
+
+def test_no_value_input():
+    Seen.calls.clear()
+    run_one(Seen())
+    assert len(Seen.calls) == 20
+    assert not any("value" in call for call in Seen.calls)
+
+
+def test_value_at_top_names_the_oracle():
+    with pytest.raises(
+        TypeError,
+        match=r"Linear.forward needs 'value'.*bl\.Stack\(bl\.OracleValue\(\), ",
+    ):
+        run_one(Linear())
 
 
 class PositionalOnly(Bidder):

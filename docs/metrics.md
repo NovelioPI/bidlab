@@ -78,7 +78,7 @@ Regret compares the bidder with the best fixed multiplier in hindsight.
 ## Limits of regret
 
 - Regret can be negative. An adaptive bidder can beat every fixed multiplier.
-- The replay bids on the true value. With `estimate_noise` above 0, or a bidder's own model, the bidder saw a different value, so regret includes the cost of that wrong estimate.
+- The replay bids on the true value. With `bl.OracleValue(noise=...)`, or a bidder's own model, the bidder saw a different value, so regret includes the cost of that wrong estimate.
 - Regret ignores CPA targets. A bidder that underbids to keep its CPA shows high regret. Read it together with `cpa_violation`.
 - Other bidders do not react in the replay. Learning competitors would have bid differently against the replayed bidder.
 - Ties lose in the replay, but the simulator breaks them at random. With continuous values, ties almost never happen.

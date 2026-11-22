@@ -8,9 +8,15 @@ import bidlab as bl
 
 config = bl.SimConfig(
     campaigns=[
-        bl.Campaign("truthful", bl.Linear(), budget=15, base_value=5),
-        bl.Campaign("pid", bl.PidPacing(), budget=15, base_value=5),
-        bl.Campaign("big", bl.Linear(), budget=50, base_value=5),
+        bl.Campaign(
+            "truthful", bl.Stack(bl.OracleValue(), bl.Linear()), budget=15, base_value=5
+        ),
+        bl.Campaign(
+            "pid", bl.Stack(bl.OracleValue(), bl.PidPacing()), budget=15, base_value=5
+        ),
+        bl.Campaign(
+            "big", bl.Stack(bl.OracleValue(), bl.Linear()), budget=50, base_value=5
+        ),
     ],
     auction=bl.SecondPrice(reserve=0.01),
     market=bl.markets.LogisticMarket(),

@@ -16,6 +16,10 @@ if TYPE_CHECKING:
 
 _LOGGER = "_bidlab_logger"
 _FORWARD_PLAN = "_bidlab_forward_plan"
+_NO_VALUE_HINT = (
+    "; the simulator does not pass 'value': put an estimator first, as in "
+    "bl.Stack(bl.OracleValue(), bl.Linear())"
+)
 
 LogValue = float | np.floating[Any] | np.integer[Any]
 """A number `Bidder.log` accepts: a Python number or a numpy scalar."""
@@ -34,13 +38,12 @@ class Logger(Protocol):
 class Bidder(ABC):
     """Base class for a bidding method: implement `forward`.
 
-    A bidder turns a value into another value. Alone, it gets the platform's
-    value as the ``value`` input, and its output is the bid. In a `Stack`,
-    each bidder gets the previous one's output as ``value``. A value model,
-    such as a pCVR model, returns its own value and may ignore the one it
-    gets. A bid-control method, such as pacing or shading, turns a value into
-    a bid. `forward` declares the inputs it needs as parameters, like a
-    PyTorch module's ``forward``.
+    A bidder's output is the bid, or in a `Stack`, the next bidder's
+    ``value`` input. The simulator passes no value: an estimator, such as a
+    pCVR model or `OracleValue`, computes one from the inputs. A bid-control
+    method, such as pacing or shading, sits after it in a `Stack` and turns
+    the value into a bid. `forward` declares the inputs it needs as
+    parameters, like a PyTorch module's ``forward``.
 
     Take settings as constructor arguments, and keep learned state on
     ``self``. The simulator deep-copies the bidder once per run, so every
@@ -82,7 +85,7 @@ class Bidder(ABC):
     ...         self.minimum = minimum
     ...     def forward(self, value):
     ...         return max(value, self.minimum)
-    >>> bidder = bl.Stack(bl.Linear(multiplier=0.5), Floor(0.3))
+    >>> bidder = bl.Stack(bl.OracleValue(), bl.Linear(multiplier=0.5), Floor(0.3))
     >>> campaign = bl.Campaign("floored", bidder, budget=10, base_value=5)
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=1, steps=20))
     >>> bool((log.bids >= 0.3).all())
@@ -115,10 +118,10 @@ class Bidder(ABC):
     # Each bidder declares its own inputs, so the base accepts any signature.
     @abstractmethod
     def forward(self, *args: Any, **kwargs: Any) -> float:
-        """Turn the incoming value and inputs into this bidder's output.
+        """Turn the inputs into this bidder's output.
 
         Declare the inputs you need as parameters, such as
-        ``forward(self, value, time_left, country)``, or take every input
+        ``forward(self, market, time_left, country)``, or take every input
         with ``**inputs``. The simulator passes the top bidder only the
         inputs it names; a `Stack` does the same for each of its bidders. A
         parent calls a child's `forward` with any arguments it chooses.
@@ -126,11 +129,9 @@ class Bidder(ABC):
         Parameters
         ----------
         value : float
-            The platform's value of the impression: `Campaign.base_value`
-            times its estimate of the chance of `Campaign.event`: 1 for an
-            impression, pCTR for a click, pCTR × pCVR for a conversion. Exact
-            unless `SimConfig.estimate_noise` is set. In a `Stack`, the previous
-            bidder's output.
+            In a `Stack`, the previous bidder's output. The simulator does
+            not pass it: the first bidder of a top `Stack` and a top bidder
+            get no ``value``.
         time : float
             Seconds since the episode start. Auctions are spaced evenly over
             the horizon, so the first is at 0.
@@ -243,14 +244,14 @@ class Bidder(ABC):
         Examples
         --------
         >>> import bidlab as bl
-        >>> class Half(bl.Bidder):
-        ...     def forward(self, value):
-        ...         self.log("factor", 0.5)
-        ...         return value / 2
-        >>> campaign = bl.Campaign("half", Half(), budget=10, base_value=5)
+        >>> class Fixed(bl.Bidder):
+        ...     def forward(self):
+        ...         self.log("bid", 0.1)
+        ...         return 0.1
+        >>> campaign = bl.Campaign("fixed", Fixed(), budget=10, base_value=5)
         >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=2, steps=50))
-        >>> log.logged["factor"]["half"].shape, float(log.logged["factor"]["half"][1, 49])
-        ((2, 50), 0.5)
+        >>> log.logged["bid"]["fixed"].shape, float(log.logged["bid"]["fixed"][1, 49])
+        ((2, 50), 0.1)
         """
         values = _checked_values(name_or_values, value)
         logger: Logger | None = vars(self).get(_LOGGER)
@@ -285,7 +286,7 @@ class Bidder(ABC):
         Examples
         --------
         >>> import bidlab as bl
-        >>> bidder = bl.Stack(bl.Linear(), bl.Stack(bl.PidPacing()))
+        >>> bidder = bl.Stack(bl.OracleValue(), bl.Stack(bl.PidPacing()))
         >>> [path for path, _ in bidder.named_bidders()]
         ['', 'bidders.0', 'bidders.1', 'bidders.1.bidders.0']
         """
@@ -356,6 +357,7 @@ def call_forward(bidder: Bidder, inputs: Mapping[str, object]) -> float:
             raise TypeError(
                 f"{type(bidder).__name__}.forward needs {name!r}, which is not an "
                 f"input here; give it a default or use one of {sorted(inputs)}"
+                + (_NO_VALUE_HINT if name == "value" else "")
             )
 
     if plan.takes_all:
@@ -364,6 +366,39 @@ def call_forward(bidder: Bidder, inputs: Mapping[str, object]) -> float:
     return bidder.forward(
         **{name: inputs[name] for name in plan.names if name in inputs}
     )
+
+
+def call_chain(bidders: Sequence[Bidder], inputs: dict[str, object]) -> float:
+    """Call each bidder in turn, passing each one's output to the next as ``value``.
+
+    `Stack` calls this. The first bidder gets ``inputs`` as they are; each
+    later bidder also gets ``value``.
+
+    Parameters
+    ----------
+    bidders : Sequence[Bidder]
+        At least one bidder, in the order they run.
+    inputs : dict[str, object]
+        Every input of this auction, by name. Changed in place: it ends
+        holding the last ``value`` passed on.
+
+    Returns
+    -------
+    float
+        The last bidder's output.
+
+    Raises
+    ------
+    TypeError
+        As `call_forward`.
+    """
+    first, *rest = bidders
+    value = call_forward(first, inputs)
+    for bidder in rest:
+        inputs["value"] = value
+        value = call_forward(bidder, inputs)
+
+    return value
 
 
 def takes_input(bidder: Bidder, name: str) -> bool:

@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from bidlab.auctions import NO_WINNER, FirstPrice, SecondPrice
-from bidlab.bidders import Linear
+from bidlab.bidders import Linear, OracleValue, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import Segment, Segmented
 from bidlab.metrics import campaign_metrics, platform_metrics, regret, segment_metrics
@@ -15,8 +15,14 @@ from bidlab.simulator import RunLog, run
 def hand_log(kind="second", reserve=0.0, budget=10.0, cpa_target=None):
     """One episode, 3 steps, 2 campaigns, with every number chosen by hand."""
     campaigns = (
-        Campaign("a", Linear(), budget=budget, base_value=4.0, cpa_target=cpa_target),
-        Campaign("b", Linear(), budget=10.0, base_value=2.0),
+        Campaign(
+            "a",
+            Stack(OracleValue(), Linear()),
+            budget=budget,
+            base_value=4.0,
+            cpa_target=cpa_target,
+        ),
+        Campaign("b", Stack(OracleValue(), Linear()), budget=10.0, base_value=2.0),
     )
     config = SimConfig(
         campaigns=campaigns,
@@ -104,9 +110,19 @@ def test_regret_respects_budget():
 def test_regret_nonnegative_for_fixed_multipliers():
     for multiplier in (0.5, 1.0, 1.5):
         campaigns = (
-            Campaign("me", Linear(multiplier=multiplier), budget=50.0, base_value=5.0),
-            Campaign("x", Linear(), budget=50.0, base_value=4.0),
-            Campaign("y", Linear(multiplier=0.7), budget=50.0, base_value=6.0),
+            Campaign(
+                "me",
+                Stack(OracleValue(), Linear(multiplier=multiplier)),
+                budget=50.0,
+                base_value=5.0,
+            ),
+            Campaign("x", Stack(OracleValue(), Linear()), budget=50.0, base_value=4.0),
+            Campaign(
+                "y",
+                Stack(OracleValue(), Linear(multiplier=0.7)),
+                budget=50.0,
+                base_value=6.0,
+            ),
         )
         log = run(SimConfig(campaigns=campaigns, episodes=2, steps=300, seed=3))
         for episode in range(2):
@@ -116,8 +132,10 @@ def test_regret_nonnegative_for_fixed_multipliers():
 def test_regret_accepts_integer_budget():
     def config(budget):
         campaigns = (
-            Campaign("me", Linear(), budget=budget, base_value=5.0),
-            Campaign("x", Linear(), budget=50.0, base_value=4.0),
+            Campaign(
+                "me", Stack(OracleValue(), Linear()), budget=budget, base_value=5.0
+            ),
+            Campaign("x", Stack(OracleValue(), Linear()), budget=50.0, base_value=4.0),
         )
         return SimConfig(campaigns=campaigns, episodes=1, steps=200, seed=4)
 
@@ -175,8 +193,8 @@ def test_no_spend_means_no_cpa_violation():
 
 def test_metric_rows_carry_their_episode():
     campaigns = (
-        Campaign("a", Linear(), budget=50.0, base_value=5.0),
-        Campaign("b", Linear(), budget=50.0, base_value=4.0),
+        Campaign("a", Stack(OracleValue(), Linear()), budget=50.0, base_value=5.0),
+        Campaign("b", Stack(OracleValue(), Linear()), budget=50.0, base_value=4.0),
     )
     log = run(SimConfig(campaigns=campaigns, episodes=2, steps=50, seed=1))
     assert [row.episode for row in platform_metrics(log)] == [0, 1]
@@ -193,7 +211,11 @@ def test_regret_with_a_single_bidder():
             winner=[0, 0, 0],
             price=[0.1, 0.1, 0.1],
         ),
-        campaigns=(Campaign("solo", Linear(), budget=10.0, base_value=5.0),),
+        campaigns=(
+            Campaign(
+                "solo", Stack(OracleValue(), Linear()), budget=10.0, base_value=5.0
+            ),
+        ),
         auction=SecondPrice(0.1),
     )
     assert regret(log, 0, 0) == pytest.approx(0.0)
@@ -208,7 +230,11 @@ def test_regret_replay_bid_equal_to_reserve_wins():
             winner=[0],
             price=[0.5],
         ),
-        campaigns=(Campaign("solo", Linear(), budget=10.0, base_value=5.0),),
+        campaigns=(
+            Campaign(
+                "solo", Stack(OracleValue(), Linear()), budget=10.0, base_value=5.0
+            ),
+        ),
         auction=SecondPrice(0.5),
     )
     assert regret(log, 0, 0, multipliers=np.array([0.5])) == pytest.approx(0.0)
@@ -225,8 +251,10 @@ def test_regret_replay_spends_its_budget():
             price=[0.5, 0.0],
         ),
         campaigns=(
-            Campaign("me", Linear(), budget=0.6, base_value=5.0),
-            Campaign("other", Linear(), budget=10.0, base_value=5.0),
+            Campaign("me", Stack(OracleValue(), Linear()), budget=0.6, base_value=5.0),
+            Campaign(
+                "other", Stack(OracleValue(), Linear()), budget=10.0, base_value=5.0
+            ),
         ),
         auction=SecondPrice(),
     )
@@ -243,7 +271,9 @@ def test_regret_masks_other_segments():
             winner=[0, NO_WINNER, 0],
             price=[0.1, 0.0, 0.1],
         ),
-        campaigns=(Campaign("me", Linear(), budget=10.0, base_value=5.0),),
+        campaigns=(
+            Campaign("me", Stack(OracleValue(), Linear()), budget=10.0, base_value=5.0),
+        ),
         auction=SecondPrice(0.1),
     )
     market = Segmented((Segment("x", 0.5), Segment("y", 0.5)))
@@ -253,7 +283,13 @@ def test_regret_masks_other_segments():
             log.config,
             market=market,
             campaigns=(
-                Campaign("me", Linear(), budget=10.0, base_value=5.0, segments=("x",)),
+                Campaign(
+                    "me",
+                    Stack(OracleValue(), Linear()),
+                    budget=10.0,
+                    base_value=5.0,
+                    segments=("x",),
+                ),
             ),
         ),
         segment=np.array([[0, 1, 0]]),
@@ -268,7 +304,11 @@ def test_regret_masks_other_segments():
 def test_segment_rows_carry_their_episode():
     log = run(
         SimConfig(
-            campaigns=(Campaign("a", Linear(), budget=5.0, base_value=4.0),),
+            campaigns=(
+                Campaign(
+                    "a", Stack(OracleValue(), Linear()), budget=5.0, base_value=4.0
+                ),
+            ),
             episodes=3,
             steps=5,
         )
