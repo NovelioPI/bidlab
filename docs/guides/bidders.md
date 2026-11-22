@@ -108,7 +108,7 @@ class SegmentRate(bl.Bidder):
 
 
 market = bl.markets.Segmented(
-    (bl.markets.Segment("news", 0.5), bl.markets.Segment("sports", 0.5, lift=1.0))
+    (bl.markets.Segment("news", 0.5), bl.markets.Segment("sports", 0.5, cvr_lift=1.0))
 )
 learning = bl.SimConfig(
     campaigns=[

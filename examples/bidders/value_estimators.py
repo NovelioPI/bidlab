@@ -88,9 +88,7 @@ class TwoStageModel(bl.Bidder):
 
 
 FEATURES = 4
-market = bl.markets.LogisticMarket(
-    feature_count=FEATURES, cvr_bias_mean=-1.0, ctr_bias_mean=-1.0
-)
+market = bl.markets.LogisticMarket(feature_count=FEATURES, ctr=0.3, cvr=0.3)
 estimators = {
     "fixed": FixedRate(),
     "counted": CountedRate(),

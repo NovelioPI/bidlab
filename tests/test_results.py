@@ -197,7 +197,7 @@ def test_custom_market_same_rows_in_parallel():
 
 
 def segmented_config():
-    market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)))
+    market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, cvr_lift=1.0)))
     targeted = Campaign(
         "n",
         Stack(OracleValue(), Linear()),
@@ -445,7 +445,9 @@ def test_surplus_follows_event():
 
 def test_segment_surplus_follows_event():
     base = LogisticMarket(ctr_bias_mean=-1.0, cvr_bias_mean=-1.0)
-    market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)), base)
+    market = Segmented(
+        (Segment("news", 0.6), Segment("sports", 0.4, cvr_lift=1.0)), base
+    )
     cfg = event_config(market)
     results = run_many(cfg, seeds=range(2))
     names = [campaign.name for campaign in cfg.campaigns]

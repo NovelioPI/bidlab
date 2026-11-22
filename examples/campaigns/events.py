@@ -27,7 +27,7 @@ config = bl.SimConfig(
             event=bl.Event.CONVERSION,
         ),
     ],
-    market=bl.markets.LogisticMarket(ctr_bias_mean=-3.0),
+    market=bl.markets.LogisticMarket(ctr=0.05),
     episodes=5,
     steps=500,
 )
