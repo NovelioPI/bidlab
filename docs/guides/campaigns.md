@@ -42,7 +42,7 @@ goals = bl.SimConfig(
         bl.Campaign("traffic", paced(), budget=15, base_value=0.4, event="click"),
         bl.Campaign("shop", paced(), budget=15, base_value=5),
     ],
-    market=bl.markets.LogisticMarket(ctr_bias_mean=-3.0),
+    market=bl.markets.LogisticMarket(ctr=0.05),
     episodes=2,
     steps=200,
 )

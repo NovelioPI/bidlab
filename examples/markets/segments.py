@@ -9,8 +9,8 @@ import bidlab as bl
 market = bl.markets.Segmented(
     (
         bl.markets.Segment("news", share=0.5),
-        bl.markets.Segment("sports", share=0.3, lift=1.0),
-        bl.markets.Segment("games", share=0.2, lift=-0.5),
+        bl.markets.Segment("sports", share=0.3, cvr_lift=1.0),
+        bl.markets.Segment("games", share=0.2, cvr_lift=-0.5),
     )
 )
 

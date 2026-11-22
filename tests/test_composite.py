@@ -529,7 +529,7 @@ def test_unused_child_still_learns():
 
 def test_tree_skipped_outside_segments():
     Counts.counts.clear()
-    market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)))
+    market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, cvr_lift=1.0)))
     log = run(
         config(
             Campaign("u", Unused(), budget=1e6, base_value=5.0, segments=["news"]),

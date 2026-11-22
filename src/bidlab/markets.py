@@ -8,10 +8,14 @@ from typing import NamedTuple, Protocol
 
 import numpy as np
 import numpy.typing as npt
+from scipy.special import expit, logit
 
 ALL_SEGMENTS = "all"
 SHARE_TOLERANCE = 1e-9
 SAMPLE_BLOCK_SIZE = 1024
+DEFAULT_CVR_BIAS_MEAN = -3.0
+QUADRATURE_NODES, QUADRATURE_WEIGHTS = np.polynomial.hermite.hermgauss(200)
+BISECTION_STEPS = 60
 
 type FeatureValue = str | float | npt.NDArray[np.float64]
 
@@ -42,6 +46,12 @@ def _checked_floor_share(
         )
 
     return shape[0], shape[1]
+
+
+def _check_rate(name: str, rate: float) -> None:
+    # A negated check also catches NaN, which fails every comparison.
+    if not 0 < rate < 1:
+        raise ValueError(f"{name} must be in (0, 1), got {rate}")
 
 
 def _check_distribution(name: str, distribution: object) -> None:
@@ -168,19 +178,31 @@ class LogisticMarket(Market):
     ``public_features`` numbers of the vector reach bidders as
     ``features["vector"]``; the rest still drive the probabilities unseen.
 
+    Set each stage by its rate, or by its bias for the logit model itself.
+
     Parameters
     ----------
     feature_count : int, optional
         Length of the feature vector and the ad vectors.
+    ctr : float, optional
+        Click rate, in (0, 1): campaign i's mean pCTR over a run is
+        σ(logit(ctr) + δᵢ), with δᵢ ~ N(0, ``ctr_spread``). Turns on the
+        click stage.
+    cvr : float, optional
+        Conversion rate per click, in (0, 1), set the same way with
+        ``cvr_spread``.
     ctr_bias_mean : float, optional
-        Mean of the per-campaign click bias. None, the default, means no
-        click stage: every won impression is clicked.
-    ctr_bias_sd : float, optional
-        Spread of the per-campaign click bias.
+        Mean of the per-campaign click bias, in place of ``ctr``. Without
+        either, the market has no click stage: every won impression is
+        clicked.
+    ctr_spread : float, optional
+        Spread of the per-campaign click bias, or of δᵢ with ``ctr``, on the
+        logit scale.
     cvr_bias_mean : float, optional
-        Mean of the per-campaign conversion bias; -3 gives pCVR near 5%.
-    cvr_bias_sd : float, optional
-        Spread of the per-campaign conversion bias.
+        Mean of the per-campaign conversion bias, in place of ``cvr``. None,
+        the default, means -3 without ``cvr``, which gives pCVR near 5%.
+    cvr_spread : float, optional
+        Spread of the per-campaign conversion bias, or of δᵢ with ``cvr``.
     public_features : int, optional
         How many features bidders see, from 0 to ``feature_count``. None
         means all.
@@ -207,8 +229,8 @@ class LogisticMarket(Market):
     TypeError
         If ``public_features`` is not an int.
     ValueError
-        If ``public_features`` is outside [0, ``feature_count``], or a price
-        setting is out of range.
+        If ``public_features`` is outside [0, ``feature_count``], a rate or a
+        price setting is out of range, or a rate and its bias are both set.
 
     Notes
     -----
@@ -221,9 +243,11 @@ class LogisticMarket(Market):
 
     Examples
     --------
+    A 2% click rate and a 5% conversion rate, with 3 public features:
+
     >>> import numpy as np
     >>> import bidlab as bl
-    >>> market = bl.markets.LogisticMarket(ctr_bias_mean=-4.0, public_features=3)
+    >>> market = bl.markets.LogisticMarket(ctr=0.02, cvr=0.05, public_features=3)
     >>> draw = next(market.draws(2, np.random.default_rng(0)))
     >>> draw.pcvr.shape, draw.pctr.shape, draw.features["vector"].shape
     ((2,), (2,), (3,))
@@ -239,10 +263,12 @@ class LogisticMarket(Market):
     """
 
     feature_count: int = 8
+    ctr: float | None = None
+    cvr: float | None = None
     ctr_bias_mean: float | None = None
-    ctr_bias_sd: float = 0.5
-    cvr_bias_mean: float = -3.0
-    cvr_bias_sd: float = 0.5
+    ctr_spread: float = 0.5
+    cvr_bias_mean: float | None = None
+    cvr_spread: float = 0.5
     public_features: int | None = None
     price_median: float | None = None
     price_spread: float = 0.5
@@ -251,6 +277,7 @@ class LogisticMarket(Market):
     floor_share: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
+        self._check_rates()
         self._check_price()
         public = self.public_features
         if public is None:
@@ -265,6 +292,19 @@ class LogisticMarket(Market):
             raise ValueError(
                 f"public_features must be in [0, {self.feature_count}], got {public}"
             )
+
+    def _check_rates(self) -> None:
+        stages = (
+            ("ctr", self.ctr, self.ctr_bias_mean),
+            ("cvr", self.cvr, self.cvr_bias_mean),
+        )
+        for name, rate, bias_mean in stages:
+            if rate is None:
+                continue
+
+            _check_rate(name, rate)
+            if bias_mean is not None:
+                raise ValueError(f"set {name} or {name}_bias_mean, not both")
 
     def _check_price(self) -> None:
         # Negated checks also catch NaN, which fails every comparison.
@@ -286,13 +326,14 @@ class LogisticMarket(Market):
 
     def draws(self, count: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
         """Yield one draw per step; see `Market.draws`."""
-        for stages in _logistic_stages(self, count, rng):
+        for step in _LogisticStages(self, count, rng).steps():
+            pctr = None if step.ctr_logits is None else _sigmoid(step.ctr_logits)
             yield MarketDraw(
-                {"vector": stages.public_vector},
-                pctr=stages.pctr,
-                pcvr=_sigmoid(stages.cvr_logits),
-                market_price=stages.market_price,
-                floor=stages.floor,
+                {"vector": step.public_vector},
+                pctr=pctr,
+                pcvr=_sigmoid(step.cvr_logits),
+                market_price=step.market_price,
+                floor=step.floor,
             )
 
 
@@ -306,22 +347,60 @@ class Segment:
         Segment name; bidders list it in `Campaign.segments`.
     share : float
         Fraction of steps from this segment. Shares must sum to 1.
-    lift : float, optional
-        Added to every campaign's CVR logit in this segment.
+    ctr : float, optional
+        Click rate in this segment, in (0, 1), in place of the market's.
+        Campaign i's mean pCTR here is σ(logit(ctr) + δᵢ), with the same δᵢ
+        as in the rest of the market. Needs a click stage in the base market.
+    cvr : float, optional
+        Conversion rate per click in this segment, set the same way.
+    ctr_lift : float, optional
+        Added to every campaign's click logit in this segment, in place of
+        ``ctr``. Needs a click stage in the base market.
+    cvr_lift : float, optional
+        Added to every campaign's CVR logit in this segment, in place of
+        ``cvr``.
+
+    Raises
+    ------
+    ValueError
+        If a rate is outside (0, 1), or a stage's rate and lift are both set.
+
+    Examples
+    --------
+    >>> from bidlab.markets import Segment
+    >>> mobile = Segment("mobile", 0.7, ctr=0.03, cvr=0.04)
+    >>> sports = Segment("sports", 0.3, cvr_lift=1.0)
     """
 
     name: str
     share: float
-    lift: float = 0.0
+    _: KW_ONLY
+    ctr: float | None = None
+    cvr: float | None = None
+    ctr_lift: float = 0.0
+    cvr_lift: float = 0.0
+
+    def __post_init__(self) -> None:
+        stages = (("ctr", self.ctr, self.ctr_lift), ("cvr", self.cvr, self.cvr_lift))
+        for name, rate, lift in stages:
+            if rate is None:
+                continue
+
+            _check_rate(name, rate)
+            if lift != 0:
+                raise ValueError(
+                    f"segment {self.name!r}: set {name} or {name}_lift, not both"
+                )
 
 
 @dataclass(frozen=True)
 class Segmented(Market):
-    """Each step comes from one segment; its `lift` shifts every campaign's CVR logit.
+    """Each step comes from one segment, which can set its own rates or lifts.
 
     Bidders get the segment name as the ``segment`` input of `Bidder.forward`,
-    and the base market's ``"vector"`` feature and click stage unchanged. The
-    market price and floor are the base market's too.
+    and the base market's ``"vector"`` feature. A segment without a rate or a
+    lift keeps the base market's rates. The market price and floor are the
+    base market's too.
 
     Parameters
     ----------
@@ -329,19 +408,20 @@ class Segmented(Market):
         At least one segment, stored as a tuple, with unique names and shares
         that sum to 1.
     base : LogisticMarket, optional
-        Draws the features and logits before the lift is added.
+        Draws the features and logits before a segment changes them.
 
     Raises
     ------
     ValueError
-        If there is no segment, a name repeats, a share is <= 0, or the
-        shares do not sum to 1.
+        If there is no segment, a name repeats, a share is <= 0, the shares
+        do not sum to 1, or a segment sets a click rate or lift when the base
+        has no click stage.
 
     Examples
     --------
     >>> import bidlab as bl
     >>> from bidlab.markets import Segment, Segmented
-    >>> market = Segmented((Segment("mobile", 0.7, lift=0.5), Segment("desktop", 0.3)))
+    >>> market = Segmented((Segment("mobile", 0.7, cvr_lift=0.5), Segment("desktop", 0.3)))
     >>> market.segment_names
     ('mobile', 'desktop')
     """
@@ -369,6 +449,16 @@ class Segmented(Market):
         if abs(total - 1.0) > SHARE_TOLERANCE:
             raise ValueError(f"segment shares must sum to 1, got {total}")
 
+        if self.base.ctr is not None or self.base.ctr_bias_mean is not None:
+            return
+
+        for segment in self.segments:
+            if segment.ctr is not None or segment.ctr_lift != 0:
+                raise ValueError(
+                    f"segment {segment.name!r} sets a click rate or lift, but the "
+                    "base market has no click stage; set ctr on the base"
+                )
+
     @property
     def segment_names(self) -> tuple[str, ...]:
         """The segment names, in the order given."""
@@ -378,15 +468,32 @@ class Segmented(Market):
         """Yield one draw per step; see `Market.draws`."""
         base_rng, pick_rng = rng.spawn(2)
         shares = [segment.share for segment in self.segments]
-        for stages in _logistic_stages(self.base, count, base_rng):
-            segment = self.segments[pick_rng.choice(len(self.segments), p=shares)]
+        stages = _LogisticStages(self.base, count, base_rng)
+        click, conversion = stages.click, stages.conversion
+        # A lift stays a float, so a segment without a rate keeps every old bit.
+        ctr_shifts = [
+            segment.ctr_lift
+            if segment.ctr is None or click is None
+            else click.shift(segment.ctr)
+            for segment in self.segments
+        ]
+        cvr_shifts = [
+            segment.cvr_lift if segment.cvr is None else conversion.shift(segment.cvr)
+            for segment in self.segments
+        ]
+        for step in stages.steps():
+            index = pick_rng.choice(len(self.segments), p=shares)
+            segment = self.segments[index]
+            pctr = None
+            if step.ctr_logits is not None:
+                pctr = _sigmoid(step.ctr_logits + ctr_shifts[index])
             yield MarketDraw(
-                {"vector": stages.public_vector},
-                pctr=stages.pctr,
-                pcvr=_sigmoid(stages.cvr_logits + segment.lift),
+                {"vector": step.public_vector},
+                pctr=pctr,
+                pcvr=_sigmoid(step.cvr_logits + cvr_shifts[index]),
                 segment=segment.name,
-                market_price=stages.market_price,
-                floor=stages.floor,
+                market_price=step.market_price,
+                floor=step.floor,
             )
 
 
@@ -472,81 +579,161 @@ class IndependentValues(Market):
                 yield MarketDraw({}, pcvr=pcvr, market_price=price, floor=floor)
 
 
-class _Stages(NamedTuple):
+class _Step(NamedTuple):
     public_vector: npt.NDArray[np.float64]
-    pctr: npt.NDArray[np.float64] | None
+    ctr_logits: npt.NDArray[np.float64] | None
     cvr_logits: npt.NDArray[np.float64]
     market_price: float | None
     floor: float
 
 
-def _logistic_stages(
-    market: LogisticMarket, count: int, rng: np.random.Generator
-) -> Iterator[_Stages]:
-    dimensions = market.feature_count
-    public = dimensions if market.public_features is None else market.public_features
-    # Separate streams keep campaign i's draws equal when campaigns are added.
-    # Risk: if new streams came before the first five, then every older draw would move.
-    (
-        cvr_vector_rng,
-        cvr_bias_rng,
-        feature_rng,
-        ctr_vector_rng,
-        ctr_bias_rng,
-        market_vector_rng,
-        price_rng,
-        floor_rng,
-    ) = rng.spawn(8)
-    scale = 1.0 / np.sqrt(dimensions)
-    has_price = market.price_median is not None
-    market_vector = np.zeros(dimensions)
-    if has_price or market.rival_similarity > 0:
-        market_vector = market_vector_rng.normal(0.0, scale, size=dimensions)
+@dataclass(frozen=True, eq=False)
+class _Stage:
+    vectors: npt.NDArray[np.float64]
+    biases: npt.NDArray[np.float64]
+    offsets: npt.NDArray[np.float64]
 
-    click_weights = None
-    if market.ctr_bias_mean is not None:
-        click_weights = (
-            _share_market_vector(
-                ctr_vector_rng.normal(0.0, scale, size=(count, dimensions)),
-                market_vector,
-                market.rival_similarity,
-            ),
-            ctr_bias_rng.normal(market.ctr_bias_mean, market.ctr_bias_sd, size=count),
-        )
-
-    cvr_vectors = _share_market_vector(
-        cvr_vector_rng.normal(0.0, scale, size=(count, dimensions)),
-        market_vector,
-        market.rival_similarity,
-    )
-    cvr_biases = cvr_bias_rng.normal(
-        market.cvr_bias_mean, market.cvr_bias_sd, size=count
-    )
-    while True:
-        features = feature_rng.normal(size=dimensions)
-        pctr = None
+    def logits(self, features: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         # A matrix product rounds differently as rows are added; a per-row sum does not.
-        if click_weights is not None:
-            ctr_vectors, ctr_biases = click_weights
-            pctr = _sigmoid((ctr_vectors * features).sum(axis=1) + ctr_biases)
+        return (self.vectors * features).sum(axis=1) + self.biases
 
-        cvr_logits = (cvr_vectors * features).sum(axis=1) + cvr_biases
-        market_price = None
-        floor = 0.0
-        if has_price:
-            quality = (market_vector * features).sum()
-            noise = price_rng.standard_normal()
-            market_price = float(
-                market.price_median
-                * np.exp(market.price_quality * quality + market.price_spread * noise)
+    def shift(self, rate: float) -> npt.NDArray[np.float64]:
+        return _rate_biases(self.vectors, self.offsets, rate) - self.biases
+
+
+def _bias_stage(
+    vectors: npt.NDArray[np.float64],
+    bias_rng: np.random.Generator,
+    mean: float,
+    spread: float,
+) -> _Stage:
+    biases = bias_rng.normal(mean, spread, size=len(vectors))
+    return _Stage(vectors, biases, biases - mean)
+
+
+def _rate_stage(
+    vectors: npt.NDArray[np.float64],
+    bias_rng: np.random.Generator,
+    rate: float,
+    spread: float,
+) -> _Stage:
+    # One draw per campaign, as a bias stage takes, so no other draw moves.
+    offsets = bias_rng.normal(0.0, spread, size=len(vectors))
+    return _Stage(vectors, _rate_biases(vectors, offsets, rate), offsets)
+
+
+def _rate_biases(
+    vectors: npt.NDArray[np.float64], offsets: npt.NDArray[np.float64], rate: float
+) -> npt.NDArray[np.float64]:
+    scales = np.sqrt((vectors**2).sum(axis=1))
+    return _solve_biases(expit(logit(rate) + offsets), scales)
+
+
+def _solve_biases(
+    targets: npt.NDArray[np.float64], scales: npt.NDArray[np.float64]
+) -> npt.NDArray[np.float64]:
+    # The logit is N(b, s²), so the mean rate E[σ(b + sZ)] is a Gauss–Hermite sum.
+    points = np.sqrt(2.0) * scales[:, np.newaxis] * QUADRATURE_NODES
+    weights = QUADRATURE_WEIGHTS / np.sqrt(np.pi)
+    # The root lies within 1 + s² of logit(target); doubling that leaves room.
+    width = 2.0 * (1.0 + scales**2)
+    low = logit(targets) - width
+    high = logit(targets) + width
+    for _ in range(BISECTION_STEPS):
+        middle = (low + high) / 2
+        above = (expit(middle[:, np.newaxis] + points) * weights).sum(axis=1) > targets
+        high = np.where(above, middle, high)
+        low = np.where(above, low, middle)
+
+    return (low + high) / 2
+
+
+class _LogisticStages:
+    def __init__(
+        self, market: LogisticMarket, count: int, rng: np.random.Generator
+    ) -> None:
+        dimensions = market.feature_count
+        # Separate streams keep campaign i's draws equal when campaigns are added.
+        # Risk: if new streams came before the first five, then every older draw would move.
+        (
+            cvr_vector_rng,
+            cvr_bias_rng,
+            self._feature_rng,
+            ctr_vector_rng,
+            ctr_bias_rng,
+            market_vector_rng,
+            self._price_rng,
+            self._floor_rng,
+        ) = rng.spawn(8)
+        self._market = market
+        scale = 1.0 / np.sqrt(dimensions)
+        self._market_vector = np.zeros(dimensions)
+        if market.price_median is not None or market.rival_similarity > 0:
+            self._market_vector = market_vector_rng.normal(0.0, scale, size=dimensions)
+
+        def ad_vectors(vector_rng: np.random.Generator) -> npt.NDArray[np.float64]:
+            return _share_market_vector(
+                vector_rng.normal(0.0, scale, size=(count, dimensions)),
+                self._market_vector,
+                market.rival_similarity,
             )
-            if market.floor_share is not None:
-                floor = market_price * float(floor_rng.beta(*market.floor_share))
 
-        public_vector = features[:public]
-        # Nothing else holds this step's features, so a read-only view needs no copy.
-        public_vector.flags.writeable = False
-        yield _Stages(public_vector, pctr, cvr_logits, market_price, floor)
+        self.click: _Stage | None = None
+        if market.ctr is not None:
+            self.click = _rate_stage(
+                ad_vectors(ctr_vector_rng), ctr_bias_rng, market.ctr, market.ctr_spread
+            )
+        elif market.ctr_bias_mean is not None:
+            self.click = _bias_stage(
+                ad_vectors(ctr_vector_rng),
+                ctr_bias_rng,
+                market.ctr_bias_mean,
+                market.ctr_spread,
+            )
+
+        if market.cvr is not None:
+            self.conversion = _rate_stage(
+                ad_vectors(cvr_vector_rng), cvr_bias_rng, market.cvr, market.cvr_spread
+            )
+        else:
+            mean = market.cvr_bias_mean
+            self.conversion = _bias_stage(
+                ad_vectors(cvr_vector_rng),
+                cvr_bias_rng,
+                DEFAULT_CVR_BIAS_MEAN if mean is None else mean,
+                market.cvr_spread,
+            )
+
+    def steps(self) -> Iterator[_Step]:
+        market = self._market
+        dimensions = market.feature_count
+        public = (
+            dimensions if market.public_features is None else market.public_features
+        )
+        while True:
+            features = self._feature_rng.normal(size=dimensions)
+            ctr_logits = None if self.click is None else self.click.logits(features)
+            cvr_logits = self.conversion.logits(features)
+            market_price = None
+            floor = 0.0
+            if market.price_median is not None:
+                quality = (self._market_vector * features).sum()
+                noise = self._price_rng.standard_normal()
+                market_price = float(
+                    market.price_median
+                    * np.exp(
+                        market.price_quality * quality + market.price_spread * noise
+                    )
+                )
+                if market.floor_share is not None:
+                    floor = market_price * float(
+                        self._floor_rng.beta(*market.floor_share)
+                    )
+
+            public_vector = features[:public]
+            # Nothing else holds this step's features, so a read-only view needs no copy.
+            public_vector.flags.writeable = False
+            yield _Step(public_vector, ctr_logits, cvr_logits, market_price, floor)
 
 
 def _share_market_vector(
