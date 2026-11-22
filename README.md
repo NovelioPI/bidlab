@@ -6,12 +6,12 @@ You write a bidder class and a short Python script. bidlab runs the auctions, hi
 
 ## Install
 
-bidlab is not on PyPI yet. From a clone of this repo:
-
 ```bash
-uv sync                      # core: numpy, scipy, cloudpickle
-uv sync --extra pandas       # adds Results.to_pandas()
+pip install bidlab               # core: numpy, scipy, cloudpickle
+pip install "bidlab[pandas]"     # adds Results.to_pandas()
 ```
+
+bidlab needs Python 3.12 or later. To work on bidlab itself, run `uv sync` in a clone of this repo. Changes per release are in the [changelog](https://github.com/NovelioPI/bidlab/blob/main/CHANGELOG.md).
 
 ## Quickstart
 

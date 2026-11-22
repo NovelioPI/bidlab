@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # The PyPI trusted publisher is bound to this environment name.
+    environment: pypi
+    permissions:
+      # PyPI trades this OIDC token for a short-lived upload token.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: Check the tag matches the package version
+        run: test "${GITHUB_REF_NAME#v}" = "$(uv version --short)"
+      - run: uv build
+      - name: Check the wheel marks the package as typed
+        run: unzip -l dist/*.whl | grep bidlab/py.typed
+      - run: uvx twine check --strict dist/*
+      - run: uv publish --trusted-publishing always

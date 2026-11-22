@@ -34,6 +34,7 @@ pandas = [
 Homepage = "https://github.com/NovelioPI/bidlab"
 Source = "https://github.com/NovelioPI/bidlab"
 Issues = "https://github.com/NovelioPI/bidlab/issues"
+Changelog = "https://github.com/NovelioPI/bidlab/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 dev = [
