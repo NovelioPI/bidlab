@@ -3,8 +3,8 @@ from typing import Any
 
 import numpy as np
 import pytest
-from scipy import stats
-from scipy.special import logit
+from scipy import integrate, stats
+from scipy.special import expit, logit
 
 import bidlab as bl
 from bidlab.bidders import Linear, OracleValue, Stack
@@ -15,6 +15,7 @@ from bidlab.markets import (
     MarketDraw,
     Segment,
     Segmented,
+    _solve_biases,  # pyright: ignore[reportPrivateUsage]  Reason: the solver's accuracy is checked against an exact integral.
 )
 from bidlab.simulator import run
 
@@ -562,3 +563,94 @@ def test_rival_similarity_without_price_keeps_rates():
         np.testing.assert_array_equal(stacked(alone, name), stacked(priced, name))
     plain = logistic_draws(LogisticMarket(ctr_bias_mean=-3.0), 3, steps=300)
     assert not np.array_equal(stacked(alone, "pcvr"), stacked(plain, "pcvr"))
+
+
+RATE_STEPS = 20_000
+
+
+def assert_campaign_means_near(rates, target):
+    # Steps are independent, so 4 standard errors of the step mean rarely fail by chance.
+    means = rates.mean(axis=0)
+    standard_errors = rates.std(axis=0) / np.sqrt(len(rates))
+    assert np.all(np.abs(means - target) < 4 * standard_errors), (means, target)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [{}, {"rival_similarity": 0.8, "public_features": 3, "price_median": 0.2}],
+    ids=["plain", "rival"],
+)
+@pytest.mark.parametrize(("stage", "rate"), [("ctr", 0.02), ("cvr", 0.05)])
+def test_rate_sets_each_campaign_mean(stage, rate, settings):
+    market = LogisticMarket(**{stage: rate, f"{stage}_spread": 0.0}, **settings)
+    draws = logistic_draws(market, 5, RATE_STEPS)
+    assert_campaign_means_near(stacked(draws, f"p{stage}"), rate)
+
+
+def test_rate_spread_across_campaigns():
+    draws = logistic_draws(LogisticMarket(ctr=0.02, cvr=0.05), 200, RATE_STEPS)
+    for name, rate in (("pctr", 0.02), ("pcvr", 0.05)):
+        campaign_logits = logit(stacked(draws, name).mean(axis=0))
+        assert abs(np.median(campaign_logits) - logit(rate)) < 0.15
+        assert abs(campaign_logits.std() - 0.5) < 0.1
+
+
+def test_rate_solve_matches_integral():
+    targets = np.array([1e-6, 1e-3, 0.02, 0.05, 0.5, 0.9, 0.999])
+    for scale, tolerance in [
+        (0.0, 1e-7),
+        (0.5, 1e-7),
+        (1.0, 1e-7),
+        (4.0, 1e-7),
+        (6.0, 1e-5),
+    ]:
+        biases = _solve_biases(targets, np.full(len(targets), scale))
+        for bias, target in zip(biases, targets, strict=True):
+
+            def density(z, bias=bias, scale=scale):
+                return expit(bias + scale * z) * stats.norm.pdf(z)
+
+            mean, _ = integrate.quad(
+                density, -np.inf, np.inf, epsabs=0, epsrel=1e-13, limit=200
+            )
+            assert abs(mean - target) / target < tolerance, (scale, target)
+
+
+@pytest.mark.parametrize("stage", ["ctr", "cvr"])
+def test_rate_and_bias_together_rejected(stage):
+    with pytest.raises(ValueError, match=f"{stage}.*{stage}_bias_mean"):
+        LogisticMarket(**{stage: 0.05, f"{stage}_bias_mean": -3.0})  # pyright: ignore[reportArgumentType]  Reason: pyright cannot match keys built from a string.
+
+
+@pytest.mark.parametrize("rate", [0.0, 1.0, -0.1, 1.5, float("nan")])
+@pytest.mark.parametrize("stage", ["ctr", "cvr"])
+def test_bad_rate_rejected(stage, rate):
+    with pytest.raises(ValueError, match=rf"{stage} must be in \(0, 1\)"):
+        LogisticMarket(**{stage: rate})
+
+
+def test_ctr_rate_turns_on_click_stage():
+    draw = next(LogisticMarket(ctr=0.02).draws(2, np.random.default_rng(0)))
+    assert draw.pctr is not None
+    assert draw.pctr.shape == (2,)
+
+
+@pytest.mark.parametrize(("fewer", "more"), [(1, 2), (3, 4), (2, 7)])
+def test_adding_campaign_keeps_rate_draws(fewer, more):
+    market = LogisticMarket(ctr=0.02, cvr=0.05, rival_similarity=0.5)
+    small = logistic_draws(market, fewer, steps=300)
+    large = logistic_draws(market, more, steps=300)
+    for name in ("pctr", "pcvr"):
+        np.testing.assert_array_equal(
+            stacked(small, name), stacked(large, name)[:, :fewer]
+        )
+
+
+def test_rate_mode_keeps_other_draws():
+    priced: dict[str, Any] = {"price_median": 0.2, "floor_share": (2, 5)}
+    rate = logistic_draws(LogisticMarket(ctr=0.02, **priced), 3, steps=300)
+    bias = logistic_draws(LogisticMarket(ctr_bias_mean=-3.0, **priced), 3, steps=300)
+    np.testing.assert_array_equal(vectors(rate), vectors(bias))
+    for name in ("pcvr", "market_price", "floor"):
+        np.testing.assert_array_equal(stacked(rate, name), stacked(bias, name))
+    assert not np.array_equal(stacked(rate, "pctr"), stacked(bias, "pctr"))

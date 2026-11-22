@@ -8,10 +8,14 @@ from typing import NamedTuple, Protocol
 
 import numpy as np
 import numpy.typing as npt
+from scipy.special import expit, logit
 
 ALL_SEGMENTS = "all"
 SHARE_TOLERANCE = 1e-9
 SAMPLE_BLOCK_SIZE = 1024
+DEFAULT_CVR_BIAS_MEAN = -3.0
+QUADRATURE_NODES, QUADRATURE_WEIGHTS = np.polynomial.hermite.hermgauss(200)
+BISECTION_STEPS = 60
 
 type FeatureValue = str | float | npt.NDArray[np.float64]
 
@@ -42,6 +46,12 @@ def _checked_floor_share(
         )
 
     return shape[0], shape[1]
+
+
+def _check_rate(name: str, rate: float) -> None:
+    # A negated check also catches NaN, which fails every comparison.
+    if not 0 < rate < 1:
+        raise ValueError(f"{name} must be in (0, 1), got {rate}")
 
 
 def _check_distribution(name: str, distribution: object) -> None:
@@ -168,19 +178,31 @@ class LogisticMarket(Market):
     ``public_features`` numbers of the vector reach bidders as
     ``features["vector"]``; the rest still drive the probabilities unseen.
 
+    Set each stage by its rate, or by its bias for the logit model itself.
+
     Parameters
     ----------
     feature_count : int, optional
         Length of the feature vector and the ad vectors.
+    ctr : float, optional
+        Click rate, in (0, 1): campaign i's mean pCTR over a run is
+        σ(logit(ctr) + δᵢ), with δᵢ ~ N(0, ``ctr_spread``). Turns on the
+        click stage.
+    cvr : float, optional
+        Conversion rate per click, in (0, 1), set the same way with
+        ``cvr_spread``.
     ctr_bias_mean : float, optional
-        Mean of the per-campaign click bias. None, the default, means no
-        click stage: every won impression is clicked.
+        Mean of the per-campaign click bias, in place of ``ctr``. Without
+        either, the market has no click stage: every won impression is
+        clicked.
     ctr_spread : float, optional
-        Spread of the per-campaign click bias.
+        Spread of the per-campaign click bias, or of δᵢ with ``ctr``, on the
+        logit scale.
     cvr_bias_mean : float, optional
-        Mean of the per-campaign conversion bias; -3 gives pCVR near 5%.
+        Mean of the per-campaign conversion bias, in place of ``cvr``. None,
+        the default, means -3 without ``cvr``, which gives pCVR near 5%.
     cvr_spread : float, optional
-        Spread of the per-campaign conversion bias.
+        Spread of the per-campaign conversion bias, or of δᵢ with ``cvr``.
     public_features : int, optional
         How many features bidders see, from 0 to ``feature_count``. None
         means all.
@@ -207,8 +229,8 @@ class LogisticMarket(Market):
     TypeError
         If ``public_features`` is not an int.
     ValueError
-        If ``public_features`` is outside [0, ``feature_count``], or a price
-        setting is out of range.
+        If ``public_features`` is outside [0, ``feature_count``], a rate or a
+        price setting is out of range, or a rate and its bias are both set.
 
     Notes
     -----
@@ -221,9 +243,11 @@ class LogisticMarket(Market):
 
     Examples
     --------
+    A 2% click rate and a 5% conversion rate, with 3 public features:
+
     >>> import numpy as np
     >>> import bidlab as bl
-    >>> market = bl.markets.LogisticMarket(ctr_bias_mean=-4.0, public_features=3)
+    >>> market = bl.markets.LogisticMarket(ctr=0.02, cvr=0.05, public_features=3)
     >>> draw = next(market.draws(2, np.random.default_rng(0)))
     >>> draw.pcvr.shape, draw.pctr.shape, draw.features["vector"].shape
     ((2,), (2,), (3,))
@@ -239,9 +263,11 @@ class LogisticMarket(Market):
     """
 
     feature_count: int = 8
+    ctr: float | None = None
+    cvr: float | None = None
     ctr_bias_mean: float | None = None
     ctr_spread: float = 0.5
-    cvr_bias_mean: float = -3.0
+    cvr_bias_mean: float | None = None
     cvr_spread: float = 0.5
     public_features: int | None = None
     price_median: float | None = None
@@ -251,6 +277,7 @@ class LogisticMarket(Market):
     floor_share: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
+        self._check_rates()
         self._check_price()
         public = self.public_features
         if public is None:
@@ -265,6 +292,19 @@ class LogisticMarket(Market):
             raise ValueError(
                 f"public_features must be in [0, {self.feature_count}], got {public}"
             )
+
+    def _check_rates(self) -> None:
+        stages = (
+            ("ctr", self.ctr, self.ctr_bias_mean),
+            ("cvr", self.cvr, self.cvr_bias_mean),
+        )
+        for name, rate, bias_mean in stages:
+            if rate is None:
+                continue
+
+            _check_rate(name, rate)
+            if bias_mean is not None:
+                raise ValueError(f"set {name} or {name}_bias_mean, not both")
 
     def _check_price(self) -> None:
         # Negated checks also catch NaN, which fails every comparison.
@@ -504,6 +544,38 @@ def _bias_stage(
     return _Stage(vectors, biases, biases - mean)
 
 
+def _rate_stage(
+    vectors: npt.NDArray[np.float64],
+    bias_rng: np.random.Generator,
+    rate: float,
+    spread: float,
+) -> _Stage:
+    # One draw per campaign, as a bias stage takes, so no other draw moves.
+    offsets = bias_rng.normal(0.0, spread, size=len(vectors))
+    scales = np.sqrt((vectors**2).sum(axis=1))
+    biases = _solve_biases(expit(logit(rate) + offsets), scales)
+    return _Stage(vectors, biases, offsets)
+
+
+def _solve_biases(
+    targets: npt.NDArray[np.float64], scales: npt.NDArray[np.float64]
+) -> npt.NDArray[np.float64]:
+    # The logit is N(b, s²), so the mean rate E[σ(b + sZ)] is a Gauss–Hermite sum.
+    points = np.sqrt(2.0) * scales[:, np.newaxis] * QUADRATURE_NODES
+    weights = QUADRATURE_WEIGHTS / np.sqrt(np.pi)
+    # Spread moves the mean rate by less than 1 + s² on the logit scale.
+    width = 2.0 * (1.0 + scales**2)
+    low = logit(targets) - width
+    high = logit(targets) + width
+    for _ in range(BISECTION_STEPS):
+        middle = (low + high) / 2
+        above = (expit(middle[:, np.newaxis] + points) * weights).sum(axis=1) > targets
+        high = np.where(above, middle, high)
+        low = np.where(above, low, middle)
+
+    return (low + high) / 2
+
+
 class _LogisticStages:
     def __init__(
         self, market: LogisticMarket, count: int, rng: np.random.Generator
@@ -535,19 +607,30 @@ class _LogisticStages:
             )
 
         self.click: _Stage | None = None
-        if market.ctr_bias_mean is not None:
+        if market.ctr is not None:
+            self.click = _rate_stage(
+                ad_vectors(ctr_vector_rng), ctr_bias_rng, market.ctr, market.ctr_spread
+            )
+        elif market.ctr_bias_mean is not None:
             self.click = _bias_stage(
                 ad_vectors(ctr_vector_rng),
                 ctr_bias_rng,
                 market.ctr_bias_mean,
                 market.ctr_spread,
             )
-        self.conversion = _bias_stage(
-            ad_vectors(cvr_vector_rng),
-            cvr_bias_rng,
-            market.cvr_bias_mean,
-            market.cvr_spread,
-        )
+
+        if market.cvr is not None:
+            self.conversion = _rate_stage(
+                ad_vectors(cvr_vector_rng), cvr_bias_rng, market.cvr, market.cvr_spread
+            )
+        else:
+            mean = market.cvr_bias_mean
+            self.conversion = _bias_stage(
+                ad_vectors(cvr_vector_rng),
+                cvr_bias_rng,
+                DEFAULT_CVR_BIAS_MEAN if mean is None else mean,
+                market.cvr_spread,
+            )
 
     def steps(self) -> Iterator[_Step]:
         market = self._market
