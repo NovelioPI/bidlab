@@ -635,7 +635,7 @@ def _solve_biases(
     # The logit is N(b, s²), so the mean rate E[σ(b + sZ)] is a Gauss–Hermite sum.
     points = np.sqrt(2.0) * scales[:, np.newaxis] * QUADRATURE_NODES
     weights = QUADRATURE_WEIGHTS / np.sqrt(np.pi)
-    # Spread moves the mean rate by less than 1 + s² on the logit scale.
+    # The root lies within 1 + s² of logit(target); doubling that leaves room.
     width = 2.0 * (1.0 + scales**2)
     low = logit(targets) - width
     high = logit(targets) + width

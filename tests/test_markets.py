@@ -603,6 +603,8 @@ def test_rate_solve_matches_integral():
         (1.0, 1e-7),
         (4.0, 1e-7),
         (6.0, 1e-5),
+        # Far beyond any ad vector's length; it checks the bracket holds the root.
+        (10.0, 1e-3),
     ]:
         biases = _solve_biases(targets, np.full(len(targets), scale))
         for bias, target in zip(biases, targets, strict=True):
@@ -689,6 +691,16 @@ def test_segment_rate_on_bias_base():
     market = Segmented((Segment("a", 1.0, ctr=0.05),), base)
     draws = logistic_draws(market, 5, RATE_STEPS)
     assert_campaign_means_near(stacked(draws, "pctr"), 0.05)
+
+
+def test_segment_rate_on_bias_base_keeps_offsets():
+    base = LogisticMarket(ctr_bias_mean=-3.0, ctr_spread=0.5)
+    market = Segmented((Segment("a", 0.5, ctr=0.05), Segment("b", 0.5)), base)
+    draws = logistic_draws(market, 20, 2 * RATE_STEPS)
+    # The ad vector term has mean 0, so a campaign's mean logit in b is its bias.
+    biases = logit(segment_rows(draws, "pctr", "b")).mean(axis=0)
+    mean_a = segment_rows(draws, "pctr", "a").mean(axis=0)
+    np.testing.assert_allclose(logit(mean_a), logit(0.05) + biases + 3.0, atol=0.1)
 
 
 def test_ctr_lift_shifts_click_logit():
