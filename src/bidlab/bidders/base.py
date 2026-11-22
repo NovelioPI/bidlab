@@ -145,6 +145,9 @@ class Bidder(ABC):
         segment : str
             The auction's market segment; ``"all"`` in a market without
             segments.
+        floor : float
+            The lowest bid that can win: the higher of the auction's
+            ``reserve`` and the market's floor. The market price stays hidden.
         features : Mapping[str, str | float | numpy.ndarray]
             Every public feature of the impression, read-only, the same for
             every bidder; ``features["vector"]`` from `LogisticMarket`.

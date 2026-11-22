@@ -1,6 +1,6 @@
 # Markets
 
-This guide shows the built-in markets, clicks and conversions, public features, segments and targeting, and how to write your own market.
+This guide shows the built-in markets, clicks and conversions, public features, segments and targeting, the market price and floor, and how to write your own market.
 
 ## Built-in markets
 
@@ -71,9 +71,67 @@ print(len(segment_results.segment_rows))  # 8 rows: seeds × bidders × segments
 
 A targeted bidder sees only its segments' auctions. `PidPacing` plans spend by time, so it still spreads the budget over the whole horizon.
 
+## Market price and floor
+
+By default, campaigns compete only with each other. A campaign alone then pays the reserve, so its costs mean little. A market can add outside competition and a floor per auction.
+
+| Term | Plain meaning |
+|---|---|
+| Market price, m | The highest bid from outside the config at one auction |
+| Market floor | The publisher's floor at one auction |
+| Effective floor, r | The higher of the auction's `reserve` and the market floor |
+
+A campaign wins when its bid is above m, at or above r, and the highest campaign bid. A campaign bid equal to m loses. When no campaign wins, the auction is sold outside: `log.winner` is -1, `log.price` is 0, and nothing is clicked or converted.
+
+| Auction | The winner pays |
+|---|---|
+| `SecondPrice` | The highest of m, r and the next campaign bid at or above r |
+| `FirstPrice` | Its bid |
+
+No bidder sees m. A winner sees only the price it paid, and a loser sees nothing. A bidder that declares the `floor` input gets r, as OpenRTB sends `bidfloor`. `RunLog.market_price` holds m per step, NaN without one, and `RunLog.floor` holds the market floor. `regret` replays against both, and `revenue` and `welfare` count only the auctions campaigns won.
+
+### LogisticMarket
+
+The market draws a hidden market vector ψ once per run: what outside advertisers value. Each step, with feature vector x and a standard normal ε:
+
+```text
+q = x · ψ
+log m = log(price_median) + price_quality × q + price_spread × ε
+floor = s × m, with s ~ Beta(a, b)
+```
+
+| Setting | Effect |
+|---|---|
+| `price_median` (None) | Median of m, in money; None means no market price and no floor |
+| `price_spread` (0.5) | Standard deviation of log m around the quality term |
+| `price_quality` (1.0) | How strongly log m follows the quality q, whose variance is near 1 |
+| `rival_similarity` (0.0) | ρ in [0, 1]: each ad vector becomes ρ ψ + √(1 − ρ²) η, for its own vector η |
+| `floor_share` (None) | (a, b) of the Beta share; None means no floor; needs `price_median` |
+
+At ρ = 0, m follows the features but not any campaign's value. An impression a campaign values highly is then no dearer than any other. Set ρ above 0 so m rises with each campaign's value; at ρ = 0.8 and `price_spread` 0.5, the correlation of log m with a campaign's CVR logit is near 0.7. With ρ > 0, every pCTR and pCVR differ from the same market at ρ = 0, and each campaign's pCTR and pCVR move together more.
+
+```python
+import bidlab as bl
+
+priced = bl.SimConfig(
+    campaigns=[bl.Campaign("pid", bl.PidPacing(), budget=20, base_value=5)],
+    market=bl.markets.LogisticMarket(
+        price_median=0.2, rival_similarity=0.8, floor_share=(2, 5)
+    ),
+    episodes=2,
+    steps=200,
+)
+priced_log = bl.run(priced)
+print((priced_log.winner == -1).mean())  # share of auctions sold outside
+```
+
+### IndependentValues
+
+`IndependentValues(distribution, market_price=price_distribution, floor_share=(a, b))` draws m from any scipy frozen distribution, clipped at 0, and the floor as a Beta share of m. Here m does not follow any probability.
+
 ## Write a market
 
-Subclass `bl.markets.Market`. Its `draws` generator yields one `MarketDraw(features, pctr=..., pcvr=..., segment=...)` per step for the whole run; every argument after `features` is keyword-only. Leave `pctr` out for a market without a click stage. Use only the `rng` it receives, so runs repeat with the seed.
+Subclass `bl.markets.Market`. Its `draws` generator yields one `MarketDraw(features, pctr=..., pcvr=..., segment=...)` per step for the whole run; every argument after `features` is keyword-only. Leave `pctr` out for a market without a click stage. Pass `market_price=` and `floor=` for outside competition and a floor. Use only the `rng` it receives, so runs repeat with the seed.
 
 ```python
 class Daytime(bl.markets.Market):
@@ -106,3 +164,4 @@ A custom market can define its own segments. Override the `segment_names` proper
 | [markets/segments.py](../../examples/markets/segments.py) | Does a sports-only bidder win any auction outside sports? |
 | [markets/custom_market.py](../../examples/markets/custom_market.py) | Does the all-day bidder pay more per win at night, when the night-only bidder joins? |
 | [markets/independent_values.py](../../examples/markets/independent_values.py) | In a first-price auction with uniform values, does shading to (n-1)/n beat truthful bidding? |
+| [markets/market_price.py](../../examples/markets/market_price.py) | Does a lone campaign pay more per conversion when the market price follows its value? |

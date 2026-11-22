@@ -1,5 +1,6 @@
 """The core loop: `run` simulates every auction and records a `RunLog`."""
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
@@ -36,6 +37,7 @@ BUILT_IN_INPUTS = frozenset(
         "segment",
         "market",
         "features",
+        "floor",
     }
 )
 
@@ -68,6 +70,12 @@ class RunLog:
         Whether the winner converted per step; only a click can convert.
     segment : numpy.ndarray
         Index into ``config.market.segment_names`` per step.
+    market_price : numpy.ndarray
+        The market's price per step, the highest bid from outside the config;
+        NaN where the market drew none.
+    floor : numpy.ndarray
+        The market's floor per step; 0 where it drew none. The auction's
+        ``reserve`` is not included.
     logged : Mapping[str, Mapping[str, numpy.ndarray]]
         Values bidders saved with `Bidder.log`: stored name, then campaign name,
         to an (episodes, steps) array, or (episodes,) for values logged in an
@@ -93,6 +101,8 @@ class RunLog:
     clicked: npt.NDArray[np.bool_]
     converted: npt.NDArray[np.bool_]
     segment: npt.NDArray[np.int64]
+    market_price: npt.NDArray[np.float64]
+    floor: npt.NDArray[np.float64]
     logged: Logs = field(default_factory=lambda: MappingProxyType({}))
 
 
@@ -139,7 +149,8 @@ def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
         `Callback` instance.
     ValueError
         If the market yields a draw with the wrong shape, a probability
-        outside [0, 1], a feature named like a built-in input, or an unknown
+        outside [0, 1], a market price or floor that is negative, NaN or
+        infinite, a feature named like a built-in input, or an unknown
         segment.
     RuntimeError
         If the market stops yielding draws before the run ends.
@@ -224,6 +235,8 @@ class _Simulation:
             clicked=np.zeros(shape, dtype=bool),
             converted=np.zeros(shape, dtype=bool),
             segment=np.zeros(shape, dtype=np.int64),
+            market_price=np.full(shape, np.nan),
+            floor=np.zeros(shape),
         )
 
     def _participant(
@@ -256,6 +269,8 @@ class _Simulation:
             self.log.clicked,
             self.log.converted,
             self.log.segment,
+            self.log.market_price,
+            self.log.floor,
         ):
             array.flags.writeable = False
 
@@ -297,6 +312,7 @@ class _Simulation:
             "hour_of_day": (self.config.start_hour + time / SECONDS_PER_HOUR)
             % HOURS_PER_DAY,
             "segment": draw.segment,
+            "floor": max(self.config.auction.reserve, draw.floor),
         }
         bids = np.zeros(len(self.participants))
         for i in active:
@@ -318,7 +334,12 @@ class _Simulation:
         # A logged bid of 0 would win at reserve 0, so absent bidders bid -inf.
         auction_bids = np.full(len(self.participants), -np.inf)
         auction_bids[active] = bids[active]
-        winner, price = self.config.auction.run(auction_bids, self.tie_rng)
+        winner, price = self.config.auction.run(
+            auction_bids,
+            self.tie_rng,
+            floor=draw.floor,
+            market_price=draw.market_price,
+        )
         clicked, converted = self._click_and_conversion(draw, winner)
         if winner != NO_WINNER:
             budget_left[winner] -= price
@@ -349,6 +370,14 @@ class _Simulation:
         self.log.clicked[episode, step] = clicked
         self.log.converted[episode, step] = converted
         self.log.segment[episode, step] = self.segment_index[draw.segment]
+        self._log_market(episode, step, draw)
+
+    def _log_market(self, episode: int, step: int, draw: MarketDraw) -> None:
+        # The arrays start as "none", so most runs skip both writes.
+        if draw.market_price is not None:
+            self.log.market_price[episode, step] = draw.market_price
+        if draw.floor:
+            self.log.floor[episode, step] = draw.floor
 
     def _reads_market(self, index: int) -> bool:
         reads_market = self.reads_market[index]
@@ -422,6 +451,12 @@ class _Simulation:
             if not np.all((rates >= 0.0) & (rates <= 1.0)):
                 raise ValueError(f"{where}: {name} must lie in [0, 1]")
 
+        # Most draws have neither, so the checks are skipped there to keep runs fast.
+        if draw.market_price is not None:
+            _check_money(where, "market_price", draw.market_price)
+        if draw.floor:
+            _check_money(where, "floor", draw.floor)
+
         clashes = draw.features.keys() & BUILT_IN_INPUTS
         if clashes:
             raise ValueError(
@@ -479,6 +514,11 @@ def event_happened[Outcome: (bool, npt.NDArray[np.bool_])](
         return clicked & won
 
     return converted & won
+
+
+def _check_money(where: str, name: str, amount: float) -> None:
+    if not (math.isfinite(amount) and amount >= 0):
+        raise ValueError(f"{where}: {name} must be finite and >= 0, got {amount}")
 
 
 def _with_noise(
