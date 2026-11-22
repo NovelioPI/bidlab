@@ -347,23 +347,60 @@ class Segment:
         Segment name; bidders list it in `Campaign.segments`.
     share : float
         Fraction of steps from this segment. Shares must sum to 1.
+    ctr : float, optional
+        Click rate in this segment, in (0, 1), in place of the market's.
+        Campaign i's mean pCTR here is σ(logit(ctr) + δᵢ), with the same δᵢ
+        as in the rest of the market. Needs a click stage in the base market.
+    cvr : float, optional
+        Conversion rate per click in this segment, set the same way.
+    ctr_lift : float, optional
+        Added to every campaign's click logit in this segment, in place of
+        ``ctr``. Needs a click stage in the base market.
     cvr_lift : float, optional
-        Added to every campaign's CVR logit in this segment.
+        Added to every campaign's CVR logit in this segment, in place of
+        ``cvr``.
+
+    Raises
+    ------
+    ValueError
+        If a rate is outside (0, 1), or a stage's rate and lift are both set.
+
+    Examples
+    --------
+    >>> from bidlab.markets import Segment
+    >>> mobile = Segment("mobile", 0.7, ctr=0.03, cvr=0.04)
+    >>> sports = Segment("sports", 0.3, cvr_lift=1.0)
     """
 
     name: str
     share: float
     _: KW_ONLY
+    ctr: float | None = None
+    cvr: float | None = None
+    ctr_lift: float = 0.0
     cvr_lift: float = 0.0
+
+    def __post_init__(self) -> None:
+        stages = (("ctr", self.ctr, self.ctr_lift), ("cvr", self.cvr, self.cvr_lift))
+        for name, rate, lift in stages:
+            if rate is None:
+                continue
+
+            _check_rate(name, rate)
+            if lift != 0:
+                raise ValueError(
+                    f"segment {self.name!r}: set {name} or {name}_lift, not both"
+                )
 
 
 @dataclass(frozen=True)
 class Segmented(Market):
-    """Each step comes from one segment; its `cvr_lift` shifts every campaign's CVR logit.
+    """Each step comes from one segment, which can set its own rates or lifts.
 
     Bidders get the segment name as the ``segment`` input of `Bidder.forward`,
-    and the base market's ``"vector"`` feature and click stage unchanged. The
-    market price and floor are the base market's too.
+    and the base market's ``"vector"`` feature. A segment without a rate or a
+    lift keeps the base market's rates. The market price and floor are the
+    base market's too.
 
     Parameters
     ----------
@@ -371,13 +408,14 @@ class Segmented(Market):
         At least one segment, stored as a tuple, with unique names and shares
         that sum to 1.
     base : LogisticMarket, optional
-        Draws the features and logits before the lift is added.
+        Draws the features and logits before a segment changes them.
 
     Raises
     ------
     ValueError
-        If there is no segment, a name repeats, a share is <= 0, or the
-        shares do not sum to 1.
+        If there is no segment, a name repeats, a share is <= 0, the shares
+        do not sum to 1, or a segment sets a click rate or lift when the base
+        has no click stage.
 
     Examples
     --------
@@ -411,6 +449,16 @@ class Segmented(Market):
         if abs(total - 1.0) > SHARE_TOLERANCE:
             raise ValueError(f"segment shares must sum to 1, got {total}")
 
+        if self.base.ctr is not None or self.base.ctr_bias_mean is not None:
+            return
+
+        for segment in self.segments:
+            if segment.ctr is not None or segment.ctr_lift != 0:
+                raise ValueError(
+                    f"segment {segment.name!r} sets a click rate or lift, but the "
+                    "base market has no click stage; set ctr on the base"
+                )
+
     @property
     def segment_names(self) -> tuple[str, ...]:
         """The segment names, in the order given."""
@@ -420,13 +468,29 @@ class Segmented(Market):
         """Yield one draw per step; see `Market.draws`."""
         base_rng, pick_rng = rng.spawn(2)
         shares = [segment.share for segment in self.segments]
-        for step in _LogisticStages(self.base, count, base_rng).steps():
-            segment = self.segments[pick_rng.choice(len(self.segments), p=shares)]
-            pctr = None if step.ctr_logits is None else _sigmoid(step.ctr_logits)
+        stages = _LogisticStages(self.base, count, base_rng)
+        click, conversion = stages.click, stages.conversion
+        # A lift stays a float, so a segment without a rate keeps every old bit.
+        ctr_shifts = [
+            segment.ctr_lift
+            if segment.ctr is None or click is None
+            else click.shift(segment.ctr)
+            for segment in self.segments
+        ]
+        cvr_shifts = [
+            segment.cvr_lift if segment.cvr is None else conversion.shift(segment.cvr)
+            for segment in self.segments
+        ]
+        for step in stages.steps():
+            index = pick_rng.choice(len(self.segments), p=shares)
+            segment = self.segments[index]
+            pctr = None
+            if step.ctr_logits is not None:
+                pctr = _sigmoid(step.ctr_logits + ctr_shifts[index])
             yield MarketDraw(
                 {"vector": step.public_vector},
                 pctr=pctr,
-                pcvr=_sigmoid(step.cvr_logits + segment.cvr_lift),
+                pcvr=_sigmoid(step.cvr_logits + cvr_shifts[index]),
                 segment=segment.name,
                 market_price=step.market_price,
                 floor=step.floor,
@@ -533,6 +597,9 @@ class _Stage:
         # A matrix product rounds differently as rows are added; a per-row sum does not.
         return (self.vectors * features).sum(axis=1) + self.biases
 
+    def shift(self, rate: float) -> npt.NDArray[np.float64]:
+        return _rate_biases(self.vectors, self.offsets, rate) - self.biases
+
 
 def _bias_stage(
     vectors: npt.NDArray[np.float64],
@@ -552,9 +619,14 @@ def _rate_stage(
 ) -> _Stage:
     # One draw per campaign, as a bias stage takes, so no other draw moves.
     offsets = bias_rng.normal(0.0, spread, size=len(vectors))
+    return _Stage(vectors, _rate_biases(vectors, offsets, rate), offsets)
+
+
+def _rate_biases(
+    vectors: npt.NDArray[np.float64], offsets: npt.NDArray[np.float64], rate: float
+) -> npt.NDArray[np.float64]:
     scales = np.sqrt((vectors**2).sum(axis=1))
-    biases = _solve_biases(expit(logit(rate) + offsets), scales)
-    return _Stage(vectors, biases, offsets)
+    return _solve_biases(expit(logit(rate) + offsets), scales)
 
 
 def _solve_biases(

@@ -654,3 +654,75 @@ def test_rate_mode_keeps_other_draws():
     for name in ("pcvr", "market_price", "floor"):
         np.testing.assert_array_equal(stacked(rate, name), stacked(bias, name))
     assert not np.array_equal(stacked(rate, "pctr"), stacked(bias, "pctr"))
+
+
+def segment_rows(draws, name, segment):
+    in_segment = np.array([draw.segment == segment for draw in draws])
+    return stacked(draws, name)[in_segment]
+
+
+def rate_segments(spread, steps):
+    base = LogisticMarket(ctr=0.02, cvr=0.05, ctr_spread=spread, cvr_spread=spread)
+    segments = (Segment("a", 0.5, ctr=0.05, cvr=0.10), Segment("b", 0.5))
+    return logistic_draws(Segmented(segments, base), 5, steps)
+
+
+def test_segment_rates_replace_market_rate():
+    draws = rate_segments(spread=0.0, steps=2 * RATE_STEPS)
+    targets = {("a", "pctr"): 0.05, ("a", "pcvr"): 0.10, ("b", "pctr"): 0.02}
+    targets[("b", "pcvr")] = 0.05
+    for (segment, name), target in targets.items():
+        assert_campaign_means_near(segment_rows(draws, name, segment), target)
+
+
+def test_segment_rate_keeps_campaign_offsets():
+    draws = rate_segments(spread=0.5, steps=3 * RATE_STEPS)
+    for name, rate_a, rate_b in (("pctr", 0.05, 0.02), ("pcvr", 0.10, 0.05)):
+        mean_a = segment_rows(draws, name, "a").mean(axis=0)
+        mean_b = segment_rows(draws, name, "b").mean(axis=0)
+        gap = logit(mean_a) - logit(mean_b)
+        np.testing.assert_allclose(gap, logit(rate_a) - logit(rate_b), atol=0.05)
+
+
+def test_segment_rate_on_bias_base():
+    base = LogisticMarket(ctr_bias_mean=-3.0, ctr_spread=0.0)
+    market = Segmented((Segment("a", 1.0, ctr=0.05),), base)
+    draws = logistic_draws(market, 5, RATE_STEPS)
+    assert_campaign_means_near(stacked(draws, "pctr"), 0.05)
+
+
+def test_ctr_lift_shifts_click_logit():
+    base = LogisticMarket(ctr_bias_mean=-3.0, price_median=0.2, floor_share=(2, 5))
+    flat = Segmented((Segment("a", 0.5), Segment("b", 0.5)), base)
+    lifted = Segmented((Segment("a", 0.5, ctr_lift=1.0), Segment("b", 0.5)), base)
+    flat_draws = logistic_draws(flat, 3, steps=500)
+    lifted_draws = logistic_draws(lifted, 3, steps=500)
+    shift = logit(stacked(lifted_draws, "pctr")) - logit(stacked(flat_draws, "pctr"))
+    in_lifted = np.array([draw.segment == "a" for draw in lifted_draws])
+    np.testing.assert_allclose(shift[in_lifted], 1.0, atol=1e-9)
+    assert np.all(shift[~in_lifted] == 0.0)
+    np.testing.assert_array_equal(vectors(flat_draws), vectors(lifted_draws))
+    for name in ("pcvr", "market_price", "floor"):
+        np.testing.assert_array_equal(
+            stacked(flat_draws, name), stacked(lifted_draws, name)
+        )
+
+
+@pytest.mark.parametrize("rate", [0.0, 1.0, float("nan")])
+@pytest.mark.parametrize("stage", ["ctr", "cvr"])
+def test_bad_segment_rate_rejected(stage, rate):
+    with pytest.raises(ValueError, match=rf"{stage} must be in \(0, 1\)"):
+        Segment("a", 1.0, **{stage: rate})
+
+
+@pytest.mark.parametrize("stage", ["ctr", "cvr"])
+def test_segment_rate_and_lift_together_rejected(stage):
+    with pytest.raises(ValueError, match=f"{stage}.*{stage}_lift"):
+        Segment("a", 1.0, **{stage: 0.05, f"{stage}_lift": 1.0})
+
+
+@pytest.mark.parametrize("settings", [{"ctr": 0.05}, {"ctr_lift": 1.0}])
+def test_segment_click_setting_needs_click_stage(settings):
+    with pytest.raises(ValueError, match="click stage"):
+        Segmented((Segment("a", 1.0, **settings),))
+    Segmented((Segment("a", 1.0, **settings),), LogisticMarket(ctr=0.02))
