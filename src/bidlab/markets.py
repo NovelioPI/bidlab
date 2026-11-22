@@ -175,11 +175,11 @@ class LogisticMarket(Market):
     ctr_bias_mean : float, optional
         Mean of the per-campaign click bias. None, the default, means no
         click stage: every won impression is clicked.
-    ctr_bias_sd : float, optional
+    ctr_spread : float, optional
         Spread of the per-campaign click bias.
     cvr_bias_mean : float, optional
         Mean of the per-campaign conversion bias; -3 gives pCVR near 5%.
-    cvr_bias_sd : float, optional
+    cvr_spread : float, optional
         Spread of the per-campaign conversion bias.
     public_features : int, optional
         How many features bidders see, from 0 to ``feature_count``. None
@@ -240,9 +240,9 @@ class LogisticMarket(Market):
 
     feature_count: int = 8
     ctr_bias_mean: float | None = None
-    ctr_bias_sd: float = 0.5
+    ctr_spread: float = 0.5
     cvr_bias_mean: float = -3.0
-    cvr_bias_sd: float = 0.5
+    cvr_spread: float = 0.5
     public_features: int | None = None
     price_median: float | None = None
     price_spread: float = 0.5
@@ -306,18 +306,19 @@ class Segment:
         Segment name; bidders list it in `Campaign.segments`.
     share : float
         Fraction of steps from this segment. Shares must sum to 1.
-    lift : float, optional
+    cvr_lift : float, optional
         Added to every campaign's CVR logit in this segment.
     """
 
     name: str
     share: float
-    lift: float = 0.0
+    _: KW_ONLY
+    cvr_lift: float = 0.0
 
 
 @dataclass(frozen=True)
 class Segmented(Market):
-    """Each step comes from one segment; its `lift` shifts every campaign's CVR logit.
+    """Each step comes from one segment; its `cvr_lift` shifts every campaign's CVR logit.
 
     Bidders get the segment name as the ``segment`` input of `Bidder.forward`,
     and the base market's ``"vector"`` feature and click stage unchanged. The
@@ -341,7 +342,7 @@ class Segmented(Market):
     --------
     >>> import bidlab as bl
     >>> from bidlab.markets import Segment, Segmented
-    >>> market = Segmented((Segment("mobile", 0.7, lift=0.5), Segment("desktop", 0.3)))
+    >>> market = Segmented((Segment("mobile", 0.7, cvr_lift=0.5), Segment("desktop", 0.3)))
     >>> market.segment_names
     ('mobile', 'desktop')
     """
@@ -383,7 +384,7 @@ class Segmented(Market):
             yield MarketDraw(
                 {"vector": stages.public_vector},
                 pctr=stages.pctr,
-                pcvr=_sigmoid(stages.cvr_logits + segment.lift),
+                pcvr=_sigmoid(stages.cvr_logits + segment.cvr_lift),
                 segment=segment.name,
                 market_price=stages.market_price,
                 floor=stages.floor,
@@ -511,7 +512,7 @@ def _logistic_stages(
                 market_vector,
                 market.rival_similarity,
             ),
-            ctr_bias_rng.normal(market.ctr_bias_mean, market.ctr_bias_sd, size=count),
+            ctr_bias_rng.normal(market.ctr_bias_mean, market.ctr_spread, size=count),
         )
 
     cvr_vectors = _share_market_vector(
@@ -520,7 +521,7 @@ def _logistic_stages(
         market.rival_similarity,
     )
     cvr_biases = cvr_bias_rng.normal(
-        market.cvr_bias_mean, market.cvr_bias_sd, size=count
+        market.cvr_bias_mean, market.cvr_spread, size=count
     )
     while True:
         features = feature_rng.normal(size=dimensions)

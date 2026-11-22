@@ -57,8 +57,8 @@ def test_segment_shares_without_feature():
     assert abs(names.count("news") / len(names) - 0.7) < 0.02
 
 
-def test_lift_shifts_logit():
-    lifted = Segmented((Segment("plain", 0.5), Segment("lifted", 0.5, lift=2.0)))
+def test_cvr_lift_shifts_logit():
+    lifted = Segmented((Segment("plain", 0.5), Segment("lifted", 0.5, cvr_lift=2.0)))
     flat = Segmented((Segment("plain", 0.5), Segment("lifted", 0.5)))
     lifted_draws = segment_draws(lifted, count=3, steps=4000, seed=5)
     flat_draws = segment_draws(flat, count=3, steps=4000, seed=5)
@@ -92,7 +92,7 @@ def test_segmented_rejects_bad_segments(segments, message):
 
 @pytest.mark.parametrize(("fewer", "more"), [(1, 2), (1, 3), (2, 4), (1, 8), (3, 5)])
 def test_segmented_adding_bidder_keeps_draws(fewer, more):
-    market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)))
+    market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, cvr_lift=1.0)))
     for seed in range(3):
         small = segment_draws(market, count=fewer, steps=500, seed=seed)
         large = segment_draws(market, count=more, steps=500, seed=seed)
@@ -256,7 +256,9 @@ def test_ctr_bias_sets_click_rate():
     assert np.abs(fit_residuals(vectors(draws), pctr)).max() < 1e-9
 
 
-@pytest.mark.parametrize("old", ["context_size", "bias_mean", "bias_sd"])
+@pytest.mark.parametrize(
+    "old", ["context_size", "bias_mean", "bias_sd", "ctr_bias_sd", "cvr_bias_sd"]
+)
 def test_old_market_names_removed(old):
     with pytest.raises(TypeError, match=old):
         LogisticMarket(**{old: 1.0})  # pyright: ignore[reportArgumentType]  Reason: the test passes removed names on purpose.
@@ -265,10 +267,17 @@ def test_old_market_names_removed(old):
     assert not hasattr(MarketDraw({}, pcvr=np.zeros(1)), "probabilities")
 
 
+def test_segment_lift_removed():
+    with pytest.raises(TypeError, match="lift"):
+        Segment("a", 1.0, lift=1.0)  # pyright: ignore[reportCallIssue]  Reason: the test passes a removed name on purpose.
+
+
 def test_segmented_passes_click_stage():
     base = LogisticMarket(ctr_bias_mean=-3.0)
     flat = Segmented((Segment("plain", 0.5), Segment("lifted", 0.5)), base)
-    lifted = Segmented((Segment("plain", 0.5), Segment("lifted", 0.5, lift=1.0)), base)
+    lifted = Segmented(
+        (Segment("plain", 0.5), Segment("lifted", 0.5, cvr_lift=1.0)), base
+    )
     flat_draws = logistic_draws(flat, 3, steps=500)
     lifted_draws = logistic_draws(lifted, 3, steps=500)
     np.testing.assert_array_equal(
@@ -282,8 +291,8 @@ def test_segmented_passes_click_stage():
     assert all(set(draw.features) == {"vector"} for draw in lifted_draws)
 
 
-def test_ctr_bias_sd_sets_spread_across_campaigns():
-    market = LogisticMarket(ctr_bias_mean=-4.0, ctr_bias_sd=0.5)
+def test_ctr_spread_across_campaigns():
+    market = LogisticMarket(ctr_bias_mean=-4.0, ctr_spread=0.5)
     draws = logistic_draws(market, 60, steps=2000)
     campaign_means = logit(stacked(draws, "pctr")).mean(axis=0)
     assert abs(campaign_means.std() - 0.5) < 0.15
@@ -456,7 +465,7 @@ def test_adding_campaign_keeps_price_and_floor(fewer, more):
 
 def test_segmented_passes_price_and_floor():
     base = LogisticMarket(price_median=0.5, floor_share=(2.0, 5.0))
-    segmented = Segmented((Segment("a", 0.5), Segment("b", 0.5, lift=1.0)), base)
+    segmented = Segmented((Segment("a", 0.5), Segment("b", 0.5, cvr_lift=1.0)), base)
     draws = logistic_draws(segmented, 3, steps=500, seed=4)
     base_rng = np.random.default_rng(4).spawn(2)[0]
     base_draws = list(islice(base.draws(3, base_rng), 500))

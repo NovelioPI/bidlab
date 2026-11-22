@@ -142,7 +142,9 @@ def market_without_clicks(kind):
     if kind == "logistic":
         return LogisticMarket()
     if kind == "segmented":
-        return Segmented((Segment("mobile", 0.6, lift=0.5), Segment("desktop", 0.4)))
+        return Segmented(
+            (Segment("mobile", 0.6, cvr_lift=0.5), Segment("desktop", 0.4))
+        )
     return IndependentValues(stats.uniform(0, 0.1))
 
 
@@ -187,7 +189,7 @@ def market_with_clicks(kind):
     if kind == "logistic":
         return base
     return Segmented(
-        (Segment("mobile", 0.6, lift=0.5), Segment("desktop", 0.4)), base=base
+        (Segment("mobile", 0.6, cvr_lift=0.5), Segment("desktop", 0.4)), base=base
     )
 
 

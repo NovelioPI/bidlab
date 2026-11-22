@@ -18,7 +18,7 @@ A market draws each step's public features and each campaign's private probabili
 
 A won impression is clicked with probability pCTR, and a click converts with probability pCVR. A market without a click stage counts every won impression as clicked, so pCVR is the conversion chance of a win.
 
-`LogisticMarket(ctr_bias_mean=-4.0)` adds a click stage: pCTRᵢ = σ(x · ψᵢ + γᵢ), with its own ad vectors ψᵢ and biases γᵢ ~ N(`ctr_bias_mean`, `ctr_bias_sd`) on the same feature vector x. Without `ctr_bias_mean`, the market has no click stage and gives the same runs as before clicks existed.
+`LogisticMarket(ctr_bias_mean=-4.0)` adds a click stage: pCTRᵢ = σ(x · ψᵢ + γᵢ), with its own ad vectors ψᵢ and biases γᵢ ~ N(`ctr_bias_mean`, `ctr_spread`) on the same feature vector x. Without `ctr_bias_mean`, the market has no click stage and gives the same runs as before clicks existed.
 
 The true rates set `RunLog.true_values`, through each campaign's event; see [Campaigns](campaigns.md). `RunLog.clicked`, `BidResult.clicked` and the `clicks` column record the clicks.
 
@@ -45,7 +45,7 @@ import bidlab as bl
 market = bl.markets.Segmented(
     (
         bl.markets.Segment("news", share=0.7),
-        bl.markets.Segment("sports", share=0.3, lift=1.0),
+        bl.markets.Segment("sports", share=0.3, cvr_lift=1.0),
     )
 )
 segmented = bl.SimConfig(
