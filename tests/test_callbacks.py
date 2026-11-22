@@ -4,7 +4,7 @@ from typing import Any, ClassVar, override
 
 import pytest
 
-from bidlab.bidders import Bidder, Linear, PidPacing
+from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
 from bidlab.callbacks import Callback
 from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
@@ -80,8 +80,8 @@ def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
 
 def two() -> tuple[Campaign, ...]:
     return (
-        Campaign("t", Linear(), budget=1e6, base_value=5.0),
-        Campaign("p", PidPacing(), budget=3.0, base_value=5.0),
+        Campaign("t", Stack(OracleValue(), Linear()), budget=1e6, base_value=5.0),
+        Campaign("p", Stack(OracleValue(), PidPacing()), budget=3.0, base_value=5.0),
     )
 
 
@@ -110,8 +110,8 @@ def test_episode_report_match_bidders():
     Reports.seen.clear()
     callback = Record()
     campaigns = (
-        Campaign("s", Reports(), budget=1e6, base_value=5.0),
-        Campaign("t", Linear(), budget=1e6, base_value=5.0),
+        Campaign("s", Stack(OracleValue(), Reports()), budget=1e6, base_value=5.0),
+        Campaign("t", Stack(OracleValue(), Linear()), budget=1e6, base_value=5.0),
     )
     run(config(*campaigns), callbacks=[callback])
     reports = [args[1] for _, hook, args in callback.calls if hook == "episode_end"]

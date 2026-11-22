@@ -23,8 +23,12 @@ import bidlab as bl
 
 config = bl.SimConfig(
     campaigns=[
-        bl.Campaign("truthful", bl.Linear(), budget=15, base_value=5),
-        bl.Campaign("pid", bl.PidPacing(), budget=15, base_value=5),
+        bl.Campaign(
+            "truthful", bl.Stack(bl.OracleValue(), bl.Linear()), budget=15, base_value=5
+        ),
+        bl.Campaign(
+            "pid", bl.Stack(bl.OracleValue(), bl.PidPacing()), budget=15, base_value=5
+        ),
     ],
     episodes=2,
     steps=200,

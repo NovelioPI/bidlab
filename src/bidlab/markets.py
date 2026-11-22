@@ -85,8 +85,8 @@ class MarketDraw:
     Notes
     -----
     A campaign's bidder sees its own ``pctr`` and ``pcvr`` in the ``market``
-    input, and the platform's estimate of their product in ``value``. No
-    bidder sees ``market_price``; each sees the effective floor as ``floor``.
+    input. No bidder sees ``market_price``; each sees the effective floor as
+    ``floor``.
     """
 
     features: Mapping[str, FeatureValue]
@@ -124,7 +124,9 @@ class Market(ABC):
     ...     def draws(self, count, rng):
     ...         while True:
     ...             yield bl.markets.MarketDraw({}, pcvr=np.full(count, 0.1))
-    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, base_value=5)
+    >>> campaign = bl.Campaign(
+    ...     "t", bl.Stack(bl.OracleValue(), bl.Linear()), budget=10, base_value=5
+    ... )
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], market=Flat(), episodes=1, steps=10))
     >>> log.true_values[0, :3, 0].tolist()
     [0.5, 0.5, 0.5]

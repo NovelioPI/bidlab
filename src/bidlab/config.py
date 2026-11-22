@@ -21,16 +21,15 @@ class Campaign:
     name : str
         Label used in results; unique within a `SimConfig`.
     bidder : Bidder
-        A bidder instance, such as ``bl.PidPacing()`` or a `Stack`. The
+        A bidder instance, such as ``bl.Stack(bl.OracleValue(), bl.PidPacing())``. The
         simulator deep-copies it once per run, so the object you pass never
         changes and every run starts from it.
     budget : float
         Budget per episode. Must be > 0.
     base_value : float
         What one event is worth to the advertiser; the event is ``event``. A
-        bidder may use it as is or change it. Must be > 0. Not to be confused
-        with the ``value`` input of `Bidder.forward`, the expected value of
-        one impression.
+        bidder may use it as is or change it. Must be > 0. `OracleValue`
+        multiplies it by the true chance of the event.
     event : Event or {"impression", "click", "conversion"}, optional
         What the campaign pays for; ``"conversion"`` by default. Stored as an
         `Event`. Billing stays per impression for every event.
@@ -54,7 +53,11 @@ class Campaign:
     --------
     >>> import bidlab as bl
     >>> campaign = bl.Campaign(
-    ...     "pid", bl.PidPacing(), budget=15, base_value=5, cpa_target=3
+    ...     "pid",
+    ...     bl.Stack(bl.OracleValue(), bl.PidPacing()),
+    ...     budget=15,
+    ...     base_value=5,
+    ...     cpa_target=3,
     ... )
     >>> campaign.budget
     15.0
@@ -188,10 +191,6 @@ class SimConfig:
         > 0.
     start_hour : float, optional
         Hour of day when each episode starts, in [0, 24).
-    estimate_noise : float, optional
-        How wrong the platform's estimate p̂ is: the standard deviation of
-        normal noise added to logit(p). 0, the default, gives the exact p.
-        The ``value`` input uses p̂; `RunLog.true_values` keeps the true p.
 
     Raises
     ------
@@ -199,16 +198,26 @@ class SimConfig:
         If ``auction`` or ``market`` has the wrong type.
     ValueError
         If ``campaigns`` is empty, names repeat, ``episodes`` or ``steps`` is
-        below 1, ``estimate_noise`` is negative, the schedule is out of
-        range, or a campaign names a segment the market does not have.
+        below 1, the schedule is out of range, or a campaign names a
+        segment the market does not have.
 
     Examples
     --------
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
     ...     campaigns=[
-    ...         bl.Campaign("truthful", bl.Linear(), budget=50, base_value=5),
-    ...         bl.Campaign("pid", bl.PidPacing(), budget=15, base_value=5),
+    ...         bl.Campaign(
+    ...             "truthful",
+    ...             bl.Stack(bl.OracleValue(), bl.Linear()),
+    ...             budget=50,
+    ...             base_value=5,
+    ...         ),
+    ...         bl.Campaign(
+    ...             "pid",
+    ...             bl.Stack(bl.OracleValue(), bl.PidPacing()),
+    ...             budget=15,
+    ...             base_value=5,
+    ...         ),
     ...     ],
     ...     auction=bl.FirstPrice(reserve=0.01),
     ...     episodes=2,
@@ -226,7 +235,6 @@ class SimConfig:
     market: Market = field(default_factory=LogisticMarket)
     horizon_hours: float = 24.0
     start_hour: float = 0.0
-    estimate_noise: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "campaigns", tuple(self.campaigns))
@@ -247,10 +255,6 @@ class SimConfig:
         if not 0 <= self.start_hour < HOURS_PER_DAY:
             raise ValueError(f"start_hour must be in [0, 24), got {self.start_hour}")
 
-        if self.estimate_noise < 0:
-            raise ValueError(f"estimate_noise must be >= 0, got {self.estimate_noise}")
-
-        object.__setattr__(self, "estimate_noise", float(self.estimate_noise))
         object.__setattr__(self, "horizon_hours", float(self.horizon_hours))
         object.__setattr__(self, "start_hour", float(self.start_hour))
 

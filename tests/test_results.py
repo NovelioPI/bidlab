@@ -8,7 +8,7 @@ import pytest
 from scipy import stats
 
 from bidlab.auctions import FirstPrice
-from bidlab.bidders import Bidder, Linear, PidPacing
+from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import LogisticMarket, Market, MarketDraw, Segment, Segmented
 from bidlab.results import Results
@@ -24,8 +24,8 @@ def segments_table(results: Results) -> Results:
 
 def config(*extra):
     campaigns = [
-        Campaign("t", Linear(), budget=20.0, base_value=5.0),
-        Campaign("p", PidPacing(), budget=8.0, base_value=5.0),
+        Campaign("t", Stack(OracleValue(), Linear()), budget=20.0, base_value=5.0),
+        Campaign("p", Stack(OracleValue(), PidPacing()), budget=8.0, base_value=5.0),
         *extra,
     ]
     return SimConfig(campaigns=campaigns, episodes=2, steps=100)
@@ -61,7 +61,7 @@ def test_lambdas_and_closures_run_in_parallel():
 
     extra = Campaign(
         "closure",
-        Closure(),
+        Stack(OracleValue(), Closure()),
         budget=20.0,
         base_value=5.0,
     )
@@ -198,7 +198,13 @@ def test_custom_market_same_rows_in_parallel():
 
 def segmented_config():
     market = Segmented((Segment("news", 0.6), Segment("sports", 0.4, lift=1.0)))
-    targeted = Campaign("n", Linear(), budget=20.0, base_value=5.0, segments=("news",))
+    targeted = Campaign(
+        "n",
+        Stack(OracleValue(), Linear()),
+        budget=20.0,
+        base_value=5.0,
+        segments=("news",),
+    )
     return SimConfig(
         campaigns=[*config().campaigns, targeted], episodes=2, steps=100, market=market
     )
@@ -312,7 +318,13 @@ def test_custom_market_segments_reach_segments_table():
                     {}, pcvr=rng.uniform(0.0, 0.2, size=count), segment=name
                 )
 
-    night = Campaign("n", Linear(), budget=20.0, base_value=5.0, segments=("night",))
+    night = Campaign(
+        "n",
+        Stack(OracleValue(), Linear()),
+        budget=20.0,
+        base_value=5.0,
+        segments=("night",),
+    )
     cfg = SimConfig(
         campaigns=[*config().campaigns, night],
         episodes=2,
@@ -328,11 +340,15 @@ def test_custom_market_segments_reach_segments_table():
 
 
 def test_noisy_parallel_equals_serial():
-    cfg = dataclasses.replace(config(), estimate_noise=0.5)
+    noisy = Campaign(
+        "n", Stack(OracleValue(noise=0.5), Linear()), budget=20.0, base_value=5.0
+    )
+    cfg = config(noisy)
     serial = run_many(cfg, seeds=range(3))
     parallel = run_many(cfg, seeds=range(3), workers=2)
     assert parallel.equals(serial)
-    assert not serial.equals(run_many(config(), seeds=range(3)))
+    exact = Campaign("n", Stack(OracleValue(), Linear()), budget=20.0, base_value=5.0)
+    assert not serial.equals(run_many(config(exact), seeds=range(3)))
 
 
 def test_no_reward_columns():
@@ -384,7 +400,13 @@ EVENT_COUNT = {"impression": "wins", "click": "clicks", "conversion": "conversio
 
 def event_config(market=None):
     campaigns = [
-        Campaign(event, Linear(), budget=20.0, base_value=value, event=event)
+        Campaign(
+            event,
+            Stack(OracleValue(), Linear()),
+            budget=20.0,
+            base_value=value,
+            event=event,
+        )
         for event, value in EVENT_VALUES.items()
     ]
     market = market or LogisticMarket(ctr_bias_mean=-1.0, cvr_bias_mean=-1.0)
@@ -486,7 +508,9 @@ class FixedRates(Market):
 def test_regret_and_welfare_follow_event(event, factor):
     # Alone in a first-price auction, a truthful bidder earns nothing, while
     # bidding 0.05 × value wins every step and keeps 0.95 of each value.
-    campaign = Campaign("a", Linear(), budget=1e9, base_value=2.0, event=event)
+    campaign = Campaign(
+        "a", Stack(OracleValue(), Linear()), budget=1e9, base_value=2.0, event=event
+    )
     cfg = SimConfig(
         campaigns=[campaign],
         episodes=2,

@@ -4,19 +4,22 @@ from typing import Any, ClassVar, override
 import numpy as np
 import pytest
 
-from bidlab.bidders import Bidder, Linear, PidPacing, Stack
+from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import Segment, Segmented
 from bidlab.runner import run_many
 from bidlab.simulator import run
 from bidlab.types import BidResult, EpisodeReport
 
+# A top bidder gets no value, so these pass-through test bidders default to one.
+FIRST_VALUE = 1.0
+
 
 class Pass(Bidder):
     """Passes the value through."""
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         return value
 
 
@@ -27,7 +30,7 @@ class Holder(Bidder):
         self.held = held
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         return value
 
 
@@ -40,7 +43,7 @@ class Parent(Bidder):
         self.parts = [Linear(), "x", PidPacing()]
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         return value
 
 
@@ -132,7 +135,7 @@ class Log(Bidder):
         Log.calls.append((self.name, "start", campaign))
 
     @override
-    def forward(self, value: float, **inputs: object) -> float:
+    def forward(self, value: float = FIRST_VALUE, **inputs: object) -> float:
         Log.calls.append((self.name, "forward", inputs))
         return value
 
@@ -170,7 +173,7 @@ class QuietParent(Bidder):
         pass
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         return self.b.forward(self.a.forward(value))
 
     @override
@@ -192,7 +195,7 @@ class Draws(Bidder):
         self.draw = draw
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         if self.draw:
             Draws.draws.setdefault(self.name, []).append(self.rng.random())
 
@@ -205,7 +208,7 @@ class Watch(Bidder):
     values: ClassVar[list[float]] = []
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         Watch.values.append(value)
         return value
 
@@ -214,7 +217,7 @@ class Shade(Bidder):
     """Multiplies the value by ``factor``, which its parent may pass."""
 
     @override
-    def forward(self, value: float, *, factor: float = 1.0) -> float:
+    def forward(self, value: float = FIRST_VALUE, *, factor: float = 1.0) -> float:
         return value * factor
 
 
@@ -225,7 +228,7 @@ class HalfShade(Bidder):
         self.shade = Shade()
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         return self.shade.forward(value, factor=0.5)
 
 
@@ -236,7 +239,7 @@ class Fan(Bidder):
         self.children = children
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         for child in self.children:
             child.forward(value)
 
@@ -247,7 +250,7 @@ class Jitter(Bidder):
     """Multiplies the value by a random factor from its own stream."""
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         return value * self.rng.uniform(0.5, 1.5)
 
 
@@ -259,7 +262,7 @@ class Mixer(Bidder):
         self.forwards = 0
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         self.forwards += 1
         first, second = (part.forward(value) for part in self.parts)
         return (first + second) / 2
@@ -274,7 +277,7 @@ class Counts(Bidder):
         self.name = name
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         Counts.counts.setdefault(self.name, [0, 0])[0] += 1
         return value
 
@@ -297,7 +300,7 @@ class Bids(Bidder):
     bids: ClassVar[list[float]] = []
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         return value
 
     @override
@@ -312,7 +315,7 @@ class HalfOfChild(Bidder):
         self.child = Bids()
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         return self.child.forward(value) / 2
 
 
@@ -344,7 +347,7 @@ class Grows(Bidder):
         self.grow("on_episode_start")
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         self.grow("forward")
         return value
 
@@ -365,14 +368,19 @@ class Tally(Bidder):
         self.history: list[float] = []
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         self.seen += 1
         self.history.append(value)
         return value
 
 
 def other() -> Campaign:
-    return Campaign("other", Linear(multiplier=0.9), budget=1e6, base_value=4.0)
+    return Campaign(
+        "other",
+        Stack(OracleValue(), Linear(multiplier=0.9)),
+        budget=1e6,
+        base_value=4.0,
+    )
 
 
 def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
@@ -396,15 +404,9 @@ def test_child_draws_leave_others_unchanged():
         Draws.draws.clear()
         Watch.values.clear()
         tree = Fan([Draws("child", draw=draw), Fan([Draws("deep", draw=draw)])])
-        stack = Stack(tree, Watch())
+        stack = Stack(tree, OracleValue(noise=0.5), Watch())
         logs.append(
-            run(
-                config(
-                    Campaign("d", stack, budget=1e6, base_value=5.0),
-                    other(),
-                    estimate_noise=0.5,
-                )
-            )
+            run(config(Campaign("d", stack, budget=1e6, base_value=5.0), other()))
         )
         seen.append(list(Watch.values))
         if draw:
@@ -445,7 +447,7 @@ class ResetsThroughCampaign(Bidder):
         campaign.bidder.wins = 0
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         return value
 
 
@@ -507,7 +509,14 @@ def test_children_get_hooks_without_super():
 
 def test_child_result_has_final_bid():
     Bids.bids.clear()
-    log = run(config(Campaign("h", HalfOfChild(), budget=1e6, base_value=5.0), other()))
+    log = run(
+        config(
+            Campaign(
+                "h", Stack(OracleValue(), HalfOfChild()), budget=1e6, base_value=5.0
+            ),
+            other(),
+        )
+    )
     assert Bids.bids == log.bids[:, :, 0].ravel().tolist()
     assert Bids.bids == (log.true_values[:, :, 0].ravel() / 2).tolist()
 
@@ -566,5 +575,12 @@ def test_plain_attribute_changes_allowed():
 
 
 def test_parent_passes_forward_argument():
-    log = run(config(Campaign("h", HalfShade(), budget=1e6, base_value=5.0), other()))
+    log = run(
+        config(
+            Campaign(
+                "h", Stack(OracleValue(), HalfShade()), budget=1e6, base_value=5.0
+            ),
+            other(),
+        )
+    )
     np.testing.assert_array_equal(log.bids[:, :, 0], log.true_values[:, :, 0] * 0.5)

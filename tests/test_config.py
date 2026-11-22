@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from bidlab.auctions import FirstPrice, SecondPrice
-from bidlab.bidders import Bidder, Linear
+from bidlab.bidders import Bidder, Linear, OracleValue, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import LogisticMarket, Segment, Segmented
 from bidlab.simulator import run
@@ -36,7 +36,9 @@ class Recorder(Bidder):
 
 
 def other():
-    return Campaign("other", Linear(), budget=50.0, base_value=4.0)
+    return Campaign(
+        "other", Stack(OracleValue(), Linear()), budget=50.0, base_value=4.0
+    )
 
 
 def small_config(*bidders, **kwargs):
@@ -52,7 +54,9 @@ def built_recorders(*campaigns, **kwargs):
 
 def test_bidder_copied_and_bound_once_per_run():
     template = Recorder()
-    _, built = built_recorders(Campaign("r", template, budget=15, base_value=5))
+    _, built = built_recorders(
+        Campaign("r", Stack(OracleValue(), template), budget=15, base_value=5)
+    )
     assert len(built) == 1
     assert built[0] is not template
     assert isinstance(built[0].rng, np.random.Generator)
@@ -62,8 +66,8 @@ def test_bidder_copied_and_bound_once_per_run():
 
 def test_each_bidder_gets_its_own_rng():
     _, built = built_recorders(
-        Campaign("a", Recorder(), budget=50, base_value=5),
-        Campaign("b", Recorder(), budget=50, base_value=5),
+        Campaign("a", Stack(OracleValue(), Recorder()), budget=50, base_value=5),
+        Campaign("b", Stack(OracleValue(), Recorder()), budget=50, base_value=5),
     )
     assert built[0].rng is not built[1].rng
     assert built[0].rng.random() != built[1].rng.random()
@@ -84,8 +88,8 @@ def test_uncopyable_bidder_fails_before_step_zero():
 
     config = SimConfig(
         campaigns=[
-            Campaign("watch", Watch(), budget=50, base_value=5),
-            Campaign("bad", Locked(), budget=50, base_value=5),
+            Campaign("watch", Stack(OracleValue(), Watch()), budget=50, base_value=5),
+            Campaign("bad", Stack(OracleValue(), Locked()), budget=50, base_value=5),
         ],
         episodes=1,
         steps=10,
@@ -107,7 +111,7 @@ def test_string_bidder_rejected():
 
 
 def test_numbers_stored_as_float():
-    campaign = Campaign("a", Linear(), 3, 5, cpa_target=2)
+    campaign = Campaign("a", Stack(OracleValue(), Linear()), 3, 5, cpa_target=2)
     assert all(
         type(value) is float
         for value in (campaign.budget, campaign.base_value, campaign.cpa_target)
@@ -148,12 +152,16 @@ def test_campaign_rejects_old_fields(old_field):
         {"horizon_hours": -1},
         {"start_hour": -1},
         {"start_hour": 24},
-        {"estimate_noise": -0.1},
     ],
 )
-def test_sim_config_rejects_bad_schedule_and_noise(kwargs):
+def test_sim_config_rejects_bad_schedule(kwargs):
     with pytest.raises(ValueError, match=next(iter(kwargs))):
         SimConfig(campaigns=[other()], **kwargs)
+
+
+def test_estimate_noise_removed():
+    with pytest.raises(TypeError, match="estimate_noise"):
+        SimConfig(campaigns=[other()], estimate_noise=0.5)  # pyright: ignore[reportCallIssue]  Reason: the test checks the removed setting fails at run time.
 
 
 @pytest.mark.parametrize(
@@ -190,7 +198,10 @@ def test_non_market_rejected():
 
 
 def test_bidders_list_stored_as_tuple():
-    campaigns = [other(), Campaign("b", Linear(), budget=1, base_value=1)]
+    campaigns = [
+        other(),
+        Campaign("b", Stack(OracleValue(), Linear()), budget=1, base_value=1),
+    ]
     config = SimConfig(campaigns=campaigns)
     assert config.campaigns == tuple(campaigns)
 
@@ -221,20 +232,32 @@ def test_bidder_without_forward_fails_on_creation():
 def test_unknown_segment_rejected():
     market = Segmented((Segment("news", 0.5), Segment("sports", 0.5)))
     campaign = Campaign(
-        "b", Linear(), budget=1, base_value=1, segments=("news", "games")
+        "b",
+        Stack(OracleValue(), Linear()),
+        budget=1,
+        base_value=1,
+        segments=("news", "games"),
     )
     with pytest.raises(ValueError, match=r"campaign 'b'.*'games'"):
         SimConfig(campaigns=[campaign], market=market)
     with pytest.raises(ValueError, match=r"campaign 'b'.*'news'"):
         SimConfig(
             campaigns=[
-                Campaign("b", Linear(), budget=1, base_value=1, segments=("news",))
+                Campaign(
+                    "b",
+                    Stack(OracleValue(), Linear()),
+                    budget=1,
+                    base_value=1,
+                    segments=("news",),
+                )
             ]
         )
 
 
 def test_segments_list_stored_as_tuple():
-    assert Campaign("a", Linear(), 1, 1, segments=["news"]).segments == ("news",)
+    assert Campaign(
+        "a", Stack(OracleValue(), Linear()), 1, 1, segments=["news"]
+    ).segments == ("news",)
 
 
 @pytest.mark.parametrize(
@@ -251,9 +274,9 @@ def test_segments_list_stored_as_tuple():
 def test_campaign_rejects_bad_values(kwargs, field_name):
     arguments = {"budget": 10, "base_value": 5} | kwargs
     with pytest.raises(ValueError, match=f"campaign 'a': {field_name}"):
-        Campaign("a", Linear(), **arguments)
+        Campaign("a", Stack(OracleValue(), Linear()), **arguments)
 
 
 def test_campaign_rejects_string_segments():
     with pytest.raises(TypeError, match="campaign 'a': segments"):
-        Campaign("a", Linear(), 10, 5, segments="news")
+        Campaign("a", Stack(OracleValue(), Linear()), 10, 5, segments="news")

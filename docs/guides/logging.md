@@ -32,10 +32,12 @@ class Shaded(bl.Bidder):
 
 watched = bl.SimConfig(
     campaigns=[
-        bl.Campaign("paced", bl.PidPacing(), budget=10, base_value=5),
+        bl.Campaign(
+            "paced", bl.Stack(bl.OracleValue(), bl.PidPacing()), budget=10, base_value=5
+        ),
         bl.Campaign(
             "shaded",
-            bl.Stack(Shaded(), bl.PidPacing(log_state=False)),
+            bl.Stack(bl.OracleValue(), Shaded(), bl.PidPacing(log_state=False)),
             budget=10,
             base_value=5,
         ),
@@ -44,8 +46,8 @@ watched = bl.SimConfig(
     steps=200,
 )
 log = bl.run(watched)
-print(log.logged["multiplier"]["paced"].shape)  # (3, 200)
-print(log.logged["bidders.0.factor"]["shaded"][0, :3])  # [0.8 0.8 0.8]
+print(log.logged["bidders.1.multiplier"]["paced"].shape)  # (3, 200)
+print(log.logged["bidders.1.factor"]["shaded"][0, :3])  # [0.8 0.8 0.8]
 ```
 
 ## Watch a run
@@ -70,7 +72,7 @@ class Progress(bl.Callback):
 
 bl.run(watched, callbacks=[Progress()])
 results = bl.run_many(watched, seeds=range(2), callbacks=[Progress()])
-print(results.logged["multiplier"]["paced"].shape)  # (2, 3, 200)
+print(results.logged["bidders.1.multiplier"]["paced"].shape)  # (2, 3, 200)
 ```
 
 ## Examples

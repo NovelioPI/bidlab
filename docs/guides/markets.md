@@ -50,10 +50,15 @@ market = bl.markets.Segmented(
 )
 segmented = bl.SimConfig(
     campaigns=[
-        bl.Campaign("everywhere", bl.Linear(), budget=50, base_value=5),
+        bl.Campaign(
+            "everywhere",
+            bl.Stack(bl.OracleValue(), bl.Linear()),
+            budget=50,
+            base_value=5,
+        ),
         bl.Campaign(
             "sports_only",
-            bl.Linear(),
+            bl.Stack(bl.OracleValue(), bl.Linear()),
             budget=50,
             base_value=5,
             segments=("sports",),
@@ -114,7 +119,11 @@ At ρ = 0, m follows the features but not any campaign's value. An impression a 
 import bidlab as bl
 
 priced = bl.SimConfig(
-    campaigns=[bl.Campaign("pid", bl.PidPacing(), budget=20, base_value=5)],
+    campaigns=[
+        bl.Campaign(
+            "pid", bl.Stack(bl.OracleValue(), bl.PidPacing()), budget=20, base_value=5
+        )
+    ],
     market=bl.markets.LogisticMarket(
         price_median=0.2, rival_similarity=0.8, floor_share=(2, 5)
     ),
@@ -147,7 +156,11 @@ class Daytime(bl.markets.Market):
 
 
 daytime = bl.SimConfig(
-    campaigns=[bl.Campaign("pid", bl.PidPacing(), budget=15, base_value=5)],
+    campaigns=[
+        bl.Campaign(
+            "pid", bl.Stack(bl.OracleValue(), bl.PidPacing()), budget=15, base_value=5
+        )
+    ],
     market=Daytime(),
     episodes=2,
     steps=96,

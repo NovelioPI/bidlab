@@ -35,7 +35,9 @@ class CheapConversionBandit(bl.UcbMultiplier):
 
 
 def bandit(bidder):
-    return bl.Campaign("bandit", bidder, budget=1e9, base_value=5)
+    return bl.Campaign(
+        "bandit", bl.Stack(bl.OracleValue(), bidder), budget=1e9, base_value=5
+    )
 
 
 BANDITS = {
@@ -50,7 +52,9 @@ BANDITS = {
 base = bl.SimConfig(
     campaigns=[
         BANDITS["surplus"],
-        bl.Campaign("other", bl.Linear(), budget=1e9, base_value=5),
+        bl.Campaign(
+            "other", bl.Stack(bl.OracleValue(), bl.Linear()), budget=1e9, base_value=5
+        ),
     ],
     episodes=30,
     steps=300,
@@ -62,9 +66,9 @@ if __name__ == "__main__":
     for name, campaign in BANDITS.items():
         config = dataclasses.replace(base, campaigns=[campaign, base.campaigns[1]])
         results = bl.run_many(config, seeds=range(5))
-        arms[name] = results.logged["multiplier"]["bandit"][:, -LAST_EPISODES:].mean(
-            axis=1
-        )
+        arms[name] = results.logged["bidders.1.multiplier"]["bandit"][
+            :, -LAST_EPISODES:
+        ].mean(axis=1)
         print(f"{name:18s} mean multiplier per seed: {arms[name].round(2)}")
 
     higher = arms["conversions"] > arms["surplus"]

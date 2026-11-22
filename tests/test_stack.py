@@ -3,10 +3,16 @@ from typing import Any, ClassVar
 import numpy as np
 import pytest
 
-from bidlab.bidders import Bidder, Linear, PidPacing, Stack
+from bidlab import simulator
+from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
 from bidlab.config import Campaign, SimConfig
+from bidlab.markets import LogisticMarket
 from bidlab.runner import run_many
 from bidlab.simulator import run
+from bidlab.types import MarketTruth
+
+# A first bidder in a stack gets no value, so pass-through test bidders default to one.
+FIRST_VALUE = 1.0
 
 
 class Add(Bidder):
@@ -32,7 +38,7 @@ class Calls(Bidder):
     def on_episode_start(self, campaign):
         Calls.calls.append((self.name, "start", campaign))
 
-    def forward(self, value, **inputs):
+    def forward(self, value=FIRST_VALUE, **inputs):
         Calls.calls.append((self.name, "forward", inputs))
         return value
 
@@ -50,7 +56,7 @@ class Holds(Bidder):
         self.model = model
         self.forwards = 0
 
-    def forward(self, value):
+    def forward(self, value=FIRST_VALUE):
         self.forwards += 1
         return value
 
@@ -63,7 +69,7 @@ class Counter(Bidder):
     def __init__(self):
         self.forwards = 0
 
-    def forward(self, value):
+    def forward(self, value=FIRST_VALUE):
         self.forwards += 1
         return value
 
@@ -80,7 +86,7 @@ class Draws(Bidder):
         self.name = name
         self.draw = draw
 
-    def forward(self, value):
+    def forward(self, value=FIRST_VALUE):
         if self.draw:
             Draws.draws.setdefault(self.name, []).append(self.rng.random())
 
@@ -100,7 +106,7 @@ class Watch(Bidder):
 class Jitter(Bidder):
     """Multiplies the value by a random factor from its own stream."""
 
-    def forward(self, value):
+    def forward(self, value=FIRST_VALUE):
         return value * self.rng.uniform(0.5, 1.5)
 
 
@@ -110,14 +116,19 @@ def config(*campaigns, **kwargs):
 
 
 def other():
-    return Campaign("other", Linear(multiplier=0.9), budget=1e6, base_value=4.0)
+    return Campaign(
+        "other",
+        Stack(OracleValue(), Linear(multiplier=0.9)),
+        budget=1e6,
+        base_value=4.0,
+    )
 
 
 def test_stages_chain_values():
     first, second = Add(1.0), Linear(multiplier=3.0)
     stack = Stack(first, second)
     stack.bind(np.random.default_rng(0))
-    assert stack.forward(2.0) == 9.0
+    assert stack.forward(value=2.0) == 9.0
     assert first.seen == [2.0]
 
 
@@ -128,14 +139,14 @@ class AddTimeLeft(Bidder):
 
 def test_stack_chains_value_and_matches_inputs():
     stack = Stack(Add(1.0), AddTimeLeft())
-    assert stack.forward(2.0, time_left=10.0, segment="all") == 13.0
+    assert stack.forward(value=2.0, time_left=10.0, segment="all") == 13.0
 
 
 def test_stacks_nest():
     inner = Stack(Add(1.0), Linear(multiplier=2.0))
     outer = Stack(Add(1.0), inner)
     outer.bind(np.random.default_rng(0))
-    assert outer.forward(1.0) == 6.0
+    assert outer.forward(value=1.0) == 6.0
 
 
 def test_hooks_reach_every_stage_in_order():
@@ -215,11 +226,15 @@ def test_stage_streams_are_separate():
 
 def test_single_stage_equals_stack():
     single = run(
-        config(Campaign("p", PidPacing(), budget=3.0, base_value=5.0), other())
+        config(
+            Campaign(
+                "p", Stack(OracleValue(), PidPacing()), budget=3.0, base_value=5.0
+            ),
+            other(),
+        )
     )
-    stacked = run(
-        config(Campaign("p", Stack(PidPacing()), budget=3.0, base_value=5.0), other())
-    )
+    nested = Stack(Stack(OracleValue(), PidPacing()))
+    stacked = run(config(Campaign("p", nested, budget=3.0, base_value=5.0), other()))
     for name in ("bids", "true_values", "winner", "price", "converted"):
         np.testing.assert_array_equal(getattr(single, name), getattr(stacked, name))
 
@@ -249,18 +264,83 @@ def test_stack_streams_match_main():
     assert {name: draws[:3] for name, draws in Draws.draws.items()} == expected
 
 
-def test_bidder_draws_keep_noise_stream():
+def test_bidder_draws_keep_oracle_noise_stream():
     seen: dict[bool, list[float]] = {}
     for draw in (True, False):
-        drawing = Stack(Draws("first", draw=draw), Watch())
+        drawing = Stack(Draws("first", draw=draw), OracleValue(noise=0.5), Watch())
         Watch.values.clear()
-        run(
-            config(
-                Campaign("d", drawing, budget=1e6, base_value=5.0),
-                other(),
-                estimate_noise=0.5,
-            )
-        )
+        run(config(Campaign("d", drawing, budget=1e6, base_value=5.0), other()))
         seen[draw] = list(Watch.values)
 
+    assert len(set(seen[True])) > 1
     assert seen[True] == seen[False]
+
+
+class Records(Bidder):
+    """Records the inputs of each forward call and outputs a fixed number."""
+
+    def __init__(self, output):
+        self.output = output
+        self.calls = []
+
+    def forward(self, **inputs):
+        self.calls.append(inputs)
+        return self.output
+
+
+def test_stack_passes_value_on():
+    a, b, c = Records(1.0), Records(2.0), Records(3.0)
+    assert Stack(a, b, c).forward(time=0.0) == 3.0
+    assert a.calls == [{"time": 0.0}]
+    assert b.calls == [{"time": 0.0, "value": 1.0}]
+    assert c.calls == [{"time": 0.0, "value": 2.0}]
+
+
+def test_first_bidder_gets_no_value():
+    campaign = Campaign("a", Stack(Linear()), budget=1e6, base_value=5.0)
+    with pytest.raises(
+        TypeError,
+        match=r"Linear.forward needs 'value'.*bl\.Stack\(bl\.OracleValue\(\), ",
+    ):
+        run(config(campaign))
+
+
+class Fixed(Bidder):
+    def forward(self):
+        return 0.2
+
+
+def count_market_truths(monkeypatch, bidder):
+    built = []
+
+    def counting(*args):
+        built.append(args)
+        return MarketTruth(*args)
+
+    monkeypatch.setattr(simulator, "MarketTruth", counting)
+    run(config(Campaign("a", bidder, budget=1e6, base_value=5.0)))
+    return len(built)
+
+
+def test_no_market_truth_without_reader(monkeypatch):
+    assert count_market_truths(monkeypatch, Stack(Fixed(), Linear())) == 0
+    assert count_market_truths(monkeypatch, Stack(OracleValue(), Linear())) == 100
+
+
+class ReadsMarket(Bidder):
+    """Records the truth it gets, in a class-level list: runs use a copy."""
+
+    seen: ClassVar[list[MarketTruth]] = []
+
+    def forward(self, value, market):
+        ReadsMarket.seen.append(market)
+        return value
+
+
+def test_deep_bidder_gets_market():
+    ReadsMarket.seen.clear()
+    bidder = Stack(Fixed(), Stack(Linear(), ReadsMarket()))
+    campaign = Campaign("a", bidder, budget=1e6, base_value=5.0)
+    log = run(config(campaign, market=LogisticMarket(ctr_bias_mean=-2.0)))
+    values = [5.0 * truth.pctr * truth.pcvr for truth in ReadsMarket.seen]
+    assert values == log.true_values[:, :, 0].ravel().tolist()

@@ -44,19 +44,20 @@ Each bidder in a tree has a path. `named_bidders()` lists them, parent first.
 ```python
 night = NightShade()
 print([path for path, _ in night.named_bidders()])  # ['', 'shade', 'pacing']
-print([path for path, _ in bl.Stack(bl.Linear(), bl.PidPacing()).named_bidders()])
-# ['', 'bidders.0', 'bidders.1']
+stacked = bl.Stack(bl.OracleValue(), night)
+print([path for path, _ in stacked.named_bidders()])
+# ['', 'bidders.0', 'bidders.1', 'bidders.1.shade', 'bidders.1.pacing']
 ```
 
-A child's logged names carry its path, such as `"pacing.multiplier"`. See [Logging](logging.md).
+`NightShade` needs a `value`, so it sits after `bl.OracleValue` in a `Stack`. A child's logged names carry its path, such as `"bidders.1.pacing.multiplier"`. See [Logging](logging.md).
 
 ```python
 config = bl.SimConfig(
-    campaigns=[bl.Campaign("night", night, budget=15, base_value=5)],
+    campaigns=[bl.Campaign("night", stacked, budget=15, base_value=5)],
     episodes=2,
     steps=200,
 )
-print(bl.run(config).logged["pacing.multiplier"]["night"].shape)  # (2, 200)
+print(bl.run(config).logged["bidders.1.pacing.multiplier"]["night"].shape)  # (2, 200)
 ```
 
 ## Examples

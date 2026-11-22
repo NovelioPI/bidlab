@@ -32,9 +32,10 @@ class CheapConversions(bl.Bidder):
         self.log("reward", reward)
 
 
-campaign = bl.Campaign("cheap", CheapConversions(), budget=50, base_value=5)
+bidder = bl.Stack(bl.OracleValue(), CheapConversions())
+campaign = bl.Campaign("cheap", bidder, budget=50, base_value=5)
 config = bl.SimConfig(campaigns=[campaign], episodes=2, steps=200)
-print(bl.run(config).logged["reward"]["cheap"].shape)  # (2, 200)
+print(bl.run(config).logged["bidders.1.reward"]["cheap"].shape)  # (2, 200)
 ```
 
 ## A learning bidder with another reward

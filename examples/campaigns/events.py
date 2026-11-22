@@ -13,11 +13,15 @@ BUDGET = 15
 config = bl.SimConfig(
     campaigns=[
         bl.Campaign(
-            "click", bl.PidPacing(), budget=BUDGET, base_value=0.4, event="click"
+            "click",
+            bl.Stack(bl.OracleValue(), bl.PidPacing()),
+            budget=BUDGET,
+            base_value=0.4,
+            event="click",
         ),
         bl.Campaign(
             "conversion",
-            bl.PidPacing(),
+            bl.Stack(bl.OracleValue(), bl.PidPacing()),
             budget=BUDGET,
             base_value=5,
             event=bl.Event.CONVERSION,

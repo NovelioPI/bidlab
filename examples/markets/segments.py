@@ -16,15 +16,22 @@ market = bl.markets.Segmented(
 
 config = bl.SimConfig(
     campaigns=[
-        bl.Campaign("everywhere", bl.Linear(), budget=50, base_value=5),
+        bl.Campaign(
+            "everywhere",
+            bl.Stack(bl.OracleValue(), bl.Linear()),
+            budget=50,
+            base_value=5,
+        ),
         bl.Campaign(
             "sports_only",
-            bl.Linear(),
+            bl.Stack(bl.OracleValue(), bl.Linear()),
             budget=50,
             base_value=5,
             segments=("sports",),
         ),
-        bl.Campaign("pid", bl.PidPacing(), budget=15, base_value=5),
+        bl.Campaign(
+            "pid", bl.Stack(bl.OracleValue(), bl.PidPacing()), budget=15, base_value=5
+        ),
     ],
     market=market,
     auction=bl.SecondPrice(reserve=0.01),

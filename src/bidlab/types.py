@@ -27,7 +27,13 @@ class Event(StrEnum):
     Examples
     --------
     >>> import bidlab as bl
-    >>> campaign = bl.Campaign("traffic", bl.Linear(), budget=10, base_value=0.4, event="click")
+    >>> campaign = bl.Campaign(
+    ...     "traffic",
+    ...     bl.Stack(bl.OracleValue(), bl.Linear()),
+    ...     budget=10,
+    ...     base_value=0.4,
+    ...     event="click",
+    ... )
     >>> campaign.event is bl.Event.CLICK, campaign.event == "click"
     (True, True)
     """

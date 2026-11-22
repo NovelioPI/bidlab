@@ -30,15 +30,22 @@ class DayAndNight(bl.markets.Market):
 
 config = bl.SimConfig(
     campaigns=[
-        bl.Campaign("truthful", bl.Linear(), budget=40, base_value=5),
+        bl.Campaign(
+            "truthful", bl.Stack(bl.OracleValue(), bl.Linear()), budget=40, base_value=5
+        ),
         bl.Campaign(
             "night_only",
-            bl.Linear(),
+            bl.Stack(bl.OracleValue(), bl.Linear()),
             budget=40,
             base_value=5,
             segments=("night",),
         ),
-        bl.Campaign("bandit", bl.UcbMultiplier(), budget=40, base_value=5),
+        bl.Campaign(
+            "bandit",
+            bl.Stack(bl.OracleValue(), bl.UcbMultiplier()),
+            budget=40,
+            base_value=5,
+        ),
     ],
     market=DayAndNight(),
     episodes=10,
