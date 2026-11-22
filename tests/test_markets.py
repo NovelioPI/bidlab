@@ -726,3 +726,18 @@ def test_segment_click_setting_needs_click_stage(settings):
     with pytest.raises(ValueError, match="click stage"):
         Segmented((Segment("a", 1.0, **settings),))
     Segmented((Segment("a", 1.0, **settings),), LogisticMarket(ctr=0.02))
+
+
+def test_rate_market_results_repeat():
+    base = LogisticMarket(ctr=0.05, cvr=0.1, rival_similarity=0.5, price_median=0.2)
+    market = Segmented(
+        (Segment("a", 0.5, ctr=0.08, cvr_lift=0.5), Segment("b", 0.5)), base
+    )
+    campaigns = [
+        Campaign("x", Stack(OracleValue(), Linear()), budget=5.0, base_value=20.0),
+        Campaign("y", Stack(OracleValue(), Linear()), budget=5.0, base_value=30.0),
+    ]
+    config = SimConfig(campaigns=campaigns, market=market, episodes=2, steps=200)
+    first = bl.run_many(config, seeds=range(3))
+    assert first.equals(bl.run_many(config, seeds=range(3)))
+    assert first.equals(bl.run_many(config, seeds=range(3), workers=2))
