@@ -46,6 +46,7 @@ Like a PyTorch module, `forward` declares the inputs it needs as parameters. The
 | `hour_of_day` | Hour of day at `time`, in [0, 24) |
 | `budget_left` | The campaign's budget left before this auction |
 | `segment` | The auction's market segment; `"all"` without segments |
+| `floor` | The lowest bid that can win: the higher of the auction's `reserve` and the market's floor |
 | `features` | Every public feature from the market, as a read-only mapping |
 | `market` | A `bl.MarketTruth` with this campaign's true `pctr` and `pcvr`; for checks and oracles, not for a fair benchmark |
 | a feature name | Each public feature from the market, such as `country`, or the array `vector` from `LogisticMarket` |

@@ -16,7 +16,9 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | cᵢₜ | True click probability (pCTR) of campaign i at step t; 1 when the market has no click stage | probability |
 | pᵢₜ | True conversion probability after a click (pCVR) of campaign i at step t, not the bidder's estimate | probability |
 | Wᵢ | Steps that campaign i won | set of steps |
-| priceₜ | Price paid at step t | money |
+| priceₜ | Price paid at step t; 0 when no campaign won | money |
+| mₜ | Market price at step t: the highest bid from outside the config; −∞ without one | money |
+| rₜ | Effective floor at step t: max(reserve, market floor) | money |
 | Bᵢ | Budget of campaign i per episode | money |
 | targetᵢ | CPA target of campaign i, if set | money per conversion |
 
@@ -42,8 +44,8 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 
 | Metric | Definition |
 |---|---|
-| revenue | Σ priceₜ over all steps |
-| welfare | Σ vᵢₜ of the winner, over steps with a sale |
+| revenue | Σ priceₜ over all steps: only campaigns' payments, since an auction sold outside has price 0 |
+| welfare | Σ vᵢₜ of the winner, over steps a campaign won |
 
 ## Segment metrics
 
@@ -64,11 +66,11 @@ For one seed and campaign, each metric summed over segments equals the main tabl
 
 Regret compares the bidder with the best fixed multiplier in hindsight.
 
-1. Hold every other bidder's logged bids fixed.
+1. Hold every other bidder's logged bids, the market price and the floor fixed.
 2. For each multiplier m in 0, 0.05, …, 3, replay the episode with bidder i bidding m × vᵢₜ.
 3. Cap each replayed bid at the replayed remaining budget.
-4. A replayed bid wins when it meets the reserve and is strictly above the highest other bid. A bidder with `segments` cannot win outside them in the replay either.
-5. The replayed price follows the auction rule: the bid in first price, max(highest other bid, reserve) in second price.
+4. A replayed bid wins when it is at or above rₜ, and strictly above both the highest other bid and mₜ. A bidder with `segments` cannot win outside them in the replay either.
+5. The replayed price follows the auction rule: the bid in first price, max(highest other bid, rₜ, mₜ) in second price.
 6. Replay surplus(m) = Σ (vᵢₜ − priceₜ) over the replayed wins.
 7. Own surplus = Σ (vᵢₜ − priceₜ) over the logged wins.
 8. regret = max over m of replay surplus(m), minus own surplus.

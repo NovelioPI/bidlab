@@ -120,9 +120,10 @@ class PlatformEpisodeMetrics:
     episode : int
         Episode index.
     revenue : float
-        Sum of all prices paid.
+        Sum of all prices campaigns paid. An auction sold outside, to the
+        market price, adds nothing: its price is unknown.
     welfare : float
-        Sum of the winner's expected value, over steps with a sale.
+        Sum of the winner's expected value, over auctions a campaign won.
     """
 
     episode: int
@@ -282,9 +283,10 @@ def regret(
 ) -> float:
     """Best fixed-multiplier expected surplus minus the bidder's own expected surplus.
 
-    Other bidders' logged bids stay fixed while the episode is replayed with
-    this bidder bidding m × value for each multiplier m. See the Regret
-    section of ``docs/metrics.md`` for every rule and its limits.
+    Other bidders' logged bids, the market price and the floor stay fixed
+    while the episode is replayed with this bidder bidding m × value for each
+    multiplier m. See the Regret section of ``docs/metrics.md`` for every rule
+    and its limits.
 
     Parameters
     ----------
@@ -325,19 +327,25 @@ def regret(
         i for i, name in enumerate(names) if name in (campaign.segments or names)
     ]
     takes_part = np.isin(log.segment[episode], allowed)
+    floors = np.maximum(auction.reserve, log.floor[episode])
+    # A step without a market price has no outside bid to beat.
+    outside = np.nan_to_num(log.market_price[episode], nan=-np.inf)
 
     budget_left = np.full(multipliers.size, campaign.budget)
     replay_surplus = np.zeros(multipliers.size)
     for step, value in enumerate(values):
         bids = np.minimum(multipliers * value, budget_left)
         wins = (
-            takes_part[step] & (bids >= auction.reserve) & (bids > highest_other[step])
+            takes_part[step]
+            & (bids >= floors[step])
+            & (bids > highest_other[step])
+            & (bids > outside[step])
         )
         if isinstance(auction, FirstPrice):
             prices = bids
         else:
             prices = np.full(
-                multipliers.size, max(highest_other[step], auction.reserve)
+                multipliers.size, max(highest_other[step], floors[step], outside[step])
             )
 
         replay_surplus += np.where(wins, value - prices, 0.0)

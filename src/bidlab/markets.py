@@ -26,6 +26,32 @@ class Distribution(Protocol):
         ...
 
 
+def _checked_floor_share(
+    floor_share: Sequence[float] | None, has_price: bool, price_name: str
+) -> tuple[float, float] | None:
+    if floor_share is None:
+        return None
+
+    if not has_price:
+        raise ValueError(f"floor_share needs {price_name}: a floor is a share of it")
+
+    shape = tuple(float(parameter) for parameter in floor_share)
+    if len(shape) != 2 or not all(parameter > 0 for parameter in shape):
+        raise ValueError(
+            f"floor_share must be two Beta parameters (a, b), both > 0, got {floor_share}"
+        )
+
+    return shape[0], shape[1]
+
+
+def _check_distribution(name: str, distribution: object) -> None:
+    if not callable(getattr(distribution, "rvs", None)):
+        raise TypeError(
+            f"{name} must have an rvs method, such as scipy.stats.uniform(0, 1); "
+            f"got {type(distribution).__name__}"
+        )
+
+
 @dataclass(frozen=True)
 class MarketDraw:
     """One step's draw: public features, private probabilities and the segment.
@@ -49,11 +75,18 @@ class MarketDraw:
         ``(campaigns,)``, in [0, 1].
     segment : str, optional
         Name of this step's segment; must be in the market's `segment_names`.
+    market_price : float, optional
+        The highest bid from outside the config, >= 0. A campaign wins only
+        with a bid above it. None, the default, means no outside competition.
+    floor : float, optional
+        The publisher's floor for this auction, >= 0. The lowest bid that can
+        win is the higher of this and the auction's ``reserve``.
 
     Notes
     -----
     A campaign's bidder sees its own ``pctr`` and ``pcvr`` in the ``market``
-    input, and the platform's estimate of their product in ``value``.
+    input, and the platform's estimate of their product in ``value``. No
+    bidder sees ``market_price``; each sees the effective floor as ``floor``.
     """
 
     features: Mapping[str, FeatureValue]
@@ -61,6 +94,8 @@ class MarketDraw:
     pctr: npt.NDArray[np.float64] | None = None
     pcvr: npt.NDArray[np.float64]
     segment: str = ALL_SEGMENTS
+    market_price: float | None = None
+    floor: float = 0.0
 
     def __post_init__(self) -> None:
         features = {name: _read_only(value) for name, value in self.features.items()}
@@ -68,6 +103,9 @@ class MarketDraw:
         if self.pctr is not None:
             object.__setattr__(self, "pctr", np.asarray(self.pctr, dtype=float))
         object.__setattr__(self, "pcvr", np.asarray(self.pcvr, dtype=float))
+        if self.market_price is not None:
+            object.__setattr__(self, "market_price", float(self.market_price))
+        object.__setattr__(self, "floor", float(self.floor))
 
 
 class Market(ABC):
@@ -144,13 +182,40 @@ class LogisticMarket(Market):
     public_features : int, optional
         How many features bidders see, from 0 to ``feature_count``. None
         means all.
+    price_median : float, optional
+        Median market price, in money, > 0. None, the default, means no
+        market price and no floor.
+    price_spread : float, optional
+        Standard deviation of log market price around the median and the
+        quality term, >= 0.
+    price_quality : float, optional
+        How strongly log market price follows the impression's quality: the
+        feature vector · a hidden market vector, of variance near 1.
+    rival_similarity : float, optional
+        How much the campaigns' ad vectors share the market vector, in
+        [0, 1]. At 0, the default, market price follows the features but no
+        campaign's value; above 0, it rises with each campaign's value.
+    floor_share : tuple of float, optional
+        Parameters (a, b) of a Beta distribution, both > 0. Each auction's
+        floor is a share drawn from it times the market price. None means no
+        floor. Needs ``price_median``.
 
     Raises
     ------
     TypeError
         If ``public_features`` is not an int.
     ValueError
-        If ``public_features`` is outside [0, ``feature_count``].
+        If ``public_features`` is outside [0, ``feature_count``], or a price
+        setting is out of range.
+
+    Notes
+    -----
+    With quality q and a standard normal ε drawn each step::
+
+        log m = log(price_median) + price_quality × q + price_spread × ε
+
+    Each ad vector is ρ ψ + √(1 − ρ²) η, where ψ is the market vector, η the
+    campaign's own vector, and ρ is ``rival_similarity``.
 
     Examples
     --------
@@ -160,6 +225,15 @@ class LogisticMarket(Market):
     >>> draw = next(market.draws(2, np.random.default_rng(0)))
     >>> draw.pcvr.shape, draw.pctr.shape, draw.features["vector"].shape
     ((2,), (2,), (3,))
+
+    A market price that follows each campaign's value, with a floor:
+
+    >>> market = bl.markets.LogisticMarket(
+    ...     price_median=0.2, rival_similarity=0.8, floor_share=(2, 5)
+    ... )
+    >>> draw = next(market.draws(2, np.random.default_rng(0)))
+    >>> bool(0 <= draw.floor <= draw.market_price)
+    True
     """
 
     feature_count: int = 8
@@ -168,8 +242,14 @@ class LogisticMarket(Market):
     cvr_bias_mean: float = -3.0
     cvr_bias_sd: float = 0.5
     public_features: int | None = None
+    price_median: float | None = None
+    price_spread: float = 0.5
+    price_quality: float = 1.0
+    rival_similarity: float = 0.0
+    floor_share: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
+        self._check_price()
         public = self.public_features
         if public is None:
             return
@@ -184,6 +264,24 @@ class LogisticMarket(Market):
                 f"public_features must be in [0, {self.feature_count}], got {public}"
             )
 
+    def _check_price(self) -> None:
+        # Negated checks also catch NaN, which fails every comparison.
+        if self.price_median is not None and not self.price_median > 0:
+            raise ValueError(f"price_median must be > 0, got {self.price_median}")
+
+        if not self.price_spread >= 0:
+            raise ValueError(f"price_spread must be >= 0, got {self.price_spread}")
+
+        if not 0 <= self.rival_similarity <= 1:
+            raise ValueError(
+                f"rival_similarity must be in [0, 1], got {self.rival_similarity}"
+            )
+
+        floor_share = _checked_floor_share(
+            self.floor_share, self.price_median is not None, "price_median"
+        )
+        object.__setattr__(self, "floor_share", floor_share)
+
     def draws(self, count: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
         """Yield one draw per step; see `Market.draws`."""
         for stages in _logistic_stages(self, count, rng):
@@ -191,6 +289,8 @@ class LogisticMarket(Market):
                 {"vector": stages.public_vector},
                 pctr=stages.pctr,
                 pcvr=_sigmoid(stages.cvr_logits),
+                market_price=stages.market_price,
+                floor=stages.floor,
             )
 
 
@@ -218,7 +318,8 @@ class Segmented(Market):
     """Each step comes from one segment; its `lift` shifts every campaign's CVR logit.
 
     Bidders get the segment name as the ``segment`` input of `Bidder.forward`,
-    and the base market's ``"vector"`` feature and click stage unchanged.
+    and the base market's ``"vector"`` feature and click stage unchanged. The
+    market price and floor are the base market's too.
 
     Parameters
     ----------
@@ -282,6 +383,8 @@ class Segmented(Market):
                 pctr=stages.pctr,
                 pcvr=_sigmoid(stages.cvr_logits + segment.lift),
                 segment=segment.name,
+                market_price=stages.market_price,
+                floor=stages.floor,
             )
 
 
@@ -290,17 +393,28 @@ class IndependentValues(Market):
     """Each bidder's probability is an independent, clipped draw from `distribution`.
 
     Draws are clipped to [0, 1]. Each bidder has its own stream, so adding a
-    bidder leaves the others' probabilities unchanged.
+    bidder leaves the others' probabilities unchanged. The market price and
+    floor come from the market's own stream, apart from every bidder's.
 
     Parameters
     ----------
     distribution : Distribution
         A scipy frozen distribution, such as ``scipy.stats.beta(2, 30)``.
+    market_price : Distribution, optional
+        Each auction's market price is a draw from it, clipped at 0. It does
+        not follow any probability. None, the default, means no market price.
+    floor_share : tuple of float, optional
+        Parameters (a, b) of a Beta distribution, both > 0. Each auction's
+        floor is a share drawn from it times the market price. None means no
+        floor. Needs ``market_price``.
 
     Raises
     ------
     TypeError
-        If ``distribution`` has no ``rvs`` method.
+        If ``distribution`` or ``market_price`` has no ``rvs`` method.
+    ValueError
+        If ``floor_share`` is set without ``market_price``, or a parameter is
+        not > 0.
 
     Examples
     --------
@@ -314,13 +428,17 @@ class IndependentValues(Market):
     """
 
     distribution: Distribution
+    market_price: Distribution | None = None
+    floor_share: tuple[float, float] | None = None
 
     def __post_init__(self) -> None:
-        if not callable(getattr(self.distribution, "rvs", None)):
-            raise TypeError(
-                "distribution must have an rvs method, such as scipy.stats.uniform(0, 1); "
-                f"got {type(self.distribution).__name__}"
-            )
+        _check_distribution("distribution", self.distribution)
+        if self.market_price is not None:
+            _check_distribution("market_price", self.market_price)
+        floor_share = _checked_floor_share(
+            self.floor_share, self.market_price is not None, "market_price"
+        )
+        object.__setattr__(self, "floor_share", floor_share)
 
     def draws(self, count: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
         """Yield one draw per step; see `Market.draws`."""
@@ -333,14 +451,31 @@ class IndependentValues(Market):
                     for stream in streams
                 ]
             )
-            for pcvr in np.clip(block, 0.0, 1.0):
-                yield MarketDraw({}, pcvr=pcvr)
+            prices: list[float | None] = [None] * SAMPLE_BLOCK_SIZE
+            floors = np.zeros(SAMPLE_BLOCK_SIZE)
+            # Spawning leaves the parent stream unused, so the price draws move no pCVR.
+            if self.market_price is not None:
+                price_block = np.clip(
+                    self.market_price.rvs(size=SAMPLE_BLOCK_SIZE, random_state=rng),
+                    0.0,
+                    None,
+                )
+                prices = price_block.tolist()
+                if self.floor_share is not None:
+                    shares = rng.beta(*self.floor_share, size=SAMPLE_BLOCK_SIZE)
+                    floors = price_block * shares
+
+            rows = zip(np.clip(block, 0.0, 1.0), prices, floors, strict=True)
+            for pcvr, price, floor in rows:
+                yield MarketDraw({}, pcvr=pcvr, market_price=price, floor=floor)
 
 
 class _Stages(NamedTuple):
     public_vector: npt.NDArray[np.float64]
     pctr: npt.NDArray[np.float64] | None
     cvr_logits: npt.NDArray[np.float64]
+    market_price: float | None
+    floor: float
 
 
 def _logistic_stages(
@@ -349,19 +484,39 @@ def _logistic_stages(
     dimensions = market.feature_count
     public = dimensions if market.public_features is None else market.public_features
     # Separate streams keep campaign i's draws equal when campaigns are added.
-    # Risk: if the click streams were spawned first, then every CVR draw would move.
-    cvr_vector_rng, cvr_bias_rng, feature_rng, ctr_vector_rng, ctr_bias_rng = rng.spawn(
-        5
-    )
+    # Risk: if new streams came before the first five, then every older draw would move.
+    (
+        cvr_vector_rng,
+        cvr_bias_rng,
+        feature_rng,
+        ctr_vector_rng,
+        ctr_bias_rng,
+        market_vector_rng,
+        price_rng,
+        floor_rng,
+    ) = rng.spawn(8)
     scale = 1.0 / np.sqrt(dimensions)
+    has_price = market.price_median is not None
+    market_vector = np.zeros(dimensions)
+    if has_price or market.rival_similarity > 0:
+        market_vector = market_vector_rng.normal(0.0, scale, size=dimensions)
+
     click_weights = None
     if market.ctr_bias_mean is not None:
         click_weights = (
-            ctr_vector_rng.normal(0.0, scale, size=(count, dimensions)),
+            _share_market_vector(
+                ctr_vector_rng.normal(0.0, scale, size=(count, dimensions)),
+                market_vector,
+                market.rival_similarity,
+            ),
             ctr_bias_rng.normal(market.ctr_bias_mean, market.ctr_bias_sd, size=count),
         )
 
-    cvr_vectors = cvr_vector_rng.normal(0.0, scale, size=(count, dimensions))
+    cvr_vectors = _share_market_vector(
+        cvr_vector_rng.normal(0.0, scale, size=(count, dimensions)),
+        market_vector,
+        market.rival_similarity,
+    )
     cvr_biases = cvr_bias_rng.normal(
         market.cvr_bias_mean, market.cvr_bias_sd, size=count
     )
@@ -374,10 +529,34 @@ def _logistic_stages(
             pctr = _sigmoid((ctr_vectors * features).sum(axis=1) + ctr_biases)
 
         cvr_logits = (cvr_vectors * features).sum(axis=1) + cvr_biases
+        market_price = None
+        floor = 0.0
+        if has_price:
+            quality = (market_vector * features).sum()
+            noise = price_rng.standard_normal()
+            market_price = float(
+                market.price_median
+                * np.exp(market.price_quality * quality + market.price_spread * noise)
+            )
+            if market.floor_share is not None:
+                floor = market_price * float(floor_rng.beta(*market.floor_share))
+
         public_vector = features[:public]
         # Nothing else holds this step's features, so a read-only view needs no copy.
         public_vector.flags.writeable = False
-        yield _Stages(public_vector, pctr, cvr_logits)
+        yield _Stages(public_vector, pctr, cvr_logits, market_price, floor)
+
+
+def _share_market_vector(
+    vectors: npt.NDArray[np.float64],
+    market_vector: npt.NDArray[np.float64],
+    similarity: float,
+) -> npt.NDArray[np.float64]:
+    # At 0 the vectors pass through untouched, so existing runs keep every bit.
+    if similarity == 0:
+        return vectors
+
+    return similarity * market_vector + np.sqrt(1 - similarity**2) * vectors
 
 
 def _read_only(value: FeatureValue) -> FeatureValue:
