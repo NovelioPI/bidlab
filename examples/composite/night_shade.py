@@ -1,7 +1,7 @@
 """When a parent shades harder at night, does its child PID raise its multiplier at night?
 
-`NightShade` holds two child bidders and calls their `forward` itself, with
-the arguments each one takes. The simulator gives each child its own random
+`NightShade` sits after `OracleValue` in a `Stack`. It holds two child bidders
+and calls their `forward` itself, with the arguments each one takes. The simulator gives each child its own random
 stream and every other hook, so the PID child keeps pacing while its parent
 changes the value it receives.
 """
@@ -36,9 +36,15 @@ class NightShade(bl.Bidder):
 
 config = bl.SimConfig(
     campaigns=[
-        bl.Campaign("night", NightShade(), budget=15, base_value=5),
-        bl.Campaign("pid", bl.PidPacing(), budget=15, base_value=5),
-        bl.Campaign("big", bl.Linear(), budget=50, base_value=5),
+        bl.Campaign(
+            "night", bl.Stack(bl.OracleValue(), NightShade()), budget=15, base_value=5
+        ),
+        bl.Campaign(
+            "pid", bl.Stack(bl.OracleValue(), bl.PidPacing()), budget=15, base_value=5
+        ),
+        bl.Campaign(
+            "big", bl.Stack(bl.OracleValue(), bl.Linear()), budget=50, base_value=5
+        ),
     ],
     episodes=5,
     steps=480,
@@ -51,7 +57,7 @@ if __name__ == "__main__":
     higher = []
     for seed in range(5):
         log = bl.run(dataclasses.replace(config, seed=seed))
-        multiplier = log.logged["pacing.multiplier"]["night"]
+        multiplier = log.logged["bidders.1.pacing.multiplier"]["night"]
         night = multiplier[:, at_night].mean()
         day = multiplier[:, ~at_night].mean()
         print(f"seed {seed}: child multiplier {night:.2f} at night, {day:.2f} by day")

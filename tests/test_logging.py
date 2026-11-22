@@ -6,12 +6,15 @@ import numpy as np
 import pytest
 
 from bidlab.auctions import FirstPrice
-from bidlab.bidders import Bidder, Linear, PidPacing, Stack, UcbMultiplier
+from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack, UcbMultiplier
 from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import BidResult, EpisodeReport
+
+# A top bidder gets no value, so these pass-through test bidders default to one.
+FIRST_VALUE = 1.0
 
 Action = Callable[[Bidder, int], None]
 
@@ -34,7 +37,7 @@ class Logs(Bidder):
         self.act("on_episode_start")
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         self.act("forward")
         return value
 
@@ -60,7 +63,7 @@ class Holder(Bidder):
         self.child = child
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         return self.child.forward(value)
 
 
@@ -144,7 +147,7 @@ class Both(Bidder):
     """Logs one name per step and per episode."""
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         self.log("x", 1.0)
         return value
 
@@ -161,7 +164,7 @@ class EpisodeFirst(Bidder):
         self.log("x", 2.0)
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         self.log("x", 1.0)
         return value
 
@@ -243,7 +246,13 @@ def test_log_outside_run_does_nothing():
     bidder.log("x", 1.0)
     bidder.log({"y": 2.0})
     assert bidder.forward(2.0) == 2.0
-    log = run(config(Campaign("bind", LogsInBind(), budget=1e6, base_value=5.0)))
+    log = run(
+        config(
+            Campaign(
+                "bind", Stack(OracleValue(), LogsInBind()), budget=1e6, base_value=5.0
+            )
+        )
+    )
     assert "bound" not in log.logged
 
 
@@ -253,7 +262,7 @@ class Keeps(Bidder):
     kept: ClassVar[list[Bidder]] = []
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         Keeps.kept.append(self)
         self.log("x", 1.0)
         return value
@@ -299,13 +308,19 @@ def test_logs_read_only():
 
 
 def test_no_logs_empty():
-    log = run(config(Campaign("t", Linear(), budget=1e6, base_value=5.0)))
+    log = run(
+        config(
+            Campaign("t", Stack(OracleValue(), Linear()), budget=1e6, base_value=5.0)
+        )
+    )
     assert dict(log.logged) == {}
 
 
 def test_child_name_prefixed():
     child = Logs("forward", lambda bidder, _: bidder.log("lam", 1.0))
-    log = run(config(Campaign("s", Stack(Linear(), child), budget=1e6, base_value=5.0)))
+    log = run(
+        config(Campaign("s", Stack(OracleValue(), child), budget=1e6, base_value=5.0))
+    )
     assert set(log.logged) == {"bidders.1.lam"}
 
 
@@ -321,7 +336,7 @@ def test_plain_name(as_dict: bool):
         config(
             Campaign(
                 "s",
-                Stack(Linear(), Logs("forward", plain)),
+                Stack(OracleValue(), Logs("forward", plain)),
                 budget=1e6,
                 base_value=5.0,
             )
@@ -339,7 +354,7 @@ class TopLogs(Holder):
         )
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         self.log("lam", 1.0)
         return super().forward(value)
 
@@ -351,7 +366,7 @@ class TopAndChild(Holder):
         super().__init__(Logs("forward", lambda b, _: b.log("b", 2.0)))
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         self.log("a", 1.0)
         return super().forward(value)
 
@@ -367,9 +382,11 @@ def test_name_clash_raises():
 
 
 def test_pid_logs_bid_multiplier():
-    campaign = Campaign("pid", PidPacing(), budget=3.0, base_value=5.0)
+    campaign = Campaign(
+        "pid", Stack(OracleValue(), PidPacing()), budget=3.0, base_value=5.0
+    )
     log = run(config(campaign, auction=FirstPrice()))
-    multiplier = log.logged["multiplier"]["pid"]
+    multiplier = log.logged["bidders.1.multiplier"]["pid"]
     assert multiplier.shape == (2, 50)
     assert len(np.unique(multiplier)) > 1
     budget_left = 3.0 - np.cumsum(np.where(log.winner == 0, log.price, 0.0), axis=1)
@@ -384,8 +401,13 @@ def test_pid_logs_bid_multiplier():
 
 def test_ucb_logs_arm():
     bandit = UcbMultiplier()
-    log = run(config(Campaign("ucb", bandit, budget=1e6, base_value=5.0), episodes=4))
-    arms = log.logged["multiplier"]["ucb"]
+    log = run(
+        config(
+            Campaign("ucb", Stack(OracleValue(), bandit), budget=1e6, base_value=5.0),
+            episodes=4,
+        )
+    )
+    arms = log.logged["bidders.1.multiplier"]["ucb"]
     assert arms.shape == (4,)
     assert all(np.isclose(bandit.arms, arm).any() for arm in arms)
     np.testing.assert_allclose(
@@ -395,15 +417,27 @@ def test_ucb_logs_arm():
 
 def test_log_state_off():
     campaigns = (
-        Campaign("pid", PidPacing(log_state=False), budget=1e6, base_value=5.0),
-        Campaign("ucb", UcbMultiplier(log_state=False), budget=1e6, base_value=5.0),
+        Campaign(
+            "pid",
+            Stack(OracleValue(), PidPacing(log_state=False)),
+            budget=1e6,
+            base_value=5.0,
+        ),
+        Campaign(
+            "ucb",
+            Stack(OracleValue(), UcbMultiplier(log_state=False)),
+            budget=1e6,
+            base_value=5.0,
+        ),
     )
     assert dict(run(config(*campaigns)).logged) == {}
 
 
 def test_stacked_pid_prefixed():
     log = run(
-        config(Campaign("s", Stack(Linear(), PidPacing()), budget=1e6, base_value=5.0))
+        config(
+            Campaign("s", Stack(OracleValue(), PidPacing()), budget=1e6, base_value=5.0)
+        )
     )
     assert set(log.logged) == {"bidders.1.multiplier"}
 
@@ -411,10 +445,15 @@ def test_stacked_pid_prefixed():
 def test_logging_leaves_run_unchanged():
     def campaigns(log_state: bool) -> tuple[Campaign, ...]:
         return (
-            Campaign("pid", PidPacing(log_state=log_state), budget=3.0, base_value=5.0),
+            Campaign(
+                "pid",
+                Stack(OracleValue(), PidPacing(log_state=log_state)),
+                budget=3.0,
+                base_value=5.0,
+            ),
             Campaign(
                 "ucb",
-                UcbMultiplier(log_state=log_state),
+                Stack(OracleValue(), UcbMultiplier(log_state=log_state)),
                 budget=5.0,
                 base_value=4.0,
             ),
@@ -439,7 +478,7 @@ class Sometimes(Bidder):
         self.logging = self.rng.random() < 0.5
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         if self.logging:
             self.log("x", value)
         return value
@@ -464,9 +503,11 @@ def test_run_many_stacks_seeds():
 
 
 def test_run_many_episode_values():
-    campaign = Campaign("ucb", UcbMultiplier(), budget=1e6, base_value=5.0)
+    campaign = Campaign(
+        "ucb", Stack(OracleValue(), UcbMultiplier()), budget=1e6, base_value=5.0
+    )
     results = run_many(config(campaign, episodes=4), seeds=range(3))
-    assert results.logged["multiplier"]["ucb"].shape == (3, 4)
+    assert results.logged["bidders.1.multiplier"]["ucb"].shape == (3, 4)
 
 
 def test_run_many_missing_seed_nan():
@@ -481,11 +522,11 @@ def test_run_many_missing_seed_nan():
 
 
 def test_run_many_workers_logs_equal():
-    pid = Campaign("pid", PidPacing(), budget=3.0, base_value=5.0)
+    pid = Campaign("pid", Stack(OracleValue(), PidPacing()), budget=3.0, base_value=5.0)
     serial = run_many(config(pid, per_auction()), seeds=range(3))
     parallel = run_many(config(pid, per_auction()), seeds=range(3), workers=2)
     assert parallel.equals(serial)
-    assert set(parallel.logged) == {"multiplier", "lam"}
+    assert set(parallel.logged) == {"bidders.1.multiplier", "lam"}
     for name in parallel.logged:
         for campaign in parallel.logged[name]:
             np.testing.assert_array_equal(
@@ -507,7 +548,7 @@ class SurplusLogger(Bidder):
     """Logs its own surplus reward in update."""
 
     @override
-    def forward(self, value: float) -> float:
+    def forward(self, value: float = FIRST_VALUE) -> float:
         return value
 
     @override

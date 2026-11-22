@@ -7,10 +7,9 @@ from types import MappingProxyType
 
 import numpy as np
 import numpy.typing as npt
-from scipy.special import expit, logit
 
 from bidlab.auctions import NO_WINNER
-from bidlab.bidders import Bidder
+from bidlab.bidders import Bidder, Stack
 from bidlab.bidders.base import attach_logger, call_forward, takes_input
 from bidlab.callbacks import Callback, checked_callbacks
 from bidlab.config import Campaign, SimConfig
@@ -28,7 +27,6 @@ from bidlab.types import (
 
 BUILT_IN_INPUTS = frozenset(
     {
-        "value",
         "time",
         "time_left",
         "horizon",
@@ -40,6 +38,8 @@ BUILT_IN_INPUTS = frozenset(
         "floor",
     }
 )
+# A Stack passes each bidder's output on as "value", so no feature may take it.
+RESERVED_NAMES = BUILT_IN_INPUTS | {"value"}
 
 
 @dataclass(frozen=True)
@@ -84,7 +84,9 @@ class RunLog:
     Examples
     --------
     >>> import bidlab as bl
-    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, base_value=5)
+    >>> campaign = bl.Campaign(
+    ...     "t", bl.Stack(bl.OracleValue(), bl.Linear()), budget=10, base_value=5
+    ... )
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=2, steps=50))
     >>> won = log.winner[0] == 0
     >>> bool(log.price[0][won].sum() <= campaign.budget)
@@ -111,6 +113,8 @@ class _Participant:
     # Its bidder is the running copy, so a bidder that reaches it finds itself.
     campaign: Campaign
     nodes: tuple[Bidder, ...]
+    # Calling the empty update hooks of every node cost about 5% of run time.
+    learners: tuple[Bidder, ...]
 
     def takes_part_in(self, segment: str) -> bool:
         segments = self.campaign.segments
@@ -158,8 +162,9 @@ def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
     Examples
     --------
     >>> import bidlab as bl
+    >>> bidder = bl.Stack(bl.OracleValue(), bl.Linear())
     >>> config = bl.SimConfig(
-    ...     campaigns=[bl.Campaign("t", bl.Linear(), budget=10, base_value=5)],
+    ...     campaigns=[bl.Campaign("t", bidder, budget=10, base_value=5)],
     ...     episodes=2,
     ...     steps=50,
     ... )
@@ -210,17 +215,10 @@ class _Simulation:
         self.every_click = np.ones(count)
         # Filled at each campaign's first auction, where a bad forward signature raises.
         self.reads_market: list[bool | None] = [None] * count
-        self.estimate_seeds: list[np.random.SeedSequence] = []
         self.book = LogBook(config.episodes, config.steps)
         self.participants = [
             self._participant(campaign, seed)
             for campaign, seed in zip(config.campaigns, bidder_seeds, strict=True)
-        ]
-        self.estimate_rngs = [
-            np.random.default_rng(seed) for seed in self.estimate_seeds
-        ]
-        self.ctr_estimate_rngs = [
-            np.random.default_rng(seed.spawn(1)[0]) for seed in self.estimate_seeds
         ]
         self.segment_index = {
             name: index for index, name in enumerate(config.market.segment_names)
@@ -242,9 +240,8 @@ class _Simulation:
     def _participant(
         self, campaign: Campaign, seed: np.random.SeedSequence
     ) -> _Participant:
-        # Risk: if this child is spawned after the bidder is bound, then a stack's
-        # inner bidders take it and the platform-estimate stream shifts.
-        self.estimate_seeds.append(seed.spawn(1)[0])
+        # Child 0 fed the removed estimate noise; spawning it keeps child streams.
+        seed.spawn(1)
         bidder = campaign.build(np.random.default_rng(seed))
         nodes = tuple(bidder.named_bidders())
         for path, node in nodes:
@@ -252,6 +249,7 @@ class _Simulation:
         return _Participant(
             campaign=replace(campaign, bidder=bidder),
             nodes=tuple(node for _, node in nodes),
+            learners=tuple(node for _, node in nodes if _learns(node)),
         )
 
     def run_all(self) -> None:
@@ -295,7 +293,6 @@ class _Simulation:
         pctr = self.every_click if draw.pctr is None else draw.pctr
         pcvr = draw.pcvr
         values = self._event_values(pctr, pcvr)
-        estimated = self._estimated_values(values, draw)
         time = step * self.seconds_per_step
         # Bidders outside their segments are not asked to bid, so they cannot learn from it.
         active = [
@@ -319,7 +316,6 @@ class _Simulation:
             bidder = self.participants[i].campaign.bidder
             inputs = {
                 **shared,
-                "value": float(estimated[i]),
                 "budget_left": float(budget_left[i]),
             }
             # Building the truth for bidders that never read it would slow every run.
@@ -328,9 +324,9 @@ class _Simulation:
             bids[i] = call_forward(bidder, inputs)
         # Risk: if bids are not capped at the remaining budget, then spend can exceed it.
 
-        bids = np.clip(
-            np.nan_to_num(bids, nan=0.0, posinf=0.0, neginf=0.0), 0.0, budget_left
-        )
+        # Same bits as clip(nan_to_num(...)), which took about 15% of run time.
+        bids[~np.isfinite(bids)] = 0.0
+        bids = np.minimum(np.maximum(bids, 0.0), budget_left)
         # A logged bid of 0 would win at reserve 0, so absent bidders bid -inf.
         auction_bids = np.full(len(self.participants), -np.inf)
         auction_bids[active] = bids[active]
@@ -360,7 +356,7 @@ class _Simulation:
                 else 0.0,
             )
             batch = [result]
-            for node in participant.nodes:
+            for node in participant.learners:
                 node.update_batch(batch)
 
         self.log.bids[episode, step] = bids
@@ -382,8 +378,12 @@ class _Simulation:
     def _reads_market(self, index: int) -> bool:
         reads_market = self.reads_market[index]
         if reads_market is None:
-            bidder = self.participants[index].campaign.bidder
-            reads_market = self.reads_market[index] = takes_input(bidder, "market")
+            # A plain Stack takes every input only to pass it on.
+            reads_market = self.reads_market[index] = any(
+                takes_input(node, "market")
+                for node in self.participants[index].nodes
+                if type(node) is not Stack
+            )
 
         return reads_market
 
@@ -397,23 +397,6 @@ class _Simulation:
         # One draw every step keeps the conversion stream aligned across runs.
         conversion_draw = self.conversion_rng.random()
         return clicked, clicked and conversion_draw < draw.pcvr[winner]
-
-    def _estimated_values(
-        self, values: npt.NDArray[np.float64], draw: MarketDraw
-    ) -> npt.NDArray[np.float64]:
-        noise = self.config.estimate_noise
-        # Without noise, the true values pass through untouched, bit for bit.
-        if noise == 0:
-            return values
-
-        # Each stage gets its own error, from its own stream.
-        pctr = (
-            self.every_click
-            if draw.pctr is None
-            else _with_noise(draw.pctr, noise, self.ctr_estimate_rngs)
-        )
-        pcvr = _with_noise(draw.pcvr, noise, self.estimate_rngs)
-        return self._event_values(pctr, pcvr)
 
     def _event_values(
         self, pctr: npt.NDArray[np.float64], pcvr: npt.NDArray[np.float64]
@@ -457,7 +440,7 @@ class _Simulation:
         if draw.floor:
             _check_money(where, "floor", draw.floor)
 
-        clashes = draw.features.keys() & BUILT_IN_INPUTS
+        clashes = draw.features.keys() & RESERVED_NAMES
         if clashes:
             raise ValueError(
                 f"{where}: features {sorted(clashes)} have the names of built-in "
@@ -521,12 +504,9 @@ def _check_money(where: str, name: str, amount: float) -> None:
         raise ValueError(f"{where}: {name} must be finite and >= 0, got {amount}")
 
 
-def _with_noise(
-    rates: npt.NDArray[np.float64],
-    noise: float,
-    rngs: Sequence[np.random.Generator],
-) -> npt.NDArray[np.float64]:
-    # Every bidder draws every step, taking part or not, so no stream shifts.
-    errors = np.array([rng.standard_normal() for rng in rngs])
-    # logit(0) and logit(1) are infinite, so p = 0 and p = 1 stay exact.
-    return expit(logit(rates) + noise * errors)
+def _learns(bidder: Bidder) -> bool:
+    hooks = type(bidder)
+    return (
+        hooks.update_batch is not Bidder.update_batch
+        or hooks.update is not Bidder.update
+    )

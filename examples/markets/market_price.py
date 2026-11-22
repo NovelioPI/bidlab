@@ -13,7 +13,14 @@ SEEDS = range(5)
 
 def config(similarity):
     return bl.SimConfig(
-        campaigns=[bl.Campaign("pid", bl.PidPacing(), budget=30, base_value=5)],
+        campaigns=[
+            bl.Campaign(
+                "pid",
+                bl.Stack(bl.OracleValue(), bl.PidPacing()),
+                budget=30,
+                base_value=5,
+            )
+        ],
         market=bl.markets.LogisticMarket(
             price_median=0.2, rival_similarity=similarity, floor_share=(2, 5)
         ),

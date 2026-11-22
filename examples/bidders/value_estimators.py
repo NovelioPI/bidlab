@@ -1,7 +1,7 @@
 """Does a two-stage model on the public features estimate conversions better than counting?
 
-Each estimator is the first stage of a `Stack`: it ignores the platform's value
-and outputs its own, `base_value` × its estimated chance that the impression
+Each estimator is the first stage of a `Stack`: the simulator passes no value,
+so it outputs its own, `base_value` × its estimated chance that the impression
 converts. `Linear` after it bids that value. The market has a click stage, so
 an impression converts only after a click.
 
@@ -25,7 +25,7 @@ class FixedRate(bl.Bidder):
     def __init__(self, rate=0.05):
         self.rate = rate
 
-    def forward(self, value):
+    def forward(self):
         self.log("estimate", self.rate)
         return self.rate * EVENT_VALUE
 
@@ -36,7 +36,7 @@ class CountedRate(bl.Bidder):
         self.wins = 0
         self.conversions = 0
 
-    def forward(self, value):
+    def forward(self):
         rate = (self.conversions + self.prior) / (self.wins + 1)
         self.log("estimate", rate)
         return rate * EVENT_VALUE
@@ -68,7 +68,7 @@ class TwoStageModel(bl.Bidder):
         self.conversions = Logistic(feature_count, learning_rate)
         self.pending = {}
 
-    def forward(self, value, features, time):
+    def forward(self, features, time):
         vector = features["vector"]
         # BidResult carries the auction time but not the features.
         self.pending[time] = vector

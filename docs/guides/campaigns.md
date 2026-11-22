@@ -18,7 +18,7 @@ A bidder gets the whole `Campaign` in `on_episode_start(campaign)`, so it can re
 
 ## Events
 
-The event sets the campaign's expected value, its `value` input and what it earns:
+The event sets the campaign's expected value and what it earns:
 
 | Event | Expected value | Earns `base_value` per |
 |---|---|---|
@@ -26,20 +26,21 @@ The event sets the campaign's expected value, its `value` input and what it earn
 | `click` | `base_value` × pCTR | Clicked won impression |
 | `conversion` | `base_value` × pCTR × pCVR | Converted won impression |
 
-The expected value fills `RunLog.true_values`, and `regret` and `welfare` use it. The `value` input is the platform's estimate of it; with `estimate_noise`, only the stages the event uses get noise. `BidResult.realized_value`, `EpisodeReport.realized_value` and the `realized_value` and `surplus` columns count the event.
+The expected value fills `RunLog.true_values`, and `regret` and `welfare` use it. `bl.OracleValue` outputs it exactly; with `noise`, only the stages the event uses get noise. `BidResult.realized_value`, `EpisodeReport.realized_value` and the `realized_value` and `surplus` columns count the event.
 
 ```python
 import bidlab as bl
 
+
+def paced():
+    return bl.Stack(bl.OracleValue(), bl.PidPacing())
+
+
 goals = bl.SimConfig(
     campaigns=[
-        bl.Campaign(
-            "brand", bl.PidPacing(), budget=15, base_value=0.02, event="impression"
-        ),
-        bl.Campaign(
-            "traffic", bl.PidPacing(), budget=15, base_value=0.4, event="click"
-        ),
-        bl.Campaign("shop", bl.PidPacing(), budget=15, base_value=5),
+        bl.Campaign("brand", paced(), budget=15, base_value=0.02, event="impression"),
+        bl.Campaign("traffic", paced(), budget=15, base_value=0.4, event="click"),
+        bl.Campaign("shop", paced(), budget=15, base_value=5),
     ],
     market=bl.markets.LogisticMarket(ctr_bias_mean=-3.0),
     episodes=2,

@@ -3,7 +3,6 @@ from typing import Any, ClassVar
 
 import numpy as np
 import pytest
-from scipy.special import expit, logit
 
 from bidlab.auctions import NO_WINNER, FirstPrice
 from bidlab.bidders import Bidder
@@ -14,7 +13,7 @@ from bidlab.types import BidResult, EpisodeReport, MarketTruth
 
 
 class Spy(Bidder):
-    """Bids `multiplier` × value and records every call it receives."""
+    """Bids `multiplier` × its true value and records every call it receives."""
 
     instances: ClassVar[list["Spy"]] = []
 
@@ -32,10 +31,12 @@ class Spy(Bidder):
 
     def on_episode_start(self, campaign):
         self.starts.append(campaign)
+        self.base_value = campaign.base_value
 
-    def forward(self, value, **inputs):
-        self.requests.append({"value": value, **inputs})
-        return self.multiplier * value
+    def forward(self, market, **inputs):
+        self.requests.append({"market": market, **inputs})
+        # The same product, in the same order, as RunLog.true_values for a conversion.
+        return self.multiplier * (self.base_value * market.pctr * market.pcvr)
 
     def update(self, result):
         self.results.append(result)
@@ -108,15 +109,6 @@ def test_episode_start_gets_campaign_with_running_bidder():
     assert spies[0].starts == [dataclasses.replace(a, bidder=spies[0])] * 3
     assert all(start.bidder is spies[0] for start in spies[0].starts)
     assert a.bidder is not spies[0]
-
-
-def test_value_input_is_true_value_without_noise():
-    log, spies = run_spies(
-        config(campaign("a"), campaign("b", base_value=3.0), episodes=2)
-    )
-    for i, spy in enumerate(spies):
-        seen = np.array([o["value"] for o in spy.requests]).reshape(2, 200)
-        assert seen.tobytes() == log.true_values[:, :, i].tobytes()
 
 
 def test_time_input_spaced_over_horizon():
@@ -357,43 +349,6 @@ def test_custom_market_segments_drive_targeting_and_log():
     assert not np.any(log.winner[log.segment == 0] == 0)
 
 
-def test_estimate_noise_has_set_spread():
-    log, (spy,) = run_spies(
-        config(campaign("a"), episodes=1, steps=20_000, estimate_noise=0.5)
-    )
-    estimated = np.array([o["value"] for o in spy.requests]) / 5.0
-    true = log.true_values[0, :, 0] / 5.0
-    errors = np.log(estimated / (1 - estimated)) - np.log(true / (1 - true))
-    assert abs(errors.mean()) < 0.02
-    assert abs(errors.std() - 0.5) < 0.02
-
-
-def test_estimate_noise_keeps_true_values():
-    noisy = run(config(campaign("a"), campaign("b"), estimate_noise=0.5))
-    exact = run(config(campaign("a"), campaign("b")))
-    assert noisy.true_values.tobytes() == exact.true_values.tobytes()
-
-
-def test_adding_bidder_keeps_noisy_values():
-    _, two = run_spies(config(campaign("a"), campaign("b"), estimate_noise=0.5))
-    _, three = run_spies(
-        config(campaign("a"), campaign("b"), campaign("c"), estimate_noise=0.5)
-    )
-    for before, after in zip(two, three[:2], strict=True):
-        assert [o["value"] for o in before.requests] == [
-            o["value"] for o in after.requests
-        ]
-
-
-def test_estimate_noise_at_zero_and_one():
-    market = FixedMarket([0.0, 1.0])
-    _, spies = run_spies(
-        config(campaign("a"), campaign("b"), market=market, estimate_noise=2.0)
-    )
-    assert {o["value"] for o in spies[0].requests} == {0.0}
-    assert {o["value"] for o in spies[1].requests} == {5.0}
-
-
 def click_config(pctr, pcvr, **kwargs):
     return config(
         *(campaign(name) for name in "ab"[: len(pcvr)]),
@@ -464,45 +419,14 @@ def test_bad_pctr_rejected(pctr):
         run(click_config(pctr, [0.5, 0.5]))
 
 
-@pytest.mark.parametrize("noise", [0.0, 0.5])
 @pytest.mark.parametrize("pctr", [None, [0.3, 0.6]])
-def test_market_input_holds_truth(pctr, noise):
-    _, spies = run_spies(click_config(pctr, [0.1, 0.2], estimate_noise=noise))
+def test_market_input_holds_truth(pctr):
+    _, spies = run_spies(click_config(pctr, [0.1, 0.2]))
     for i, spy in enumerate(spies):
         expected = MarketTruth(
             pctr=1.0 if pctr is None else pctr[i], pcvr=[0.1, 0.2][i]
         )
         assert {request["market"] for request in spy.requests} == {expected}
-
-
-def test_value_is_truth_without_noise():
-    market = LogisticMarket(ctr_bias_mean=-2.0)
-    _, spies = run_spies(config(campaign("a"), campaign("b"), market=market))
-    for spy in spies:
-        for request in spy.requests:
-            truth = request["market"]
-            assert truth.pctr < 1.0
-            assert request["value"] == 5.0 * truth.pctr * truth.pcvr
-
-
-def noisy_values(pctr, pcvr):
-    cfg = click_config([pctr], [pcvr], episodes=1, steps=20_000, estimate_noise=0.5)
-    _, (spy,) = run_spies(cfg)
-    return np.array([request["value"] for request in spy.requests]) / 5.0
-
-
-def test_noise_per_stage_is_independent():
-    # A rate of 1 has an infinite logit, so noise leaves it exact and shows the other stage.
-    ctr_errors = (logit(noisy_values(0.3, 1.0)) - logit(0.3)) / 0.5
-    cvr_errors = (logit(noisy_values(1.0, 0.3)) - logit(0.3)) / 0.5
-    for errors in (ctr_errors, cvr_errors):
-        assert abs(0.5 * errors.std() - 0.5) < 0.05
-    assert abs(np.corrcoef(ctr_errors, cvr_errors)[0, 1]) < 0.05
-    both = noisy_values(0.3, 0.3)
-    expected = expit(logit(0.3) + 0.5 * ctr_errors) * expit(
-        logit(0.3) + 0.5 * cvr_errors
-    )
-    np.testing.assert_allclose(both, expected, rtol=1e-9)
 
 
 def test_logistic_market_inputs():
@@ -538,3 +462,19 @@ def test_market_input_by_name():
     log = run(config(oracle, other, market=FixedMarket([0.1, 0.2], pctr=[0.5, 0.25])))
     np.testing.assert_array_equal(log.bids[..., 0], 5.0 * 0.5 * 0.1)
     np.testing.assert_array_equal(log.bids[..., 1], 5.0 * 0.25 * 0.2)
+
+
+class FixedBid(Bidder):
+    def __init__(self, bid):
+        self.bid = bid
+
+    def forward(self):
+        return self.bid
+
+
+@pytest.mark.parametrize("bid", [np.nan, np.inf, -np.inf, -1.0])
+def test_bad_bid_counts_as_zero(bid):
+    bad = Campaign("bad", FixedBid(bid), budget=100.0, base_value=5.0)
+    log = run(config(bad, campaign("b"), episodes=1, steps=50))
+    assert (log.bids[:, :, 0] == 0.0).all()
+    assert not (log.winner == 0).any()

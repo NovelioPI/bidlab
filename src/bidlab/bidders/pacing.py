@@ -42,7 +42,9 @@ class PidPacing(Bidder):
     in each half of the episode:
 
     >>> import bidlab as bl
-    >>> pid = bl.Campaign("pid", bl.PidPacing(), budget=10, base_value=5)
+    >>> pid = bl.Campaign(
+    ...     "pid", bl.Stack(bl.OracleValue(), bl.PidPacing()), budget=10, base_value=5
+    ... )
     >>> config = bl.SimConfig(
     ...     campaigns=[pid], auction=bl.FirstPrice(), episodes=1, steps=200
     ... )

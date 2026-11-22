@@ -16,7 +16,7 @@ config = bl.SimConfig(
     campaigns=[
         bl.Campaign(
             name,
-            bl.Linear(multiplier=multiplier),
+            bl.Stack(bl.OracleValue(), bl.Linear(multiplier=multiplier)),
             budget=BUDGET,
             base_value=1,
         )

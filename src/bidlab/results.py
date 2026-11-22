@@ -47,8 +47,9 @@ class Results:
     Examples
     --------
     >>> import bidlab as bl
+    >>> bidder = bl.Stack(bl.OracleValue(), bl.Linear())
     >>> config = bl.SimConfig(
-    ...     campaigns=[bl.Campaign("t", bl.Linear(), budget=10, base_value=5)],
+    ...     campaigns=[bl.Campaign("t", bidder, budget=10, base_value=5)],
     ...     episodes=2,
     ...     steps=50,
     ... )
