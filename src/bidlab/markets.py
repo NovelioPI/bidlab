@@ -286,13 +286,14 @@ class LogisticMarket(Market):
 
     def draws(self, count: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
         """Yield one draw per step; see `Market.draws`."""
-        for stages in _logistic_stages(self, count, rng):
+        for step in _LogisticStages(self, count, rng).steps():
+            pctr = None if step.ctr_logits is None else _sigmoid(step.ctr_logits)
             yield MarketDraw(
-                {"vector": stages.public_vector},
-                pctr=stages.pctr,
-                pcvr=_sigmoid(stages.cvr_logits),
-                market_price=stages.market_price,
-                floor=stages.floor,
+                {"vector": step.public_vector},
+                pctr=pctr,
+                pcvr=_sigmoid(step.cvr_logits),
+                market_price=step.market_price,
+                floor=step.floor,
             )
 
 
@@ -379,15 +380,16 @@ class Segmented(Market):
         """Yield one draw per step; see `Market.draws`."""
         base_rng, pick_rng = rng.spawn(2)
         shares = [segment.share for segment in self.segments]
-        for stages in _logistic_stages(self.base, count, base_rng):
+        for step in _LogisticStages(self.base, count, base_rng).steps():
             segment = self.segments[pick_rng.choice(len(self.segments), p=shares)]
+            pctr = None if step.ctr_logits is None else _sigmoid(step.ctr_logits)
             yield MarketDraw(
-                {"vector": stages.public_vector},
-                pctr=stages.pctr,
-                pcvr=_sigmoid(stages.cvr_logits + segment.cvr_lift),
+                {"vector": step.public_vector},
+                pctr=pctr,
+                pcvr=_sigmoid(step.cvr_logits + segment.cvr_lift),
                 segment=segment.name,
-                market_price=stages.market_price,
-                floor=stages.floor,
+                market_price=step.market_price,
+                floor=step.floor,
             )
 
 
@@ -473,81 +475,110 @@ class IndependentValues(Market):
                 yield MarketDraw({}, pcvr=pcvr, market_price=price, floor=floor)
 
 
-class _Stages(NamedTuple):
+class _Step(NamedTuple):
     public_vector: npt.NDArray[np.float64]
-    pctr: npt.NDArray[np.float64] | None
+    ctr_logits: npt.NDArray[np.float64] | None
     cvr_logits: npt.NDArray[np.float64]
     market_price: float | None
     floor: float
 
 
-def _logistic_stages(
-    market: LogisticMarket, count: int, rng: np.random.Generator
-) -> Iterator[_Stages]:
-    dimensions = market.feature_count
-    public = dimensions if market.public_features is None else market.public_features
-    # Separate streams keep campaign i's draws equal when campaigns are added.
-    # Risk: if new streams came before the first five, then every older draw would move.
-    (
-        cvr_vector_rng,
-        cvr_bias_rng,
-        feature_rng,
-        ctr_vector_rng,
-        ctr_bias_rng,
-        market_vector_rng,
-        price_rng,
-        floor_rng,
-    ) = rng.spawn(8)
-    scale = 1.0 / np.sqrt(dimensions)
-    has_price = market.price_median is not None
-    market_vector = np.zeros(dimensions)
-    if has_price or market.rival_similarity > 0:
-        market_vector = market_vector_rng.normal(0.0, scale, size=dimensions)
+@dataclass(frozen=True, eq=False)
+class _Stage:
+    vectors: npt.NDArray[np.float64]
+    biases: npt.NDArray[np.float64]
+    offsets: npt.NDArray[np.float64]
 
-    click_weights = None
-    if market.ctr_bias_mean is not None:
-        click_weights = (
-            _share_market_vector(
-                ctr_vector_rng.normal(0.0, scale, size=(count, dimensions)),
-                market_vector,
+    def logits(self, features: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        # A matrix product rounds differently as rows are added; a per-row sum does not.
+        return (self.vectors * features).sum(axis=1) + self.biases
+
+
+def _bias_stage(
+    vectors: npt.NDArray[np.float64],
+    bias_rng: np.random.Generator,
+    mean: float,
+    spread: float,
+) -> _Stage:
+    biases = bias_rng.normal(mean, spread, size=len(vectors))
+    return _Stage(vectors, biases, biases - mean)
+
+
+class _LogisticStages:
+    def __init__(
+        self, market: LogisticMarket, count: int, rng: np.random.Generator
+    ) -> None:
+        dimensions = market.feature_count
+        # Separate streams keep campaign i's draws equal when campaigns are added.
+        # Risk: if new streams came before the first five, then every older draw would move.
+        (
+            cvr_vector_rng,
+            cvr_bias_rng,
+            self._feature_rng,
+            ctr_vector_rng,
+            ctr_bias_rng,
+            market_vector_rng,
+            self._price_rng,
+            self._floor_rng,
+        ) = rng.spawn(8)
+        self._market = market
+        scale = 1.0 / np.sqrt(dimensions)
+        self._market_vector = np.zeros(dimensions)
+        if market.price_median is not None or market.rival_similarity > 0:
+            self._market_vector = market_vector_rng.normal(0.0, scale, size=dimensions)
+
+        def ad_vectors(vector_rng: np.random.Generator) -> npt.NDArray[np.float64]:
+            return _share_market_vector(
+                vector_rng.normal(0.0, scale, size=(count, dimensions)),
+                self._market_vector,
                 market.rival_similarity,
-            ),
-            ctr_bias_rng.normal(market.ctr_bias_mean, market.ctr_spread, size=count),
+            )
+
+        self.click: _Stage | None = None
+        if market.ctr_bias_mean is not None:
+            self.click = _bias_stage(
+                ad_vectors(ctr_vector_rng),
+                ctr_bias_rng,
+                market.ctr_bias_mean,
+                market.ctr_spread,
+            )
+        self.conversion = _bias_stage(
+            ad_vectors(cvr_vector_rng),
+            cvr_bias_rng,
+            market.cvr_bias_mean,
+            market.cvr_spread,
         )
 
-    cvr_vectors = _share_market_vector(
-        cvr_vector_rng.normal(0.0, scale, size=(count, dimensions)),
-        market_vector,
-        market.rival_similarity,
-    )
-    cvr_biases = cvr_bias_rng.normal(
-        market.cvr_bias_mean, market.cvr_spread, size=count
-    )
-    while True:
-        features = feature_rng.normal(size=dimensions)
-        pctr = None
-        # A matrix product rounds differently as rows are added; a per-row sum does not.
-        if click_weights is not None:
-            ctr_vectors, ctr_biases = click_weights
-            pctr = _sigmoid((ctr_vectors * features).sum(axis=1) + ctr_biases)
+    def steps(self) -> Iterator[_Step]:
+        market = self._market
+        dimensions = market.feature_count
+        public = (
+            dimensions if market.public_features is None else market.public_features
+        )
+        while True:
+            features = self._feature_rng.normal(size=dimensions)
+            ctr_logits = None if self.click is None else self.click.logits(features)
+            cvr_logits = self.conversion.logits(features)
+            market_price = None
+            floor = 0.0
+            if market.price_median is not None:
+                quality = (self._market_vector * features).sum()
+                noise = self._price_rng.standard_normal()
+                market_price = float(
+                    market.price_median
+                    * np.exp(
+                        market.price_quality * quality + market.price_spread * noise
+                    )
+                )
+                if market.floor_share is not None:
+                    floor = market_price * float(
+                        self._floor_rng.beta(*market.floor_share)
+                    )
 
-        cvr_logits = (cvr_vectors * features).sum(axis=1) + cvr_biases
-        market_price = None
-        floor = 0.0
-        if has_price:
-            quality = (market_vector * features).sum()
-            noise = price_rng.standard_normal()
-            market_price = float(
-                market.price_median
-                * np.exp(market.price_quality * quality + market.price_spread * noise)
-            )
-            if market.floor_share is not None:
-                floor = market_price * float(floor_rng.beta(*market.floor_share))
-
-        public_vector = features[:public]
-        # Nothing else holds this step's features, so a read-only view needs no copy.
-        public_vector.flags.writeable = False
-        yield _Stages(public_vector, pctr, cvr_logits, market_price, floor)
+            public_vector = features[:public]
+            # Nothing else holds this step's features, so a read-only view needs no copy.
+            public_vector.flags.writeable = False
+            yield _Step(public_vector, ctr_logits, cvr_logits, market_price, floor)
 
 
 def _share_market_vector(
