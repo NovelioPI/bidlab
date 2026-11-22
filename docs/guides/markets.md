@@ -1,6 +1,6 @@
 # Markets
 
-This guide shows the built-in markets, clicks and conversions, public features, segments and targeting, the market price and floor, and how to write your own market.
+This guide shows the built-in markets, clicks and conversions, rates, public features, segments and targeting, the market price and floor, and how to write your own market.
 
 ## Built-in markets
 
@@ -9,7 +9,7 @@ A market draws each step's public features and each campaign's private probabili
 | Market | Draws |
 |---|---|
 | `bl.markets.LogisticMarket()` | The default: pCVRᵢ = σ(x · φᵢ + βᵢ) for a random feature vector x; optionally a click stage |
-| `bl.markets.Segmented(segments)` | A segment per step by its `share`; its `lift` is added to every campaign's CVR logit |
+| `bl.markets.Segmented(segments)` | A segment per step by its `share`; a segment can set its own rates or lifts |
 | `bl.markets.IndependentValues(distribution)` | Each pᵢ drawn on its own from a scipy frozen distribution, clipped to [0, 1] |
 
 `IndependentValues(scipy.stats.uniform(0, 1))` with a campaign `base_value` of 1 is the textbook independent private values setting.
@@ -18,11 +18,40 @@ A market draws each step's public features and each campaign's private probabili
 
 A won impression is clicked with probability pCTR, and a click converts with probability pCVR. A market without a click stage counts every won impression as clicked, so pCVR is the conversion chance of a win.
 
-`LogisticMarket(ctr_bias_mean=-4.0)` adds a click stage: pCTRᵢ = σ(x · ψᵢ + γᵢ), with its own ad vectors ψᵢ and biases γᵢ ~ N(`ctr_bias_mean`, `ctr_spread`) on the same feature vector x. Without `ctr_bias_mean`, the market has no click stage and gives the same runs as before clicks existed.
-
 The true rates set `RunLog.true_values`, through each campaign's event; see [Campaigns](campaigns.md). `RunLog.clicked`, `BidResult.clicked` and the `clicks` column record the clicks.
 
 A bidder that declares the `market` input gets a `bl.MarketTruth` with its own true `pctr` and `pcvr`; `pctr` is 1.0 without a click stage. Use it to check an estimator or to build an oracle. A fair benchmark bidder does not read it.
+
+## Rates
+
+Set each stage's rate, and `LogisticMarket` finds the logit bias that gives it.
+
+```python
+import bidlab as bl
+
+rated = bl.markets.LogisticMarket(ctr=0.02, cvr=0.05)
+```
+
+| Setting | Effect |
+|---|---|
+| `ctr` (None) | Click rate in (0, 1); turns on the click stage |
+| `cvr` (None) | Conversion rate per click, in (0, 1) |
+| `ctr_spread`, `cvr_spread` (0.5) | How much campaigns differ, on the logit scale |
+
+Campaign i's mean pCTR over a run is σ(logit(`ctr`) + δᵢ). Its offset δᵢ ~ N(0, `ctr_spread`) is drawn once per run. The median campaign has the set rate, and a spread of 0 gives every campaign exactly that rate. Each campaign is solved on its own, so adding a campaign changes no other campaign's draws.
+
+The rate is a mean over all auctions. The `ctr` column in results counts clicks per win. Bidders win the better impressions, so that column sits above the set rate.
+
+### Bias settings
+
+Behind the rates is a logit model on the same feature vector x: pCVRᵢ = σ(x · φᵢ + βᵢ) and pCTRᵢ = σ(x · ψᵢ + γᵢ). Set a bias mean in place of a rate to choose the biases directly. A rate and its bias mean together raise a `ValueError`.
+
+| Setting | Effect |
+|---|---|
+| `ctr_bias_mean` (None) | γᵢ ~ N(`ctr_bias_mean`, `ctr_spread`); turns on the click stage |
+| `cvr_bias_mean` (None) | βᵢ ~ N(`cvr_bias_mean`, `cvr_spread`); None without `cvr` means -3, so pCVR is near 5% |
+
+Without `ctr` or `ctr_bias_mean`, the market has no click stage and gives the same runs as before clicks existed.
 
 ## Public features and predictability
 
@@ -75,6 +104,25 @@ print(len(segment_results.segment_rows))  # 8 rows: seeds × bidders × segments
 `results.segment_rows` is a second table with spend, wins, clicks, conversions and surplus per seed, bidder and segment. A market without segments reports one segment, `"all"`.
 
 A targeted bidder sees only its segments' auctions. `PidPacing` plans spend by time, so it still spreads the budget over the whole horizon.
+
+### Segment rates and lifts
+
+| Setting | Effect |
+|---|---|
+| `ctr`, `cvr` | The segment's own rate, in place of the market's; each campaign keeps its offset δᵢ |
+| `ctr_lift`, `cvr_lift` | Added to every campaign's logit in the segment |
+
+A segment sets a stage's rate or its lift, not both. Click settings need a click stage in the base market. The market's own rate then holds only in segments without a rate of their own.
+
+```python
+by_device = bl.markets.Segmented(
+    (
+        bl.markets.Segment("mobile", share=0.7, ctr=0.03),
+        bl.markets.Segment("desktop", share=0.3, cvr_lift=0.5),
+    ),
+    base=bl.markets.LogisticMarket(ctr=0.02, cvr=0.05),
+)
+```
 
 ## Market price and floor
 
