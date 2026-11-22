@@ -72,7 +72,7 @@ def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
 def logged(hook: str, action: Action, **kwargs: Any) -> RunLog:
     return run(
         config(
-            Campaign("b", Logs(hook, action), budget=1e6, event_value=5.0),
+            Campaign("b", Logs(hook, action), budget=1e6, base_value=5.0),
             **kwargs,
         )
     )
@@ -172,7 +172,7 @@ class EpisodeFirst(Bidder):
 def test_step_and_episode_name_raises(bidder: Bidder, second: str):
     pattern = rf"'both'.*'x'.*per step and per episode; this {second} log"
     with pytest.raises(ValueError, match=pattern):
-        run(config(Campaign("both", bidder, budget=1e6, event_value=5.0)))
+        run(config(Campaign("both", bidder, budget=1e6, base_value=5.0)))
 
 
 @pytest.mark.parametrize(
@@ -243,7 +243,7 @@ def test_log_outside_run_does_nothing():
     bidder.log("x", 1.0)
     bidder.log({"y": 2.0})
     assert bidder.forward(2.0) == 2.0
-    log = run(config(Campaign("bind", LogsInBind(), budget=1e6, event_value=5.0)))
+    log = run(config(Campaign("bind", LogsInBind(), budget=1e6, base_value=5.0)))
     assert "bound" not in log.logged
 
 
@@ -261,7 +261,7 @@ class Keeps(Bidder):
 
 def test_log_after_run_does_nothing():
     Keeps.kept.clear()
-    log = run(config(Campaign("k", Keeps(), budget=1e6, event_value=5.0)))
+    log = run(config(Campaign("k", Keeps(), budget=1e6, base_value=5.0)))
     copy = Keeps.kept[-1]
     copy.log("x", 99.0)
     copy.log("fresh", 5.0)
@@ -274,13 +274,13 @@ def test_specs_keep_own_arrays():
         "one",
         Logs("forward", lambda b, _: b.log("x", 1.0)),
         budget=1e6,
-        event_value=5.0,
+        base_value=5.0,
     )
     second = Campaign(
         "two",
         Logs("forward", lambda b, _: b.log("x", 2.0)),
         budget=1e6,
-        event_value=5.0,
+        base_value=5.0,
     )
     logs = run(config(first, second)).logged["x"]
     assert set(logs) == {"one", "two"}
@@ -299,15 +299,13 @@ def test_logs_read_only():
 
 
 def test_no_logs_empty():
-    log = run(config(Campaign("t", Linear(), budget=1e6, event_value=5.0)))
+    log = run(config(Campaign("t", Linear(), budget=1e6, base_value=5.0)))
     assert dict(log.logged) == {}
 
 
 def test_child_name_prefixed():
     child = Logs("forward", lambda bidder, _: bidder.log("lam", 1.0))
-    log = run(
-        config(Campaign("s", Stack(Linear(), child), budget=1e6, event_value=5.0))
-    )
+    log = run(config(Campaign("s", Stack(Linear(), child), budget=1e6, base_value=5.0)))
     assert set(log.logged) == {"bidders.1.lam"}
 
 
@@ -325,7 +323,7 @@ def test_plain_name(as_dict: bool):
                 "s",
                 Stack(Linear(), Logs("forward", plain)),
                 budget=1e6,
-                event_value=5.0,
+                base_value=5.0,
             )
         )
     )
@@ -359,17 +357,17 @@ class TopAndChild(Holder):
 
 
 def test_different_names_in_tree_allowed():
-    log = run(config(Campaign("t", TopAndChild(), budget=1e6, event_value=5.0)))
+    log = run(config(Campaign("t", TopAndChild(), budget=1e6, base_value=5.0)))
     assert set(log.logged) == {"a", "child.b"}
 
 
 def test_name_clash_raises():
     with pytest.raises(ValueError, match=r"'clash'.*'lam'.*'' and 'child'"):
-        run(config(Campaign("clash", TopLogs(), budget=1e6, event_value=5.0)))
+        run(config(Campaign("clash", TopLogs(), budget=1e6, base_value=5.0)))
 
 
 def test_pid_logs_bid_multiplier():
-    campaign = Campaign("pid", PidPacing(), budget=3.0, event_value=5.0)
+    campaign = Campaign("pid", PidPacing(), budget=3.0, base_value=5.0)
     log = run(config(campaign, auction=FirstPrice()))
     multiplier = log.logged["multiplier"]["pid"]
     assert multiplier.shape == (2, 50)
@@ -386,7 +384,7 @@ def test_pid_logs_bid_multiplier():
 
 def test_ucb_logs_arm():
     bandit = UcbMultiplier()
-    log = run(config(Campaign("ucb", bandit, budget=1e6, event_value=5.0), episodes=4))
+    log = run(config(Campaign("ucb", bandit, budget=1e6, base_value=5.0), episodes=4))
     arms = log.logged["multiplier"]["ucb"]
     assert arms.shape == (4,)
     assert all(np.isclose(bandit.arms, arm).any() for arm in arms)
@@ -397,15 +395,15 @@ def test_ucb_logs_arm():
 
 def test_log_state_off():
     campaigns = (
-        Campaign("pid", PidPacing(log_state=False), budget=1e6, event_value=5.0),
-        Campaign("ucb", UcbMultiplier(log_state=False), budget=1e6, event_value=5.0),
+        Campaign("pid", PidPacing(log_state=False), budget=1e6, base_value=5.0),
+        Campaign("ucb", UcbMultiplier(log_state=False), budget=1e6, base_value=5.0),
     )
     assert dict(run(config(*campaigns)).logged) == {}
 
 
 def test_stacked_pid_prefixed():
     log = run(
-        config(Campaign("s", Stack(Linear(), PidPacing()), budget=1e6, event_value=5.0))
+        config(Campaign("s", Stack(Linear(), PidPacing()), budget=1e6, base_value=5.0))
     )
     assert set(log.logged) == {"bidders.1.multiplier"}
 
@@ -413,20 +411,18 @@ def test_stacked_pid_prefixed():
 def test_logging_leaves_run_unchanged():
     def campaigns(log_state: bool) -> tuple[Campaign, ...]:
         return (
-            Campaign(
-                "pid", PidPacing(log_state=log_state), budget=3.0, event_value=5.0
-            ),
+            Campaign("pid", PidPacing(log_state=log_state), budget=3.0, base_value=5.0),
             Campaign(
                 "ucb",
                 UcbMultiplier(log_state=log_state),
                 budget=5.0,
-                event_value=4.0,
+                base_value=4.0,
             ),
             Campaign(
                 "logs",
                 Logs("forward", lambda b, a: b.log("a", a)),
                 budget=1e6,
-                event_value=5.0,
+                base_value=5.0,
             ),
         )
 
@@ -454,7 +450,7 @@ def per_auction() -> Campaign:
         "a",
         Logs("forward", lambda b, a: b.log("lam", a * 2)),
         budget=1e6,
-        event_value=5.0,
+        base_value=5.0,
     )
 
 
@@ -468,13 +464,13 @@ def test_run_many_stacks_seeds():
 
 
 def test_run_many_episode_values():
-    campaign = Campaign("ucb", UcbMultiplier(), budget=1e6, event_value=5.0)
+    campaign = Campaign("ucb", UcbMultiplier(), budget=1e6, base_value=5.0)
     results = run_many(config(campaign, episodes=4), seeds=range(3))
     assert results.logged["multiplier"]["ucb"].shape == (3, 4)
 
 
 def test_run_many_missing_seed_nan():
-    campaign = Campaign("s", Sometimes(), budget=1e6, event_value=5.0)
+    campaign = Campaign("s", Sometimes(), budget=1e6, base_value=5.0)
     stacked = run_many(config(campaign, episodes=1), seeds=range(8)).logged["x"]["s"]
     logged = [
         "x" in run(config(campaign, episodes=1, seed=seed)).logged for seed in range(8)
@@ -485,7 +481,7 @@ def test_run_many_missing_seed_nan():
 
 
 def test_run_many_workers_logs_equal():
-    pid = Campaign("pid", PidPacing(), budget=3.0, event_value=5.0)
+    pid = Campaign("pid", PidPacing(), budget=3.0, base_value=5.0)
     serial = run_many(config(pid, per_auction()), seeds=range(3))
     parallel = run_many(config(pid, per_auction()), seeds=range(3), workers=2)
     assert parallel.equals(serial)
@@ -520,7 +516,7 @@ class SurplusLogger(Bidder):
 
 
 def test_reward_logged_in_update():
-    campaign = Campaign("s", SurplusLogger(), budget=1e6, event_value=5.0)
+    campaign = Campaign("s", SurplusLogger(), budget=1e6, base_value=5.0)
     config = SimConfig(campaigns=[campaign], episodes=2, steps=20, auction=FirstPrice())
     log = run(config)
     won = log.winner == 0

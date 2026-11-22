@@ -110,7 +110,7 @@ def config(*campaigns, **kwargs):
 
 
 def other():
-    return Campaign("other", Linear(multiplier=0.9), budget=1e6, event_value=4.0)
+    return Campaign("other", Linear(multiplier=0.9), budget=1e6, base_value=4.0)
 
 
 def test_stages_chain_values():
@@ -141,7 +141,7 @@ def test_stacks_nest():
 def test_hooks_reach_every_stage_in_order():
     Calls.calls.clear()
     stack = Stack(Calls("a"), Calls("b"))
-    run(config(Campaign("x", stack, budget=1e6, event_value=5.0), episodes=1, steps=2))
+    run(config(Campaign("x", stack, budget=1e6, base_value=5.0), episodes=1, steps=2))
     assert [(name, hook) for name, hook, _ in Calls.calls] == [
         ("a", "start"),
         ("b", "start"),
@@ -181,7 +181,7 @@ def test_stack_defines_only_init_and_forward():
 
 def test_each_run_starts_fresh():
     Counter.reports.clear()
-    campaign = Campaign("counted", Counter(), budget=1e6, event_value=5.0)
+    campaign = Campaign("counted", Counter(), budget=1e6, base_value=5.0)
     run_many(config(campaign, other()), seeds=range(3))
     assert Counter.reports == [50, 100] * 3
 
@@ -190,7 +190,7 @@ def test_user_stage_object_unchanged():
     model = {"weights": [1.0, 2.0]}
     bidder = Holds(model)
     run_many(
-        config(Campaign("m", Stack(bidder), budget=1e6, event_value=5.0), other()),
+        config(Campaign("m", Stack(bidder), budget=1e6, base_value=5.0), other()),
         seeds=range(2),
     )
     assert bidder.forwards == 0
@@ -201,13 +201,13 @@ def test_user_stage_object_unchanged():
 def test_stage_streams_are_separate():
     Draws.draws.clear()
     drawing = Stack(Draws("first"), Draws("second"))
-    log = run(config(Campaign("d", drawing, budget=1e6, event_value=5.0), other()))
+    log = run(config(Campaign("d", drawing, budget=1e6, base_value=5.0), other()))
     first, second = Draws.draws["first"], Draws.draws["second"]
     assert len(first) == len(second) == 100
     assert first != second
 
     quiet = Stack(Draws("first", draw=False), Draws("second", draw=False))
-    quiet_log = run(config(Campaign("d", quiet, budget=1e6, event_value=5.0), other()))
+    quiet_log = run(config(Campaign("d", quiet, budget=1e6, base_value=5.0), other()))
     np.testing.assert_array_equal(log.true_values, quiet_log.true_values)
     np.testing.assert_array_equal(log.bids[:, :, 1], quiet_log.bids[:, :, 1])
     np.testing.assert_array_equal(log.converted, quiet_log.converted)
@@ -215,10 +215,10 @@ def test_stage_streams_are_separate():
 
 def test_single_stage_equals_stack():
     single = run(
-        config(Campaign("p", PidPacing(), budget=3.0, event_value=5.0), other())
+        config(Campaign("p", PidPacing(), budget=3.0, base_value=5.0), other())
     )
     stacked = run(
-        config(Campaign("p", Stack(PidPacing()), budget=3.0, event_value=5.0), other())
+        config(Campaign("p", Stack(PidPacing()), budget=3.0, base_value=5.0), other())
     )
     for name in ("bids", "true_values", "winner", "price", "converted"):
         np.testing.assert_array_equal(getattr(single, name), getattr(stacked, name))
@@ -226,11 +226,11 @@ def test_single_stage_equals_stack():
 
 def test_stage_class_rejected():
     with pytest.raises(TypeError, match=r"instance, such as PidPacing\(\)"):
-        Campaign("p", PidPacing, budget=1e6, event_value=5.0)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
+        Campaign("p", PidPacing, budget=1e6, base_value=5.0)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
 
 
 def test_stack_parallel_equals_serial():
-    campaign = Campaign("j", Stack(Jitter(), PidPacing()), budget=5.0, event_value=5.0)
+    campaign = Campaign("j", Stack(Jitter(), PidPacing()), budget=5.0, base_value=5.0)
     serial = run_many(config(campaign, other()), seeds=range(3))
     parallel = run_many(config(campaign, other()), seeds=range(3), workers=2)
     assert parallel.equals(serial)
@@ -245,7 +245,7 @@ def test_stack_streams_match_main():
     }
     Draws.draws.clear()
     nested = Stack(Draws("a"), Stack(Draws("b"), Draws("c")))
-    run(config(Campaign("d", nested, budget=1e6, event_value=5.0), other()))
+    run(config(Campaign("d", nested, budget=1e6, base_value=5.0), other()))
     assert {name: draws[:3] for name, draws in Draws.draws.items()} == expected
 
 
@@ -256,7 +256,7 @@ def test_bidder_draws_keep_noise_stream():
         Watch.values.clear()
         run(
             config(
-                Campaign("d", drawing, budget=1e6, event_value=5.0),
+                Campaign("d", drawing, budget=1e6, base_value=5.0),
                 other(),
                 estimate_noise=0.5,
             )

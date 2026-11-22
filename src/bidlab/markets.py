@@ -86,7 +86,7 @@ class Market(ABC):
     ...     def draws(self, count, rng):
     ...         while True:
     ...             yield bl.markets.MarketDraw({}, pcvr=np.full(count, 0.1))
-    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
+    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, base_value=5)
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], market=Flat(), episodes=1, steps=10))
     >>> log.true_values[0, :3, 0].tolist()
     [0.5, 0.5, 0.5]

@@ -1,7 +1,7 @@
 """Does a two-stage model on the public features estimate conversions better than counting?
 
 Each estimator is the first stage of a `Stack`: it ignores the platform's value
-and outputs its own, `event_value` × its estimated chance that the impression
+and outputs its own, `base_value` × its estimated chance that the impression
 converts. `Linear` after it bids that value. The market has a click stage, so
 an impression converts only after a click.
 
@@ -101,7 +101,7 @@ estimators = {
 def last_episode_error(estimator):
     # One campaign alone wins every auction, so each estimator learns from every impression.
     campaign = bl.Campaign(
-        "c", bl.Stack(estimator, bl.Linear()), budget=1e9, event_value=EVENT_VALUE
+        "c", bl.Stack(estimator, bl.Linear()), budget=1e9, base_value=EVENT_VALUE
     )
     config = bl.SimConfig(campaigns=[campaign], market=market, episodes=5, steps=2000)
     log = bl.run(config)

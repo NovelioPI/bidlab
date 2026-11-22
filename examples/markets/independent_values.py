@@ -18,7 +18,7 @@ config = bl.SimConfig(
             name,
             bl.Linear(multiplier=multiplier),
             budget=BUDGET,
-            event_value=1,
+            base_value=1,
         )
         for name, multiplier in (
             ("truthful", 1.0),

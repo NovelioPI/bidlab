@@ -38,9 +38,9 @@ class SpendShare(bl.Callback):
 
 config = bl.SimConfig(
     campaigns=[
-        bl.Campaign("pid", bl.PidPacing(), budget=15, event_value=5),
-        bl.Campaign("quiet", bl.PidPacing(log_state=False), budget=15, event_value=5),
-        bl.Campaign("big", bl.Linear(), budget=50, event_value=5),
+        bl.Campaign("pid", bl.PidPacing(), budget=15, base_value=5),
+        bl.Campaign("quiet", bl.PidPacing(log_state=False), budget=15, base_value=5),
+        bl.Campaign("big", bl.Linear(), budget=50, base_value=5),
     ],
     episodes=5,
     steps=480,

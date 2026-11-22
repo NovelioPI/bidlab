@@ -16,7 +16,7 @@ class SegmentRate(bl.Bidder):
         self.pending = {}
 
     def on_episode_start(self, campaign):
-        self.event_value = campaign.event_value
+        self.base_value = campaign.base_value
 
     def rate(self, segment):
         conversions = self.conversions.get(segment, 0) + self.prior
@@ -25,7 +25,7 @@ class SegmentRate(bl.Bidder):
     def forward(self, value, segment, time):
         # BidResult carries the auction time but not the segment.
         self.pending[time] = segment
-        return self.rate(segment) * self.event_value
+        return self.rate(segment) * self.base_value
 
     def update_batch(self, bid_results):
         for result in bid_results:
@@ -53,9 +53,9 @@ config = bl.SimConfig(
             "learned",
             bl.Stack(SegmentRate(), bl.PidPacing()),
             budget=15,
-            event_value=5,
+            base_value=5,
         ),
-        bl.Campaign("platform", bl.PidPacing(), budget=15, event_value=5),
+        bl.Campaign("platform", bl.PidPacing(), budget=15, base_value=5),
     ],
     market=market,
     episodes=5,

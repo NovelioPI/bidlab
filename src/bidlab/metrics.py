@@ -9,7 +9,7 @@ import numpy as np
 import numpy.typing as npt
 
 from bidlab.auctions import FirstPrice
-from bidlab.simulator import RunLog
+from bidlab.simulator import RunLog, event_happened
 
 REGRET_MULTIPLIERS = np.round(np.arange(0.0, 3.0001, 0.05), 2)
 # The AuctionNet score cuts value by (target / cpa) to this power above target.
@@ -36,13 +36,19 @@ class CampaignEpisodeMetrics:
     conversions : int
         Realized conversions on won impressions.
     realized_value : float
-        ``conversions`` × value per conversion.
+        The count of the campaign's event × its base value: wins, ``clicks``
+        or ``conversions``, by `Campaign.event`.
     surplus : float
         ``realized_value`` − ``spend``.
     budget_used : float
         ``spend`` / budget; never above 1.
+    ctr : float
+        ``clicks`` / ``wins``; NaN with no win.
+    cpc : float
+        ``spend`` / ``clicks``; NaN with no click. Billing stays per
+        impression, so this is impression spend per click.
     cpa : float
-        ``spend`` / ``conversions``; NaN with no conversion.
+        ``spend`` / ``conversions``; NaN with no conversion, for every event.
     cpa_violation : float
         max(0, ``cpa`` / target − 1); 0 with no spend, +inf with spend and
         no conversion, NaN with no target.
@@ -62,6 +68,8 @@ class CampaignEpisodeMetrics:
     realized_value: float
     surplus: float
     budget_used: float
+    ctr: float
+    cpc: float
     cpa: float
     cpa_violation: float
     cpa_score: float
@@ -89,7 +97,8 @@ class CampaignSegmentMetrics:
     conversions : int
         Realized conversions in the segment.
     surplus : float
-        ``conversions`` × value per conversion − ``spend``.
+        The count of the campaign's event in the segment × its base value −
+        ``spend``.
     """
 
     episode: int
@@ -127,7 +136,7 @@ def platform_metrics(log: RunLog) -> list[PlatformEpisodeMetrics]:
     Examples
     --------
     >>> import bidlab as bl
-    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
+    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, base_value=5)
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=2, steps=50))
     >>> [row.revenue for row in bl.platform_metrics(log)]
     [0.0, 0.0]
@@ -156,8 +165,8 @@ def campaign_metrics(log: RunLog) -> list[CampaignEpisodeMetrics]:
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
     ...     campaigns=[
-    ...         bl.Campaign("a", bl.Linear(), budget=10, event_value=5),
-    ...         bl.Campaign("b", bl.PidPacing(), budget=10, event_value=5),
+    ...         bl.Campaign("a", bl.Linear(), budget=10, base_value=5),
+    ...         bl.Campaign("b", bl.PidPacing(), budget=10, base_value=5),
     ...     ],
     ...     episodes=2,
     ...     steps=50,
@@ -170,20 +179,27 @@ def campaign_metrics(log: RunLog) -> list[CampaignEpisodeMetrics]:
         for i, campaign in enumerate(log.config.campaigns):
             won = log.winner[episode] == i
             spend = float(log.price[episode][won].sum())
+            wins = int(won.sum())
+            clicks = int((log.clicked[episode] & won).sum())
             conversions = int((log.converted[episode] & won).sum())
-            value = conversions * campaign.event_value
+            events = event_happened(
+                campaign.event, won, log.clicked[episode], log.converted[episode]
+            )
+            value = int(events.sum()) * campaign.base_value
             target = campaign.cpa_target
             rows.append(
                 CampaignEpisodeMetrics(
                     episode=episode,
                     campaign=campaign.name,
                     spend=spend,
-                    wins=int(won.sum()),
-                    clicks=int((log.clicked[episode] & won).sum()),
+                    wins=wins,
+                    clicks=clicks,
                     conversions=conversions,
                     realized_value=value,
                     surplus=value - spend,
                     budget_used=spend / campaign.budget,
+                    ctr=clicks / wins if wins else np.nan,
+                    cpc=spend / clicks if clicks else np.nan,
                     cpa=spend / conversions if conversions else np.nan,
                     cpa_violation=_cpa_violation(spend, conversions, target),
                     cpa_score=(
@@ -209,7 +225,7 @@ def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
     >>> import bidlab as bl
     >>> from bidlab.markets import Segment, Segmented
     >>> market = Segmented((Segment("day", 0.6), Segment("night", 0.4)))
-    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
+    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, base_value=5)
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], market=market, episodes=1, steps=50))
     >>> [row.segment for row in bl.segment_metrics(log)]
     ['day', 'night']
@@ -223,6 +239,12 @@ def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
                 won_here = won & (log.segment[episode] == index)
                 spend = float(log.price[episode][won_here].sum())
                 conversions = int((log.converted[episode] & won_here).sum())
+                events = event_happened(
+                    campaign.event,
+                    won_here,
+                    log.clicked[episode],
+                    log.converted[episode],
+                )
                 rows.append(
                     CampaignSegmentMetrics(
                         episode=episode,
@@ -232,7 +254,7 @@ def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
                         wins=int(won_here.sum()),
                         clicks=int((log.clicked[episode] & won_here).sum()),
                         conversions=conversions,
-                        surplus=conversions * campaign.event_value - spend,
+                        surplus=int(events.sum()) * campaign.base_value - spend,
                     )
                 )
 
@@ -287,7 +309,7 @@ def regret(
     multiplier beats it:
 
     >>> import bidlab as bl
-    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
+    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, base_value=5)
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=1, steps=50))
     >>> round(bl.regret(log, episode=0, campaign_index=0), 9)
     0.0

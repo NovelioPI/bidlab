@@ -43,7 +43,7 @@ class TimeLeftOnly(Bidder):
 
 
 def run_one(bidder: Bidder, **kwargs: Any):
-    campaign = Campaign("a", bidder, budget=kwargs.pop("budget", 1e6), event_value=5.0)
+    campaign = Campaign("a", bidder, budget=kwargs.pop("budget", 1e6), base_value=5.0)
     defaults: dict[str, Any] = {"episodes": 2, "steps": 10, "seed": 1}
     return run(SimConfig(campaigns=[campaign], **(defaults | kwargs)))
 
@@ -78,8 +78,8 @@ class Spoils(Bidder):
 
 def test_kwargs_dict_is_per_call():
     Seen.calls.clear()
-    spoiled = Campaign("spoils", Spoils(), budget=1e6, event_value=5.0)
-    seen = Campaign("seen", Stack(Spoils(), Seen()), budget=1e6, event_value=5.0)
+    spoiled = Campaign("spoils", Spoils(), budget=1e6, base_value=5.0)
+    seen = Campaign("seen", Stack(Spoils(), Seen()), budget=1e6, base_value=5.0)
     run(SimConfig(campaigns=[spoiled, seen], episodes=1, steps=5))
     assert [call["time"] for call in Seen.calls] == [
         k * 24 * 3600 / 5 for k in range(5)

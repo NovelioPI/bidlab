@@ -36,7 +36,7 @@ class Recorder(Bidder):
 
 
 def other():
-    return Campaign("other", Linear(), budget=50.0, event_value=4.0)
+    return Campaign("other", Linear(), budget=50.0, base_value=4.0)
 
 
 def small_config(*bidders, **kwargs):
@@ -52,7 +52,7 @@ def built_recorders(*campaigns, **kwargs):
 
 def test_bidder_copied_and_bound_once_per_run():
     template = Recorder()
-    _, built = built_recorders(Campaign("r", template, budget=15, event_value=5))
+    _, built = built_recorders(Campaign("r", template, budget=15, base_value=5))
     assert len(built) == 1
     assert built[0] is not template
     assert isinstance(built[0].rng, np.random.Generator)
@@ -62,8 +62,8 @@ def test_bidder_copied_and_bound_once_per_run():
 
 def test_each_bidder_gets_its_own_rng():
     _, built = built_recorders(
-        Campaign("a", Recorder(), budget=50, event_value=5),
-        Campaign("b", Recorder(), budget=50, event_value=5),
+        Campaign("a", Recorder(), budget=50, base_value=5),
+        Campaign("b", Recorder(), budget=50, base_value=5),
     )
     assert built[0].rng is not built[1].rng
     assert built[0].rng.random() != built[1].rng.random()
@@ -84,8 +84,8 @@ def test_uncopyable_bidder_fails_before_step_zero():
 
     config = SimConfig(
         campaigns=[
-            Campaign("watch", Watch(), budget=50, event_value=5),
-            Campaign("bad", Locked(), budget=50, event_value=5),
+            Campaign("watch", Watch(), budget=50, base_value=5),
+            Campaign("bad", Locked(), budget=50, base_value=5),
         ],
         episodes=1,
         steps=10,
@@ -98,25 +98,25 @@ def test_uncopyable_bidder_fails_before_step_zero():
 
 def test_non_bidder_rejected():
     with pytest.raises(TypeError, match="'bad'.*Bidder instance"):
-        Campaign("bad", object(), budget=50, event_value=5)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
+        Campaign("bad", object(), budget=50, base_value=5)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
 
 
 def test_string_bidder_rejected():
     with pytest.raises(TypeError, match="Bidder instance"):
-        Campaign("pid", "pid_pacing", budget=15, event_value=5)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
+        Campaign("pid", "pid_pacing", budget=15, base_value=5)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
 
 
 def test_numbers_stored_as_float():
     campaign = Campaign("a", Linear(), 3, 5, cpa_target=2)
     assert all(
         type(value) is float
-        for value in (campaign.budget, campaign.event_value, campaign.cpa_target)
+        for value in (campaign.budget, campaign.base_value, campaign.cpa_target)
     )
 
 
 def test_campaign_holds_bidder_and_defaults():
     bidder = Recorder()
-    campaign = Campaign("a", bidder, budget=10, event_value=5, segments=["news"])
+    campaign = Campaign("a", bidder, budget=10, base_value=5, segments=["news"])
     assert campaign.bidder is bidder
     assert campaign.segments == ("news",)
     assert campaign.cpa_target is None
@@ -126,6 +126,7 @@ def test_campaign_holds_bidder_and_defaults():
     "old_field",
     [
         "value_per_conversion",
+        "event_value",
         "params",
         "campaign",
         "horizon_hours",
@@ -137,7 +138,7 @@ def test_campaign_holds_bidder_and_defaults():
 )
 def test_campaign_rejects_old_fields(old_field):
     with pytest.raises(TypeError, match=old_field):
-        Campaign("a", Linear(), budget=10, event_value=5, **{old_field: 1})  # pyright: ignore[reportArgumentType, reportCallIssue]  Reason: the test checks the runtime error for a removed field.
+        Campaign("a", Linear(), budget=10, base_value=5, **{old_field: 1})  # pyright: ignore[reportArgumentType, reportCallIssue]  Reason: the test checks the runtime error for a removed field.
 
 
 @pytest.mark.parametrize(
@@ -189,7 +190,7 @@ def test_non_market_rejected():
 
 
 def test_bidders_list_stored_as_tuple():
-    campaigns = [other(), Campaign("b", Linear(), budget=1, event_value=1)]
+    campaigns = [other(), Campaign("b", Linear(), budget=1, base_value=1)]
     config = SimConfig(campaigns=campaigns)
     assert config.campaigns == tuple(campaigns)
 
@@ -214,20 +215,20 @@ def test_bidder_without_forward_fails_on_creation():
     with pytest.raises(TypeError, match="abstract method 'forward'"):
         Forgot()  # pyright: ignore[reportAbstractUsage]  Reason: the test checks the error for a missing forward method.
     with pytest.raises(TypeError, match=r"pass an instance, such as Forgot\(\)"):
-        Campaign("forgot", Forgot, budget=50, event_value=5)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
+        Campaign("forgot", Forgot, budget=50, base_value=5)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
 
 
 def test_unknown_segment_rejected():
     market = Segmented((Segment("news", 0.5), Segment("sports", 0.5)))
     campaign = Campaign(
-        "b", Linear(), budget=1, event_value=1, segments=("news", "games")
+        "b", Linear(), budget=1, base_value=1, segments=("news", "games")
     )
     with pytest.raises(ValueError, match=r"campaign 'b'.*'games'"):
         SimConfig(campaigns=[campaign], market=market)
     with pytest.raises(ValueError, match=r"campaign 'b'.*'news'"):
         SimConfig(
             campaigns=[
-                Campaign("b", Linear(), budget=1, event_value=1, segments=("news",))
+                Campaign("b", Linear(), budget=1, base_value=1, segments=("news",))
             ]
         )
 
@@ -241,14 +242,14 @@ def test_segments_list_stored_as_tuple():
     [
         ({"budget": 0}, "budget"),
         ({"budget": -1}, "budget"),
-        ({"event_value": 0}, "event_value"),
+        ({"base_value": 0}, "base_value"),
         ({"cpa_target": 0}, "cpa_target"),
         ({"cpa_target": -2}, "cpa_target"),
         ({"segments": ()}, "segments"),
     ],
 )
 def test_campaign_rejects_bad_values(kwargs, field_name):
-    arguments = {"budget": 10, "event_value": 5} | kwargs
+    arguments = {"budget": 10, "base_value": 5} | kwargs
     with pytest.raises(ValueError, match=f"campaign 'a': {field_name}"):
         Campaign("a", Linear(), **arguments)
 

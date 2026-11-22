@@ -9,8 +9,10 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | Symbol | Meaning | Unit |
 |---|---|---|
 | t | Step in the episode | step |
-| vᵢₜ | True expected value of campaign i at step t: wᵢ × cᵢₜ × pᵢₜ, as in `RunLog.true_values` | money |
-| wᵢ | Value of one event to campaign i: `Campaign.event_value`. Today the event is a conversion | money |
+| vᵢₜ | True expected value of campaign i at step t: wᵢ × eᵢₜ, as in `RunLog.true_values` | money |
+| wᵢ | Value of one event to campaign i: `Campaign.base_value` | money |
+| eᵢₜ | True chance of campaign i's event at step t, by `Campaign.event`: 1 for an impression, cᵢₜ for a click, cᵢₜ × pᵢₜ for a conversion | probability |
+| nᵢ | Count of campaign i's event: wins, clicks or conversions, by `Campaign.event` | count |
 | cᵢₜ | True click probability (pCTR) of campaign i at step t; 1 when the market has no click stage | probability |
 | pᵢₜ | True conversion probability after a click (pCVR) of campaign i at step t, not the bidder's estimate | probability |
 | Wᵢ | Steps that campaign i won | set of steps |
@@ -26,10 +28,12 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | wins | \|Wᵢ\| | |
 | clicks | Realized clicks over Wᵢ | Equals wins when the market has no click stage |
 | conversions | Realized conversions over Wᵢ | Only a click converts |
-| realized_value | conversions × wᵢ | Realized, so it includes luck |
+| realized_value | nᵢ × wᵢ | Realized, so it includes luck |
 | surplus | realized_value − spend | |
 | budget_used | spend / Bᵢ | Never above 1 |
-| cpa | spend / conversions | NaN when conversions = 0 |
+| ctr | clicks / wins | NaN when wins = 0 |
+| cpc | spend / clicks | NaN when clicks = 0. Billing is per impression, so this is impression spend per click |
+| cpa | spend / conversions | NaN when conversions = 0. Counts conversions for every event |
 | cpa_violation | max(0, cpa / targetᵢ − 1) | 0 when spend = 0. +inf when spend > 0 and conversions = 0. NaN with no target |
 | cpa_score | realized_value × min((targetᵢ / cpa)³, 1) | AuctionNet score. Equals realized_value when spend = 0. 0 when spend > 0 and conversions = 0. NaN with no target |
 | regret | See below | Uses expected value, not realized |
@@ -52,7 +56,7 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | wins | \|Wᵢ\| in the segment | |
 | clicks | Realized clicks over Wᵢ in the segment | |
 | conversions | Realized conversions over Wᵢ in the segment | |
-| surplus | conversions × wᵢ − spend | |
+| surplus | nᵢ × wᵢ − spend, with nᵢ counted in the segment | |
 
 For one seed and campaign, each metric summed over segments equals the main table's value.
 
