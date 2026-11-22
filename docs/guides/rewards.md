@@ -32,7 +32,7 @@ class CheapConversions(bl.Bidder):
         self.log("reward", reward)
 
 
-campaign = bl.Campaign("cheap", CheapConversions(), budget=50, event_value=5)
+campaign = bl.Campaign("cheap", CheapConversions(), budget=50, base_value=5)
 config = bl.SimConfig(campaigns=[campaign], episodes=2, steps=200)
 print(bl.run(config).logged["reward"]["cheap"].shape)  # (2, 200)
 ```

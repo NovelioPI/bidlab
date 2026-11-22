@@ -48,7 +48,7 @@ class Results:
     --------
     >>> import bidlab as bl
     >>> config = bl.SimConfig(
-    ...     campaigns=[bl.Campaign("t", bl.Linear(), budget=10, event_value=5)],
+    ...     campaigns=[bl.Campaign("t", bl.Linear(), budget=10, base_value=5)],
     ...     episodes=2,
     ...     steps=50,
     ... )

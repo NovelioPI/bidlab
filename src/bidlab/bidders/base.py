@@ -83,7 +83,7 @@ class Bidder(ABC):
     ...     def forward(self, value):
     ...         return max(value, self.minimum)
     >>> bidder = bl.Stack(bl.Linear(multiplier=0.5), Floor(0.3))
-    >>> campaign = bl.Campaign("floored", bidder, budget=10, event_value=5)
+    >>> campaign = bl.Campaign("floored", bidder, budget=10, base_value=5)
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=1, steps=20))
     >>> bool((log.bids >= 0.3).all())
     True
@@ -126,9 +126,10 @@ class Bidder(ABC):
         Parameters
         ----------
         value : float
-            The platform's value of the impression: `Campaign.event_value`
-            times its estimates of pCTR and pCVR, exact unless
-            `SimConfig.estimate_noise` is set. In a `Stack`, the previous
+            The platform's value of the impression: `Campaign.base_value`
+            times its estimate of the chance of `Campaign.event`: 1 for an
+            impression, pCTR for a click, pCTR × pCVR for a conversion. Exact
+            unless `SimConfig.estimate_noise` is set. In a `Stack`, the previous
             bidder's output.
         time : float
             Seconds since the episode start. Auctions are spaced evenly over
@@ -243,7 +244,7 @@ class Bidder(ABC):
         ...     def forward(self, value):
         ...         self.log("factor", 0.5)
         ...         return value / 2
-        >>> campaign = bl.Campaign("half", Half(), budget=10, event_value=5)
+        >>> campaign = bl.Campaign("half", Half(), budget=10, base_value=5)
         >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=2, steps=50))
         >>> log.logged["factor"]["half"].shape, float(log.logged["factor"]["half"][1, 49])
         ((2, 50), 0.5)

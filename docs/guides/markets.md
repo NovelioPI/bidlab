@@ -12,7 +12,7 @@ A market draws each step's public features and each campaign's private probabili
 | `bl.markets.Segmented(segments)` | A segment per step by its `share`; its `lift` is added to every campaign's CVR logit |
 | `bl.markets.IndependentValues(distribution)` | Each pᵢ drawn on its own from a scipy frozen distribution, clipped to [0, 1] |
 
-`IndependentValues(scipy.stats.uniform(0, 1))` with a campaign `event_value` of 1 is the textbook independent private values setting.
+`IndependentValues(scipy.stats.uniform(0, 1))` with a campaign `base_value` of 1 is the textbook independent private values setting.
 
 ## Clicks and conversions
 
@@ -20,7 +20,7 @@ A won impression is clicked with probability pCTR, and a click converts with pro
 
 `LogisticMarket(ctr_bias_mean=-4.0)` adds a click stage: pCTRᵢ = σ(x · ψᵢ + γᵢ), with its own ad vectors ψᵢ and biases γᵢ ~ N(`ctr_bias_mean`, `ctr_bias_sd`) on the same feature vector x. Without `ctr_bias_mean`, the market has no click stage and gives the same runs as before clicks existed.
 
-The true pCTR × pCVR sets `RunLog.true_values`. `RunLog.clicked`, `BidResult.clicked` and the `clicks` column record the clicks.
+The true rates set `RunLog.true_values`, through each campaign's event; see [Campaigns](campaigns.md). `RunLog.clicked`, `BidResult.clicked` and the `clicks` column record the clicks.
 
 A bidder that declares the `market` input gets a `bl.MarketTruth` with its own true `pctr` and `pcvr`; `pctr` is 1.0 without a click stage. Use it to check an estimator or to build an oracle. A fair benchmark bidder does not read it.
 
@@ -50,12 +50,12 @@ market = bl.markets.Segmented(
 )
 segmented = bl.SimConfig(
     campaigns=[
-        bl.Campaign("everywhere", bl.Linear(), budget=50, event_value=5),
+        bl.Campaign("everywhere", bl.Linear(), budget=50, base_value=5),
         bl.Campaign(
             "sports_only",
             bl.Linear(),
             budget=50,
-            event_value=5,
+            base_value=5,
             segments=("sports",),
         ),
     ],
@@ -89,7 +89,7 @@ class Daytime(bl.markets.Market):
 
 
 daytime = bl.SimConfig(
-    campaigns=[bl.Campaign("pid", bl.PidPacing(), budget=15, event_value=5)],
+    campaigns=[bl.Campaign("pid", bl.PidPacing(), budget=15, base_value=5)],
     market=Daytime(),
     episodes=2,
     steps=96,

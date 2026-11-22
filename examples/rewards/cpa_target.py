@@ -18,7 +18,7 @@ def campaign(name, bidder):
         name,
         bidder,
         budget=50,
-        event_value=VALUE,
+        base_value=VALUE,
         cpa_target=CPA_TARGET,
     )
 
@@ -28,7 +28,7 @@ config = bl.SimConfig(
         campaign("truthful", bl.Linear()),
         campaign("at_target", bl.Linear(multiplier=CPA_TARGET / VALUE)),
         campaign("strict", bl.Linear(multiplier=CPA_TARGET * SAFETY / VALUE)),
-        bl.Campaign("big", bl.Linear(), budget=50, event_value=VALUE),
+        bl.Campaign("big", bl.Linear(), budget=50, base_value=VALUE),
     ],
     auction=bl.SecondPrice(reserve=0.01),
     episodes=10,

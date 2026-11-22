@@ -33,9 +33,9 @@ class EvenSpend(bl.Bidder):
 
 config = bl.SimConfig(
     campaigns=[
-        bl.Campaign("even", EvenSpend(), budget=15, event_value=5),
-        bl.Campaign("truthful", bl.Linear(), budget=15, event_value=5),
-        bl.Campaign("big", bl.Linear(), budget=50, event_value=5),
+        bl.Campaign("even", EvenSpend(), budget=15, base_value=5),
+        bl.Campaign("truthful", bl.Linear(), budget=15, base_value=5),
+        bl.Campaign("big", bl.Linear(), budget=50, base_value=5),
     ],
     episodes=5,
     steps=480,

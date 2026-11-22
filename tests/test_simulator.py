@@ -55,12 +55,12 @@ class BatchSpy(Spy):
         self.batches.append(list(bid_results))
 
 
-def campaign(name, multiplier=1.0, budget=100.0, bidder=Spy, event_value=5.0, **kwargs):
+def campaign(name, multiplier=1.0, budget=100.0, bidder=Spy, base_value=5.0, **kwargs):
     return Campaign(
         name,
         bidder(multiplier),
         budget=budget,
-        event_value=event_value,
+        base_value=base_value,
         **kwargs,
     )
 
@@ -112,7 +112,7 @@ def test_episode_start_gets_campaign_with_running_bidder():
 
 def test_value_input_is_true_value_without_noise():
     log, spies = run_spies(
-        config(campaign("a"), campaign("b", event_value=3.0), episodes=2)
+        config(campaign("a"), campaign("b", base_value=3.0), episodes=2)
     )
     for i, spy in enumerate(spies):
         seen = np.array([o["value"] for o in spy.requests]).reshape(2, 200)
@@ -136,7 +136,7 @@ def test_result_time_matches_time_input():
 
 def test_result_value_is_realized():
     log, spies = run_spies(
-        config(campaign("a", event_value=3.0), campaign("b", multiplier=0.9))
+        config(campaign("a", base_value=3.0), campaign("b", multiplier=0.9))
     )
     for i, (spy, value) in enumerate(zip(spies, (3.0, 5.0), strict=True)):
         realized = np.where(log.converted & (log.winner == i), value, 0.0).ravel()
@@ -248,8 +248,8 @@ class CountingMarket(Market):
 
 def test_custom_market_values_are_weight_times_probability():
     cfg = config(
-        campaign("a", event_value=2.0),
-        campaign("b", event_value=4.0),
+        campaign("a", base_value=2.0),
+        campaign("b", base_value=4.0),
         market=CountingMarket(),
         steps=30,
     )
@@ -533,8 +533,8 @@ class Oracle(Bidder):
 
 
 def test_market_input_by_name():
-    oracle = Campaign("o", Oracle(), budget=100.0, event_value=5.0)
-    other = Campaign("p", Oracle(), budget=100.0, event_value=5.0)
+    oracle = Campaign("o", Oracle(), budget=100.0, base_value=5.0)
+    other = Campaign("p", Oracle(), budget=100.0, base_value=5.0)
     log = run(config(oracle, other, market=FixedMarket([0.1, 0.2], pctr=[0.5, 0.25])))
     np.testing.assert_array_equal(log.bids[..., 0], 5.0 * 0.5 * 0.1)
     np.testing.assert_array_equal(log.bids[..., 1], 5.0 * 0.25 * 0.2)

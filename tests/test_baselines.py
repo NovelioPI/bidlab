@@ -13,14 +13,14 @@ STEPS = 2000
 
 def competitors():
     return (
-        Campaign("x", Linear(), budget=1e6, event_value=4.0),
-        Campaign("y", Linear(multiplier=0.8), budget=1e6, event_value=6.0),
-        Campaign("z", Linear(multiplier=0.9), budget=1e6, event_value=5.0),
+        Campaign("x", Linear(), budget=1e6, base_value=4.0),
+        Campaign("y", Linear(multiplier=0.8), budget=1e6, base_value=6.0),
+        Campaign("z", Linear(multiplier=0.9), budget=1e6, base_value=5.0),
     )
 
 
 def spend_curve(bidder, budget, seed=11):
-    me = Campaign("me", bidder, budget=budget, event_value=5.0)
+    me = Campaign("me", bidder, budget=budget, base_value=5.0)
     log = run(
         SimConfig(campaigns=(me, *competitors()), episodes=1, steps=STEPS, seed=seed)
     )
@@ -48,7 +48,7 @@ class ConversionBandit(UcbMultiplier):
 
 
 def bandit_log(bandit, episodes=80, seed=5):
-    me = Campaign("me", bandit, budget=1e6, event_value=5.0)
+    me = Campaign("me", bandit, budget=1e6, base_value=5.0)
     return run(
         SimConfig(
             campaigns=(me, *competitors()), episodes=episodes, steps=300, seed=seed
@@ -87,7 +87,7 @@ def test_bandit_update_override_changes_reward():
 def test_ucb_reward_is_episode_surplus():
     bandit = UcbMultiplier()
     bandit.bind(np.random.default_rng(0))
-    bandit.on_episode_start(Campaign("me", bandit, budget=10, event_value=5))
+    bandit.on_episode_start(Campaign("me", bandit, budget=10, base_value=5))
     results = [
         BidResult(
             time=0.0,
@@ -107,14 +107,16 @@ def test_ucb_reward_is_episode_surplus():
     ]
     bandit.update_batch(results)
     bandit.on_episode_end(
-        EpisodeReport(budget=10, spend=1.1, wins=2, conversions=1, realized_value=5.0)
+        EpisodeReport(
+            budget=10, spend=1.1, wins=2, clicks=2, conversions=1, realized_value=5.0
+        )
     )
     assert bandit.reward_sums[bandit.arm] == (5.0 - 0.4) + (0.0 - 0.7) + 0.0
     assert bandit.pulls[bandit.arm] == 1
 
 
 def test_pid_spends_evenly_alone():
-    pid = Campaign("pid", PidPacing(), budget=10, event_value=5)
+    pid = Campaign("pid", PidPacing(), budget=10, base_value=5)
     log = run(SimConfig(campaigns=(pid,), auction=FirstPrice(), episodes=1, steps=200))
     first, second = log.price[0, :100].sum(), log.price[0, 100:].sum()
     assert 4 <= first <= 6
@@ -145,7 +147,7 @@ def test_stage_arguments_validated(build, argument):
 def test_pid_gains_as_arguments():
     pid = PidPacing(kp=30, ki=1, kd=0.5)
     assert (pid.kp, pid.ki, pid.kd) == (30.0, 1.0, 0.5)
-    campaign = Campaign("pid", pid, budget=10.0, event_value=5.0)
+    campaign = Campaign("pid", pid, budget=10.0, base_value=5.0)
     log = run(SimConfig(campaigns=[campaign], episodes=1, steps=50))
     assert log.bids.shape == (1, 50, 1)
 

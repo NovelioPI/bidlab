@@ -35,7 +35,7 @@ class CheapConversionBandit(bl.UcbMultiplier):
 
 
 def bandit(bidder):
-    return bl.Campaign("bandit", bidder, budget=1e9, event_value=5)
+    return bl.Campaign("bandit", bidder, budget=1e9, base_value=5)
 
 
 BANDITS = {
@@ -50,7 +50,7 @@ BANDITS = {
 base = bl.SimConfig(
     campaigns=[
         BANDITS["surplus"],
-        bl.Campaign("other", bl.Linear(), budget=1e9, event_value=5),
+        bl.Campaign("other", bl.Linear(), budget=1e9, base_value=5),
     ],
     episodes=30,
     steps=300,

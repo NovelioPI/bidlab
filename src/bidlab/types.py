@@ -1,9 +1,44 @@
 """Objects passed to a bidder: market facts, and what it learns after each auction and episode."""
 
 from dataclasses import dataclass
+from enum import StrEnum
+from typing import Literal
 
 SECONDS_PER_HOUR = 3600.0
 HOURS_PER_DAY = 24.0
+
+
+class Event(StrEnum):
+    """What a campaign pays for, and so what its `Campaign.base_value` counts.
+
+    A campaign also takes the plain string, such as ``event="click"``, and
+    stores the member. A member equals its string.
+
+    Attributes
+    ----------
+    IMPRESSION
+        A won impression. Expected value: ``base_value``.
+    CLICK
+        A clicked won impression. Expected value: ``base_value`` × pCTR.
+    CONVERSION
+        A converted won impression, the default. Expected value:
+        ``base_value`` × pCTR × pCVR.
+
+    Examples
+    --------
+    >>> import bidlab as bl
+    >>> campaign = bl.Campaign("traffic", bl.Linear(), budget=10, base_value=0.4, event="click")
+    >>> campaign.event is bl.Event.CLICK, campaign.event == "click"
+    (True, True)
+    """
+
+    IMPRESSION = "impression"
+    CLICK = "click"
+    CONVERSION = "conversion"
+
+
+type EventName = Event | Literal["impression", "click", "conversion"]
+
 
 # Bidders receive only these objects, so each holds one bidder's own data.
 
@@ -64,8 +99,9 @@ class BidResult:
         True only when this bidder won and the impression converted. A
         conversion needs a click.
     realized_value : float, optional
-        Realized value of this auction: `Campaign.event_value` when converted,
-        else 0.
+        Realized value of this auction: `Campaign.base_value` when the
+        campaign's event happened, else 0. A won impression, a clicked one or
+        a converted one, by `Campaign.event`.
 
     See Also
     --------
@@ -110,10 +146,13 @@ class EpisodeReport:
         Sum of the prices the bidder paid.
     wins : int
         Number of impressions the bidder won.
+    clicks : int
+        Number of won impressions that were clicked.
     conversions : int
         Number of won impressions that converted.
     realized_value : float
-        ``conversions`` times `Campaign.event_value`.
+        The count of the campaign's event times `Campaign.base_value`: wins,
+        ``clicks`` or ``conversions``, by `Campaign.event`.
 
     See Also
     --------
@@ -122,7 +161,9 @@ class EpisodeReport:
     Examples
     --------
     >>> import bidlab as bl
-    >>> report = bl.EpisodeReport(budget=20.0, spend=6.0, wins=4, conversions=2, realized_value=10.0)
+    >>> report = bl.EpisodeReport(
+    ...     budget=20.0, spend=6.0, wins=4, clicks=3, conversions=2, realized_value=10.0
+    ... )
     >>> report.realized_value - report.spend
     4.0
     """
@@ -130,5 +171,6 @@ class EpisodeReport:
     budget: float
     spend: float
     wins: int
+    clicks: int
     conversions: int
     realized_value: float

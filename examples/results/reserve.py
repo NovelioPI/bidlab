@@ -15,7 +15,7 @@ RESERVE = 0.1
 
 config = bl.SimConfig(
     campaigns=[
-        bl.Campaign(name, bl.Linear(), budget=1e9, event_value=5)
+        bl.Campaign(name, bl.Linear(), budget=1e9, base_value=5)
         for name in ("first", "second")
     ],
     auction=bl.SecondPrice(reserve=0.0),

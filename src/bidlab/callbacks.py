@@ -25,7 +25,7 @@ class Callback:
     >>> class Progress(bl.Callback):
     ...     def on_episode_end(self, episode, reports):
     ...         print(episode, reports["t"].wins > 0)
-    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, event_value=5)
+    >>> campaign = bl.Campaign("t", bl.Linear(), budget=10, base_value=5)
     >>> config = bl.SimConfig(campaigns=[campaign], episodes=2, steps=50)
     >>> log = bl.run(config, callbacks=[Progress()])
     0 True
