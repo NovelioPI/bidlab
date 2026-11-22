@@ -12,7 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     # The PyPI trusted publisher is bound to this environment name.
     environment: pypi
+    # Job permissions replace the workflow's, so checkout needs contents: read again.
     permissions:
+      contents: read
       # PyPI trades this OIDC token for a short-lived upload token.
       id-token: write
     steps:
