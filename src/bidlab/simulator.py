@@ -1,6 +1,7 @@
 """The core loop: `run` simulates every auction and records a `RunLog`."""
 
 import math
+from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
@@ -220,6 +221,7 @@ class _Simulation:
             self._participant(campaign, seed)
             for campaign, seed in zip(config.campaigns, bidder_seeds, strict=True)
         ]
+        self.inboxes = [_Inbox() for _ in config.campaigns]
         self.segment_index = {
             name: index for index, name in enumerate(config.market.segment_names)
         }
@@ -274,6 +276,7 @@ class _Simulation:
 
     def _run_episode(self, episode: int) -> None:
         budget_left = np.array([p.campaign.budget for p in self.participants])
+        reported_left = budget_left.copy()
         self.book.at_episode(episode)
         for participant in self.participants:
             for node in participant.nodes:
@@ -281,12 +284,16 @@ class _Simulation:
             participant.check_tree()
 
         for step in range(self.config.steps):
-            self._run_step(episode, step, budget_left)
+            self._run_step(episode, step, budget_left, reported_left)
 
         self._end_episode(episode)
 
     def _run_step(
-        self, episode: int, step: int, budget_left: npt.NDArray[np.float64]
+        self,
+        episode: int,
+        step: int,
+        budget_left: npt.NDArray[np.float64],
+        reported_left: npt.NDArray[np.float64],
     ) -> None:
         draw = self._next_draw(episode, step)
         self.book.at_step(episode, step)
@@ -316,7 +323,7 @@ class _Simulation:
             bidder = self.participants[i].campaign.bidder
             inputs = {
                 **shared,
-                "budget_left": float(budget_left[i]),
+                "budget_left": float(reported_left[i]),
             }
             # Building the truth for bidders that never read it would slow every run.
             if self._reads_market(i):
@@ -355,9 +362,10 @@ class _Simulation:
                 and event_happened(participant.campaign.event, won, clicked, converted)
                 else 0.0,
             )
-            batch = [result]
-            for node in participant.learners:
-                node.update_batch(batch)
+            self.inboxes[i].reports.append((time, result))
+
+        for i, inbox in enumerate(self.inboxes):
+            self._deliver(i, inbox.take_due(time), reported_left)
 
         self.log.bids[episode, step] = bids
         self.log.true_values[episode, step] = values
@@ -367,6 +375,20 @@ class _Simulation:
         self.log.converted[episode, step] = converted
         self.log.segment[episode, step] = self.segment_index[draw.segment]
         self._log_market(episode, step, draw)
+
+    def _deliver(
+        self,
+        index: int,
+        reports: list[BidResult],
+        reported_left: npt.NDArray[np.float64],
+    ) -> None:
+        for report in reports:
+            if report.won:
+                reported_left[index] -= report.price
+
+        if reports:
+            for node in self.participants[index].learners:
+                node.update_batch(reports)
 
     def _log_market(self, episode: int, step: int, draw: MarketDraw) -> None:
         # The arrays start as "none", so most runs skip both writes.
@@ -480,6 +502,26 @@ class _Simulation:
         read_only = MappingProxyType(reports)
         for callback in self.callbacks:
             callback.on_episode_end(episode, read_only)
+
+
+class _Inbox:
+    """One campaign's feedback that has not reached its bidder yet."""
+
+    def __init__(self) -> None:
+        # Each item adds a fixed delay to its auction time, so due times only rise.
+        self.reports: deque[tuple[float, BidResult]] = deque()
+
+    def take_due(self, now: float) -> list[BidResult]:
+        """Remove and return the reports due at or before ``now``, in order."""
+        return _pop_due(self.reports, now)
+
+
+def _pop_due[Item](queue: deque[tuple[float, Item]], now: float) -> list[Item]:
+    items: list[Item] = []
+    while queue and queue[0][0] <= now:
+        items.append(queue.popleft()[1])
+
+    return items
 
 
 def event_happened[Outcome: (bool, npt.NDArray[np.bool_])](
