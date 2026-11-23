@@ -411,6 +411,14 @@ def test_cost_per_expected_event_on_hand_built_log():
     assert np.isnan(a.cost_per_expected_event) and np.isnan(b.cost_per_expected_event)
 
 
+def test_cost_per_expected_event_is_nan_when_wins_expect_no_event():
+    # Wins worth 0, as a pCTR of 0 gives, expect no event to divide by.
+    log = hand_log()
+    worthless = dataclasses.replace(log, true_values=np.zeros_like(log.true_values))
+    a, b = campaign_metrics(worthless)
+    assert np.isnan(a.cost_per_expected_event) and np.isnan(b.cost_per_expected_event)
+
+
 @dataclass(frozen=True)
 class Step:
     """One step of a two-campaign log: a in segment x only, b in every segment."""
