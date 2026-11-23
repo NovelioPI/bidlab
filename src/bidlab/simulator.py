@@ -212,8 +212,10 @@ class _Simulation:
         self.only_conversions = bool(self.values_conversion.all())
         self.horizon = config.horizon_hours * SECONDS_PER_HOUR
         self.seconds_per_step = self.horizon / config.steps
+        # Without competition every campaign sees one shared draw, made for one campaign.
+        self.market_count = count if config.competing else 1
         self.market_draws = config.market.draws(
-            count, np.random.default_rng(market_seed)
+            self.market_count, np.random.default_rng(market_seed)
         )
         self.tie_rng = np.random.default_rng(tie_seed)
         self.conversion_rng = np.random.default_rng(conversion_seed)
@@ -311,6 +313,9 @@ class _Simulation:
         self.book.at_step(episode, step)
         pctr = self.every_click if draw.pctr is None else draw.pctr
         pcvr = draw.pcvr
+        if not self.config.competing:
+            pctr = np.full(len(self.participants), pctr[0])
+            pcvr = np.full(len(self.participants), pcvr[0])
         values = self._event_values(pctr, pcvr)
         time = step * self.seconds_per_step
         # Bidders outside their segments are not asked to bid, so they cannot learn from it.
@@ -346,16 +351,7 @@ class _Simulation:
         # Same bits as clip(nan_to_num(...)), which took about 15% of run time.
         bids[~np.isfinite(bids)] = 0.0
         bids = np.minimum(np.maximum(bids, 0.0), budget_left)
-        # A logged bid of 0 would win at reserve 0, so absent bidders bid -inf.
-        auction_bids = np.full(len(self.participants), -np.inf)
-        auction_bids[active] = bids[active]
-        winner, price = self.config.auction.run(
-            auction_bids,
-            self.tie_rng,
-            floor=draw.floor,
-            market_price=draw.market_price,
-        )
-        paid = {} if winner == NO_WINNER else {winner: price}
+        paid = self._sell(draw, bids, active)
         for i, amount in paid.items():
             budget_left[i] -= amount
         clicked, converted = self._click_and_conversion(draw, paid, pctr, pcvr)
@@ -386,6 +382,35 @@ class _Simulation:
             self.log.converted[episode, step, i] = True
         self.log.segment[episode, step] = self.segment_index[draw.segment]
         self._log_market(episode, step, draw)
+
+    def _sell(
+        self, draw: MarketDraw, bids: npt.NDArray[np.float64], active: list[int]
+    ) -> dict[int, float]:
+        auction = self.config.auction
+        if self.config.competing:
+            # A logged bid of 0 would win at reserve 0, so absent bidders bid -inf.
+            auction_bids = np.full(len(self.participants), -np.inf)
+            auction_bids[active] = bids[active]
+            winner, price = auction.run(
+                auction_bids,
+                self.tie_rng,
+                floor=draw.floor,
+                market_price=draw.market_price,
+            )
+            return {} if winner == NO_WINNER else {winner: price}
+
+        paid: dict[int, float] = {}
+        for i in active:
+            # The same call a run of this campaign alone makes, so the two match bit for bit.
+            winner, price = auction.run(
+                bids[i : i + 1],
+                self.tie_rng,
+                floor=draw.floor,
+                market_price=draw.market_price,
+            )
+            if winner != NO_WINNER:
+                paid[i] = price
+        return paid
 
     def _post_feedback(
         self,
@@ -520,10 +545,10 @@ class _Simulation:
             if rates is None:
                 continue
 
-            if rates.shape != (len(self.participants),):
+            if rates.shape != (self.market_count,):
                 raise ValueError(
                     f"{where}: got {name} of shape {rates.shape}, "
-                    f"expected ({len(self.participants)},)"
+                    f"expected ({self.market_count},)"
                 )
 
             # The negated check also catches NaN, which fails every comparison.
@@ -533,6 +558,12 @@ class _Simulation:
         # Most draws have neither, so the checks are skipped there to keep runs fast.
         if draw.market_price is not None:
             _check_money(where, "market_price", draw.market_price)
+        elif not self.config.competing:
+            raise ValueError(
+                f"{where}: competing=False needs a market price on every draw, since "
+                "the market is each campaign's only rival; give the market one, "
+                "such as LogisticMarket(price_median=0.2)"
+            )
         if draw.floor:
             _check_money(where, "floor", draw.floor)
 

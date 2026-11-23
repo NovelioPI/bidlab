@@ -295,7 +295,8 @@ def regret(
 
     Other bidders' logged bids, the market price and the floor stay fixed
     while the episode is replayed with this bidder bidding m × value for each
-    multiplier m. See the Regret section of ``docs/metrics.md`` for every rule
+    multiplier m. With ``competing=False`` only the market price and the
+    floor stay fixed, since other campaigns are not in its auction. See the Regret section of ``docs/metrics.md`` for every rule
     and its limits.
 
     Parameters
@@ -332,7 +333,11 @@ def regret(
     auction = log.config.auction
     values = log.true_values[episode, :, campaign_index]
     others = np.delete(log.bids[episode], campaign_index, axis=1)
-    highest_other = others.max(axis=1) if others.shape[1] else np.zeros(len(values))
+    # Without competition, other campaigns are not in this campaign's auction.
+    if log.config.competing and others.shape[1]:
+        highest_other = others.max(axis=1)
+    else:
+        highest_other = np.zeros(len(values))
     # A targeted bidder cannot win outside its segments, so neither can its replay.
     names = log.config.market.segment_names
     allowed = [
