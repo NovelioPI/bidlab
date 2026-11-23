@@ -4,7 +4,7 @@ This file lists the changes in each bidlab release, newest first.
 
 bidlab follows [semantic versioning](https://semver.org/). Before 1.0, a minor version may break the API; each break is listed under **Breaking**.
 
-## Unreleased
+## 0.3.1 (2026-11-23)
 
 ### Callbacks
 
