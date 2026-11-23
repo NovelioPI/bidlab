@@ -6,6 +6,8 @@ import pytest
 
 import bidlab as bl
 
+SEED = 5
+
 
 def campaign(name: str = "a") -> bl.Campaign:
     return bl.Campaign(
@@ -51,7 +53,7 @@ def mixed_campaigns() -> tuple[bl.Campaign, ...]:
 
 
 def compared(campaigns, **kwargs) -> bl.SimConfig:
-    defaults = {"episodes": 3, "steps": 300, "seed": 5, "market": PRICED}
+    defaults = {"episodes": 3, "steps": 300, "market": PRICED}
     return bl.SimConfig(campaigns=campaigns, competing=False, **(defaults | kwargs))
 
 
@@ -65,7 +67,7 @@ class Reports(bl.Callback):
 
 def run_with_reports(config):
     reports = Reports()
-    log = bl.run(config, callbacks=[reports], progress_bar=False)
+    log = bl.run(config, callbacks=[reports], progress_bar=False, seed=SEED)
     return log, reports.reports
 
 
@@ -120,7 +122,7 @@ class Probe(bl.Bidder):
 
 def run_probes(config):
     Probe.running.clear()
-    log = bl.run(config, progress_bar=False)
+    log = bl.run(config, progress_bar=False, seed=SEED)
     return log, list(Probe.running)
 
 
@@ -143,7 +145,7 @@ def test_equal_campaigns_get_equal_columns():
         )
         for name in ("a", "b")
     )
-    log = bl.run(compared(twins), progress_bar=False)
+    log = bl.run(compared(twins), progress_bar=False, seed=SEED)
     assert log.won.any()
     for name in ARRAYS:
         column = getattr(log, name)
@@ -157,7 +159,9 @@ def test_several_winners_pay_their_own_price(auction):
         bl.Campaign(name, Probe(bid), budget=1e6, base_value=1.0)
         for name, bid in (("high", 0.9), ("low", 0.5))
     )
-    log = bl.run(compared(bidders, auction=auction, market=market), progress_bar=False)
+    log = bl.run(
+        compared(bidders, auction=auction, market=market), progress_bar=False, seed=SEED
+    )
     both = log.won.all(axis=2)
     assert both.any()
     paid = log.price[both]
@@ -181,7 +185,7 @@ class CountingMarket(bl.Market):
 
 def test_market_is_drawn_for_one_campaign():
     market = CountingMarket()
-    bl.run(compared(mixed_campaigns(), market=market), progress_bar=False)
+    bl.run(compared(mixed_campaigns(), market=market), progress_bar=False, seed=SEED)
     assert market.counts == [1]
 
 
@@ -189,7 +193,11 @@ def test_draw_without_market_price_raises():
     probes = (bl.Campaign("a", Probe(), budget=5.0, base_value=1.0),)
     Probe.running.clear()
     with pytest.raises(ValueError, match="competing=False") as raised:
-        bl.run(compared(probes, market=bl.markets.LogisticMarket()), progress_bar=False)
+        bl.run(
+            compared(probes, market=bl.markets.LogisticMarket()),
+            progress_bar=False,
+            seed=SEED,
+        )
     assert "market price" in str(raised.value)
     assert "price_median" in str(raised.value)
     assert [probe.calls for probe in Probe.running] == [0]
@@ -220,18 +228,18 @@ def test_segments_under_competing_false():
 
 def test_workers_match_under_competing_false():
     config = compared(mixed_campaigns(), episodes=2, steps=100)
-    serial = bl.run_many(config, seeds=range(2), progress_bar=False)
-    parallel = bl.run_many(config, seeds=range(2), workers=2, progress_bar=False)
+    serial = bl.run(config, seed=range(2), progress_bar=False)
+    parallel = bl.run(config, seed=range(2), workers=2, progress_bar=False)
     assert serial.equals(parallel)
 
 
 def test_platform_metrics_are_nan():
     config = compared(mixed_campaigns(), episodes=2, steps=100)
-    rows = bl.platform_metrics(bl.run(config, progress_bar=False))
+    rows = bl.platform_metrics(bl.run(config, progress_bar=False, seed=SEED))
     assert [row.episode for row in rows] == [0, 1]
     assert all(np.isnan(row.revenue) and np.isnan(row.welfare) for row in rows)
-    results = bl.run_many(config, seeds=range(2), progress_bar=False)
+    results = bl.run(config, seed=range(2), progress_bar=False)
     assert all(
         np.isnan(row["revenue"]) and np.isnan(row["welfare"]) for row in results.rows
     )
-    assert results.equals(bl.run_many(config, seeds=range(2), progress_bar=False))
+    assert results.equals(bl.run(config, seed=range(2), progress_bar=False))

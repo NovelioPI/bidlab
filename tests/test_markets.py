@@ -750,6 +750,6 @@ def test_rate_market_results_repeat():
         Campaign("y", Stack(OracleValue(), Linear()), budget=5.0, base_value=30.0),
     ]
     config = SimConfig(campaigns=campaigns, market=market, episodes=2, steps=200)
-    first = bl.run_many(config, seeds=range(3))
-    assert first.equals(bl.run_many(config, seeds=range(3)))
-    assert first.equals(bl.run_many(config, seeds=range(3), workers=2))
+    first = bl.run(config, seed=range(3))
+    assert first.equals(bl.run(config, seed=range(3)))
+    assert first.equals(bl.run(config, seed=range(3), workers=2))

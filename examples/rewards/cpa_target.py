@@ -44,7 +44,7 @@ def mean(results, bidder, column):
 
 
 if __name__ == "__main__":
-    results = bl.run_many(config, seeds=range(5))
+    results = bl.run(config, seed=range(5))
     print(results.summary())
     at_target = mean(results, "at_target", "cpa")
     truthful = mean(results, "truthful", "cpa")

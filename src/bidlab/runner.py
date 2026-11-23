@@ -1,11 +1,14 @@
-"""Run one simulation per seed and collect the metrics in a table."""
+"""Run one simulation per seed of a seed list and collect the metrics in a table."""
 
 import dataclasses
 import math
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ProcessPoolExecutor
-from itertools import repeat
+from contextlib import ExitStack
+from functools import partial
 from multiprocessing import get_context
+from queue import Empty, Queue
+from typing import override
 
 import cloudpickle
 import numpy as np
@@ -39,6 +42,11 @@ SEGMENT_METRIC_COLUMNS = tuple(
 SEGMENT_COLUMNS = ("seed", "campaign", "segment", *SEGMENT_METRIC_COLUMNS)
 
 RowBuilder = dict[str, str | int | float]
+# A seed, an episode and a step, as `Callback.on_seed_progress` takes them.
+Progress = tuple[int, int, int]
+
+PROGRESS_CALLS_PER_EPISODE = 20
+PROGRESS_POLL_SECONDS = 0.05
 
 
 @dataclasses.dataclass(frozen=True)
@@ -50,122 +58,158 @@ class _SeedRows:
     profile: Profile | None
 
 
-def run_many(
+def run_seeds(
     config: SimConfig,
-    seeds: Iterable[int],
-    workers: int = 1,
-    callbacks: Sequence[Callback] = (),
-    progress_bar: bool = True,
-    profiler: bool = False,
+    seeds: object,
+    workers: int,
+    callbacks: Sequence[Callback],
+    progress_bar: bool,
+    profiler: bool,
 ) -> Results:
-    """Run each seed; rows are ordered by seed, then bidder.
-
-    Each row holds one bidder's metrics for one seed, averaged over the
-    episodes. ``budget_out`` is averaged only over the episodes where the
-    budget ran out, and is NaN when it never did. ``workers > 1`` runs seeds
-    in parallel processes and gives the same results as ``workers=1``.
-
-    Parameters
-    ----------
-    config : SimConfig
-        The simulation; its ``seed`` is replaced by each seed in turn.
-    seeds : Iterable[int]
-        One run per seed.
-    workers : int, optional
-        Number of processes.
-    callbacks : Sequence[Callback], optional
-        Read-only hooks, all called in the main process:
-        `Callback.on_run_many_start` before the first seed,
-        `Callback.on_seed_end` after each seed in seed order, and
-        `Callback.on_run_many_end` with the results.
-    progress_bar : bool, optional
-        Show a `ProgressBar` that counts seeds on stderr, after the other
-        callbacks. Each seed's own run shows no step bar.
-    profiler : bool, optional
-        Profile each seed's run, as in `run`, into `Results.profile`. A
-        worker profiles its own seeds, so memory is per worker process.
-
-    Returns
-    -------
-    Results
-        The bidder table, with the per-segment table in ``.segment_rows``.
+    """Run ``config`` once per seed for `run`, which documents every argument.
 
     Raises
     ------
-    ValueError
-        If ``workers`` is below 1.
     TypeError
-        If ``workers > 1`` and a bidder cannot be pickled with cloudpickle, a
-        callback is not a `Callback` instance, or ``profiler`` is not a bool.
-
-    Examples
-    --------
-    >>> import bidlab as bl
-    >>> config = bl.SimConfig(
-    ...     campaigns=[
-    ...         bl.Campaign(
-    ...             "a",
-    ...             bl.Stack(bl.OracleValue(), bl.Linear()),
-    ...             budget=10,
-    ...             base_value=5,
-    ...         ),
-    ...         bl.Campaign(
-    ...             "b",
-    ...             bl.Stack(bl.OracleValue(), bl.PidPacing()),
-    ...             budget=10,
-    ...             base_value=5,
-    ...         ),
-    ...     ],
-    ...     episodes=2,
-    ...     steps=50,
-    ... )
-    >>> results = bl.run_many(config, seeds=[0, 1])
-    >>> [(row["seed"], row["campaign"]) for row in results.rows]
-    [(0, 'a'), (0, 'b'), (1, 'a'), (1, 'b')]
-    >>> profiled = bl.run_many(config, seeds=[0, 1], profiler=True)
-    >>> len(profiled.profile), profiled.equals(results)
-    (2, True)
+        If ``seeds`` is not an iterable of ints, or as in `run`.
+    ValueError
+        If ``seeds`` is empty.
     """
-    if workers < 1:
-        raise ValueError(f"workers must be >= 1, got {workers}")
-
+    seed_list = _seed_list(seeds)
     check_profiler(profiler)
     checked = checked_callbacks(callbacks)
     if progress_bar:
         checked = with_progress_bar(checked)
 
-    seed_list = list(seeds)
     for callback in checked:
-        callback.on_run_many_start(config, tuple(seed_list))
+        callback.on_seeds_start(config, tuple(seed_list))
 
     if workers == 1:
-        computed = (_seed_rows(config, seed, profiler) for seed in seed_list)
-        per_seed = _collect(seed_list, computed, checked)
+        per_seed = _run_serial(config, seed_list, profiler, checked)
     else:
-        payload = _pickle_config(config)
-        # spawn behaves the same on every OS and avoids forking PyTorch threads.
-        context = get_context("spawn")
-        with ProcessPoolExecutor(max_workers=workers, mp_context=context) as pool:
-            computed = pool.map(_run_seed, repeat(payload), seed_list, repeat(profiler))
-            per_seed = _collect(seed_list, computed, checked)
+        per_seed = _run_parallel(config, seed_list, workers, profiler, checked)
 
     results = _results(per_seed)
     for callback in checked:
-        callback.on_run_many_end(results)
+        callback.on_seeds_end(results)
 
     return results
 
 
-def _collect(
-    seeds: list[int], computed: Iterator[_SeedRows], callbacks: tuple[Callback, ...]
+def _seed_list(seeds: object) -> list[int]:
+    # A str or bytes is iterable, but its characters are no seeds.
+    if isinstance(seeds, str | bytes) or not isinstance(seeds, Iterable):
+        raise TypeError(
+            f"seed must be an int or an iterable of ints, got {type(seeds).__name__}"
+        )
+
+    seed_list: list[int] = []
+    for seed in seeds:
+        if isinstance(seed, bool) or not isinstance(seed, int | np.integer):
+            raise TypeError(
+                f"a seed list must hold only ints, got {type(seed).__name__}"
+            )
+
+        seed_list.append(int(seed))
+
+    if not seed_list:
+        raise ValueError("the seed list is empty; pass at least one seed")
+
+    return seed_list
+
+
+def _run_serial(
+    config: SimConfig,
+    seeds: list[int],
+    profiler: bool,
+    callbacks: tuple[Callback, ...],
 ) -> list[_SeedRows]:
     per_seed: list[_SeedRows] = []
-    for seed, seed_rows in zip(seeds, computed, strict=True):
+    for seed in seeds:
+        reporters = (
+            (_SeedProgress(seed, config.steps, partial(_report, callbacks)),)
+            if callbacks
+            else ()
+        )
+        seed_rows = _seed_rows(config, seed, profiler, reporters)
         per_seed.append(seed_rows)
-        for callback in callbacks:
-            callback.on_seed_end(seed, _results([seed_rows]))
+        _end_seed(callbacks, seed, seed_rows)
 
     return per_seed
+
+
+def _run_parallel(
+    config: SimConfig,
+    seeds: list[int],
+    workers: int,
+    profiler: bool,
+    callbacks: tuple[Callback, ...],
+) -> list[_SeedRows]:
+    payload = _pickle_config(config)
+    # spawn behaves the same on every OS and avoids forking PyTorch threads.
+    context = get_context("spawn")
+    with ExitStack() as stack:
+        # Entered first so it closes last, after every worker that puts to it.
+        queue = stack.enter_context(context.Manager()).Queue() if callbacks else None
+        pool = stack.enter_context(
+            ProcessPoolExecutor(max_workers=workers, mp_context=context)
+        )
+        futures = [
+            pool.submit(_run_seed, payload, seed, profiler, queue) for seed in seeds
+        ]
+        per_seed: list[_SeedRows] = []
+        for seed, future in zip(seeds, futures, strict=True):
+            while queue is not None and not future.done():
+                _drain(queue, callbacks, PROGRESS_POLL_SECONDS)
+
+            seed_rows = future.result()
+            if queue is not None:
+                # A worker's puts finish before its result, so none comes after this.
+                _drain(queue, callbacks, 0.0)
+
+            per_seed.append(seed_rows)
+            _end_seed(callbacks, seed, seed_rows)
+
+    return per_seed
+
+
+def _drain(
+    queue: Queue[Progress], callbacks: tuple[Callback, ...], wait: float
+) -> None:
+    # Only the first get waits, so a drain returns once the queue is empty.
+    block = wait > 0
+    while True:
+        try:
+            progress = queue.get(block, wait if block else None)
+        except Empty:
+            return
+
+        block = False
+        _report(callbacks, progress)
+
+
+def _report(callbacks: tuple[Callback, ...], progress: Progress) -> None:
+    for callback in callbacks:
+        callback.on_seed_progress(*progress)
+
+
+def _end_seed(callbacks: tuple[Callback, ...], seed: int, seed_rows: _SeedRows) -> None:
+    for callback in callbacks:
+        callback.on_seed_end(seed, _results([seed_rows]))
+
+
+class _SeedProgress(Callback):
+    # Runs inside one seed's run and passes its progress to the seed-list hooks.
+    def __init__(self, seed: int, steps: int, sink: Callable[[Progress], None]):
+        self.seed = seed
+        self.every = max(1, steps // PROGRESS_CALLS_PER_EPISODE)
+        self.last_step = steps - 1
+        self.sink = sink
+
+    @override
+    def on_step_end(self, episode: int, step: int) -> None:
+        if (step + 1) % self.every == 0 or step == self.last_step:
+            self.sink((self.seed, episode, step))
 
 
 def _results(per_seed: list[_SeedRows]) -> Results:
@@ -226,14 +270,18 @@ def _pickle_config(config: SimConfig) -> bytes:
     return cloudpickle.dumps(config)
 
 
-def _run_seed(payload: bytes, seed: int, profiler: bool) -> _SeedRows:
-    return _seed_rows(cloudpickle.loads(payload), seed, profiler)
+def _run_seed(
+    payload: bytes, seed: int, profiler: bool, queue: Queue[Progress] | None
+) -> _SeedRows:
+    config: SimConfig = cloudpickle.loads(payload)
+    reporters = () if queue is None else (_SeedProgress(seed, config.steps, queue.put),)
+    return _seed_rows(config, seed, profiler, reporters)
 
 
-def _seed_rows(config: SimConfig, seed: int, profiler: bool) -> _SeedRows:
-    log = run(
-        dataclasses.replace(config, seed=seed), progress_bar=False, profiler=profiler
-    )
+def _seed_rows(
+    config: SimConfig, seed: int, profiler: bool, callbacks: tuple[Callback, ...]
+) -> _SeedRows:
+    log = run(config, seed, callbacks=callbacks, progress_bar=False, profiler=profiler)
     platform = platform_metrics(log)
     revenue = float(np.mean([p.revenue for p in platform]))
     welfare = float(np.mean([p.welfare for p in platform]))

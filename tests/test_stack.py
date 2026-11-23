@@ -7,9 +7,10 @@ from bidlab import simulator
 from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import LogisticMarket
-from bidlab.runner import run_many
 from bidlab.simulator import run
 from bidlab.types import MarketTruth
+
+SEED = 3
 
 # A first bidder in a stack gets no value, so pass-through test bidders default to one.
 FIRST_VALUE = 1.0
@@ -111,7 +112,7 @@ class Jitter(Bidder):
 
 
 def config(*campaigns, **kwargs):
-    defaults: dict[str, Any] = {"episodes": 2, "steps": 50, "seed": 3}
+    defaults: dict[str, Any] = {"episodes": 2, "steps": 50}
     return SimConfig(campaigns=campaigns, **(defaults | kwargs))
 
 
@@ -152,7 +153,10 @@ def test_stacks_nest():
 def test_hooks_reach_every_stage_in_order():
     Calls.calls.clear()
     stack = Stack(Calls("a"), Calls("b"))
-    run(config(Campaign("x", stack, budget=1e6, base_value=5.0), episodes=1, steps=2))
+    run(
+        config(Campaign("x", stack, budget=1e6, base_value=5.0), episodes=1, steps=2),
+        seed=SEED,
+    )
     assert [(name, hook) for name, hook, _ in Calls.calls] == [
         ("a", "start"),
         ("b", "start"),
@@ -193,16 +197,16 @@ def test_stack_defines_only_init_and_forward():
 def test_each_run_starts_fresh():
     Counter.reports.clear()
     campaign = Campaign("counted", Counter(), budget=1e6, base_value=5.0)
-    run_many(config(campaign, other()), seeds=range(3))
+    run(config(campaign, other()), seed=range(3))
     assert Counter.reports == [50, 100] * 3
 
 
 def test_user_stage_object_unchanged():
     model = {"weights": [1.0, 2.0]}
     bidder = Holds(model)
-    run_many(
+    run(
         config(Campaign("m", Stack(bidder), budget=1e6, base_value=5.0), other()),
-        seeds=range(2),
+        seed=range(2),
     )
     assert bidder.forwards == 0
     assert bidder.model is model and model == {"weights": [1.0, 2.0]}
@@ -212,13 +216,17 @@ def test_user_stage_object_unchanged():
 def test_stage_streams_are_separate():
     Draws.draws.clear()
     drawing = Stack(Draws("first"), Draws("second"))
-    log = run(config(Campaign("d", drawing, budget=1e6, base_value=5.0), other()))
+    log = run(
+        config(Campaign("d", drawing, budget=1e6, base_value=5.0), other()), seed=SEED
+    )
     first, second = Draws.draws["first"], Draws.draws["second"]
     assert len(first) == len(second) == 100
     assert first != second
 
     quiet = Stack(Draws("first", draw=False), Draws("second", draw=False))
-    quiet_log = run(config(Campaign("d", quiet, budget=1e6, base_value=5.0), other()))
+    quiet_log = run(
+        config(Campaign("d", quiet, budget=1e6, base_value=5.0), other()), seed=SEED
+    )
     np.testing.assert_array_equal(log.true_values, quiet_log.true_values)
     np.testing.assert_array_equal(log.bids[:, :, 1], quiet_log.bids[:, :, 1])
     np.testing.assert_array_equal(log.converted, quiet_log.converted)
@@ -231,10 +239,13 @@ def test_single_stage_equals_stack():
                 "p", Stack(OracleValue(), PidPacing()), budget=3.0, base_value=5.0
             ),
             other(),
-        )
+        ),
+        seed=SEED,
     )
     nested = Stack(Stack(OracleValue(), PidPacing()))
-    stacked = run(config(Campaign("p", nested, budget=3.0, base_value=5.0), other()))
+    stacked = run(
+        config(Campaign("p", nested, budget=3.0, base_value=5.0), other()), seed=SEED
+    )
     for name in ("bids", "true_values", "won", "price", "converted"):
         np.testing.assert_array_equal(getattr(single, name), getattr(stacked, name))
 
@@ -246,8 +257,8 @@ def test_stage_class_rejected():
 
 def test_stack_parallel_equals_serial():
     campaign = Campaign("j", Stack(Jitter(), PidPacing()), budget=5.0, base_value=5.0)
-    serial = run_many(config(campaign, other()), seeds=range(3))
-    parallel = run_many(config(campaign, other()), seeds=range(3), workers=2)
+    serial = run(config(campaign, other()), seed=range(3))
+    parallel = run(config(campaign, other()), seed=range(3), workers=2)
     assert parallel.equals(serial)
 
 
@@ -260,7 +271,7 @@ def test_stack_streams_match_main():
     }
     Draws.draws.clear()
     nested = Stack(Draws("a"), Stack(Draws("b"), Draws("c")))
-    run(config(Campaign("d", nested, budget=1e6, base_value=5.0), other()))
+    run(config(Campaign("d", nested, budget=1e6, base_value=5.0), other()), seed=SEED)
     assert {name: draws[:3] for name, draws in Draws.draws.items()} == expected
 
 
@@ -269,7 +280,10 @@ def test_bidder_draws_keep_oracle_noise_stream():
     for draw in (True, False):
         drawing = Stack(Draws("first", draw=draw), OracleValue(noise=0.5), Watch())
         Watch.values.clear()
-        run(config(Campaign("d", drawing, budget=1e6, base_value=5.0), other()))
+        run(
+            config(Campaign("d", drawing, budget=1e6, base_value=5.0), other()),
+            seed=SEED,
+        )
         seen[draw] = list(Watch.values)
 
     assert len(set(seen[True])) > 1
@@ -302,7 +316,7 @@ def test_first_bidder_gets_no_value():
         TypeError,
         match=r"Linear.forward needs 'value'.*bl\.Stack\(bl\.OracleValue\(\), ",
     ):
-        run(config(campaign))
+        run(config(campaign), seed=SEED)
 
 
 class Fixed(Bidder):
@@ -318,7 +332,7 @@ def count_market_truths(monkeypatch, bidder):
         return MarketTruth(*args)
 
     monkeypatch.setattr(simulator, "MarketTruth", counting)
-    run(config(Campaign("a", bidder, budget=1e6, base_value=5.0)))
+    run(config(Campaign("a", bidder, budget=1e6, base_value=5.0)), seed=SEED)
     return len(built)
 
 
@@ -341,6 +355,6 @@ def test_deep_bidder_gets_market():
     ReadsMarket.seen.clear()
     bidder = Stack(Fixed(), Stack(Linear(), ReadsMarket()))
     campaign = Campaign("a", bidder, budget=1e6, base_value=5.0)
-    log = run(config(campaign, market=LogisticMarket(ctr_bias_mean=-2.0)))
+    log = run(config(campaign, market=LogisticMarket(ctr_bias_mean=-2.0)), seed=SEED)
     values = [5.0 * truth.pctr * truth.pcvr for truth in ReadsMarket.seen]
     assert values == log.true_values[:, :, 0].ravel().tolist()

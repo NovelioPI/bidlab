@@ -35,8 +35,8 @@ def mean(results, column):
 
 
 if __name__ == "__main__":
-    independent = bl.run_many(config(0.0), seeds=SEEDS)
-    rival = bl.run_many(config(0.8), seeds=SEEDS)
+    independent = bl.run(config(0.0), seed=SEEDS)
+    rival = bl.run(config(0.8), seed=SEEDS)
     print(rival.summary())
     for name, results in (("similarity 0.0", independent), ("similarity 0.8", rival)):
         print(

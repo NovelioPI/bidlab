@@ -65,7 +65,7 @@ if __name__ == "__main__":
     arms = {}
     for name, campaign in BANDITS.items():
         config = dataclasses.replace(base, campaigns=[campaign, base.campaigns[1]])
-        results = bl.run_many(config, seeds=range(5))
+        results = bl.run(config, seed=range(5))
         arms[name] = results.logged["bidders.1.multiplier"]["bandit"][
             :, -LAST_EPISODES:
         ].mean(axis=1)

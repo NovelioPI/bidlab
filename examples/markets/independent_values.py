@@ -39,7 +39,7 @@ def mean(results, bidder, column):
 
 
 if __name__ == "__main__":
-    results = bl.run_many(config, seeds=range(5))
+    results = bl.run(config, seed=range(5))
     print(results.summary())
     shaded = mean(results, "equilibrium", "surplus")
     truthful = mean(results, "truthful", "surplus")

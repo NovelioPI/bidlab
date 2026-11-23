@@ -9,9 +9,10 @@ from bidlab.auctions import FirstPrice
 from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack, UcbMultiplier
 from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
-from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import BidResult, EpisodeReport
+
+SEED = 3
 
 # A top bidder gets no value, so these pass-through test bidders default to one.
 FIRST_VALUE = 1.0
@@ -68,7 +69,7 @@ class Holder(Bidder):
 
 
 def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
-    defaults: dict[str, Any] = {"episodes": 2, "steps": 50, "seed": 3}
+    defaults: dict[str, Any] = {"episodes": 2, "steps": 50}
     return SimConfig(campaigns=campaigns, **(defaults | kwargs))
 
 
@@ -77,7 +78,8 @@ def logged(hook: str, action: Action, **kwargs: Any) -> RunLog:
         config(
             Campaign("b", Logs(hook, action), budget=1e6, base_value=5.0),
             **kwargs,
-        )
+        ),
+        seed=SEED,
     )
 
 
@@ -175,7 +177,7 @@ class EpisodeFirst(Bidder):
 def test_step_and_episode_name_raises(bidder: Bidder, second: str):
     pattern = rf"'both'.*'x'.*per step and per episode; this {second} log"
     with pytest.raises(ValueError, match=pattern):
-        run(config(Campaign("both", bidder, budget=1e6, base_value=5.0)))
+        run(config(Campaign("both", bidder, budget=1e6, base_value=5.0)), seed=SEED)
 
 
 @pytest.mark.parametrize(
@@ -251,7 +253,8 @@ def test_log_outside_run_does_nothing():
             Campaign(
                 "bind", Stack(OracleValue(), LogsInBind()), budget=1e6, base_value=5.0
             )
-        )
+        ),
+        seed=SEED,
     )
     assert "bound" not in log.logged
 
@@ -270,7 +273,7 @@ class Keeps(Bidder):
 
 def test_log_after_run_does_nothing():
     Keeps.kept.clear()
-    log = run(config(Campaign("k", Keeps(), budget=1e6, base_value=5.0)))
+    log = run(config(Campaign("k", Keeps(), budget=1e6, base_value=5.0)), seed=SEED)
     copy = Keeps.kept[-1]
     copy.log("x", 99.0)
     copy.log("fresh", 5.0)
@@ -291,7 +294,7 @@ def test_specs_keep_own_arrays():
         budget=1e6,
         base_value=5.0,
     )
-    logs = run(config(first, second)).logged["x"]
+    logs = run(config(first, second), seed=SEED).logged["x"]
     assert set(logs) == {"one", "two"}
     assert (logs["one"] == 1.0).all() and (logs["two"] == 2.0).all()
 
@@ -311,7 +314,8 @@ def test_no_logs_empty():
     log = run(
         config(
             Campaign("t", Stack(OracleValue(), Linear()), budget=1e6, base_value=5.0)
-        )
+        ),
+        seed=SEED,
     )
     assert dict(log.logged) == {}
 
@@ -319,7 +323,8 @@ def test_no_logs_empty():
 def test_child_name_prefixed():
     child = Logs("forward", lambda bidder, _: bidder.log("lam", 1.0))
     log = run(
-        config(Campaign("s", Stack(OracleValue(), child), budget=1e6, base_value=5.0))
+        config(Campaign("s", Stack(OracleValue(), child), budget=1e6, base_value=5.0)),
+        seed=SEED,
     )
     assert set(log.logged) == {"bidders.1.lam"}
 
@@ -340,7 +345,8 @@ def test_plain_name(as_dict: bool):
                 budget=1e6,
                 base_value=5.0,
             )
-        )
+        ),
+        seed=SEED,
     )
     assert set(log.logged) == {"lam"}
 
@@ -372,20 +378,22 @@ class TopAndChild(Holder):
 
 
 def test_different_names_in_tree_allowed():
-    log = run(config(Campaign("t", TopAndChild(), budget=1e6, base_value=5.0)))
+    log = run(
+        config(Campaign("t", TopAndChild(), budget=1e6, base_value=5.0)), seed=SEED
+    )
     assert set(log.logged) == {"a", "child.b"}
 
 
 def test_name_clash_raises():
     with pytest.raises(ValueError, match=r"'clash'.*'lam'.*'' and 'child'"):
-        run(config(Campaign("clash", TopLogs(), budget=1e6, base_value=5.0)))
+        run(config(Campaign("clash", TopLogs(), budget=1e6, base_value=5.0)), seed=SEED)
 
 
 def test_pid_logs_bid_multiplier():
     campaign = Campaign(
         "pid", Stack(OracleValue(), PidPacing()), budget=3.0, base_value=5.0
     )
-    log = run(config(campaign, auction=FirstPrice()))
+    log = run(config(campaign, auction=FirstPrice()), seed=SEED)
     multiplier = log.logged["bidders.1.multiplier"]["pid"]
     assert multiplier.shape == (2, 50)
     assert len(np.unique(multiplier)) > 1
@@ -405,7 +413,8 @@ def test_ucb_logs_arm():
         config(
             Campaign("ucb", Stack(OracleValue(), bandit), budget=1e6, base_value=5.0),
             episodes=4,
-        )
+        ),
+        seed=SEED,
     )
     arms = log.logged["bidders.1.multiplier"]["ucb"]
     assert arms.shape == (4,)
@@ -430,14 +439,15 @@ def test_log_state_off():
             base_value=5.0,
         ),
     )
-    assert dict(run(config(*campaigns)).logged) == {}
+    assert dict(run(config(*campaigns), seed=SEED).logged) == {}
 
 
 def test_stacked_pid_prefixed():
     log = run(
         config(
             Campaign("s", Stack(OracleValue(), PidPacing()), budget=1e6, base_value=5.0)
-        )
+        ),
+        seed=SEED,
     )
     assert set(log.logged) == {"bidders.1.multiplier"}
 
@@ -465,7 +475,9 @@ def test_logging_leaves_run_unchanged():
             ),
         )
 
-    on, off = (run(config(*campaigns(state), episodes=4)) for state in (True, False))
+    on, off = (
+        run(config(*campaigns(state), episodes=4), seed=SEED) for state in (True, False)
+    )
     for name in ("bids", "price", "won", "converted"):
         np.testing.assert_array_equal(getattr(on, name), getattr(off, name))
 
@@ -493,38 +505,38 @@ def per_auction() -> Campaign:
     )
 
 
-def test_run_many_stacks_seeds():
-    results = run_many(config(per_auction(), episodes=2), seeds=range(3))
+def test_seed_list_stacks_seeds():
+    results = run(config(per_auction(), episodes=2), seed=range(3))
     stacked = results.logged["lam"]["a"]
     assert stacked.shape == (3, 2, 50)
     for seed in range(3):
-        single = run(config(per_auction(), episodes=2, seed=seed))
+        single = run(config(per_auction(), episodes=2), seed=seed)
         np.testing.assert_array_equal(stacked[seed], single.logged["lam"]["a"])
 
 
-def test_run_many_episode_values():
+def test_seed_list_episode_values():
     campaign = Campaign(
         "ucb", Stack(OracleValue(), UcbMultiplier()), budget=1e6, base_value=5.0
     )
-    results = run_many(config(campaign, episodes=4), seeds=range(3))
+    results = run(config(campaign, episodes=4), seed=range(3))
     assert results.logged["bidders.1.multiplier"]["ucb"].shape == (3, 4)
 
 
-def test_run_many_missing_seed_nan():
+def test_seed_list_missing_seed_nan():
     campaign = Campaign("s", Sometimes(), budget=1e6, base_value=5.0)
-    stacked = run_many(config(campaign, episodes=1), seeds=range(8)).logged["x"]["s"]
+    stacked = run(config(campaign, episodes=1), seed=range(8)).logged["x"]["s"]
     logged = [
-        "x" in run(config(campaign, episodes=1, seed=seed)).logged for seed in range(8)
+        "x" in run(config(campaign, episodes=1), seed=seed).logged for seed in range(8)
     ]
     assert any(logged) and not all(logged)
     for seed, did_log in enumerate(logged):
         assert np.isnan(stacked[seed]).all() != did_log
 
 
-def test_run_many_workers_logs_equal():
+def test_seed_list_workers_logs_equal():
     pid = Campaign("pid", Stack(OracleValue(), PidPacing()), budget=3.0, base_value=5.0)
-    serial = run_many(config(pid, per_auction()), seeds=range(3))
-    parallel = run_many(config(pid, per_auction()), seeds=range(3), workers=2)
+    serial = run(config(pid, per_auction()), seed=range(3))
+    parallel = run(config(pid, per_auction()), seed=range(3), workers=2)
     assert parallel.equals(serial)
     assert set(parallel.logged) == {"bidders.1.multiplier", "lam"}
     for name in parallel.logged:
@@ -535,7 +547,7 @@ def test_run_many_workers_logs_equal():
 
 
 def test_equals_compares_logs():
-    results = run_many(config(per_auction()), seeds=range(2))
+    results = run(config(per_auction()), seed=range(2))
     changed = {"lam": {"a": results.logged["lam"]["a"] + 1.0}}
     other = Results(columns=results.columns, rows=results.rows, logged=changed)
     same = Results(columns=results.columns, rows=results.rows, logged=results.logged)
@@ -565,5 +577,5 @@ def test_reward_logged_in_update():
         won, log.price[:, :, 0], 0.0
     )
     np.testing.assert_array_equal(log.logged["reward"]["s"], expected)
-    results = run_many(config, seeds=range(2))
+    results = run(config, seed=range(2))
     assert results.logged["reward"]["s"].shape == (2, 2, 20)

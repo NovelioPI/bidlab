@@ -72,7 +72,7 @@ So lost_budget + lost_floor + lost_market + lost_rival = \|Rᵢ\| − wins. A bu
 
 `budget_out` = k / S, where k is the step of the first request lost to the budget and S is the episode's steps. It is NaN when no request was lost to the budget. So "never ran out" stays apart from "ran out at the last step".
 
-In `run_many`, `budget_out` is the mean over the episodes where it is not NaN. It is NaN when the budget never ran out in any episode. A plain mean would let one easy episode hide the others.
+In the `Results` of a seed list, `budget_out` is the mean over the episodes where it is not NaN. It is NaN when the budget never ran out in any episode. A plain mean would let one easy episode hide the others.
 
 ## Platform metrics
 

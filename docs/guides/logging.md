@@ -56,13 +56,16 @@ A `bl.Callback` watches a run without changing it. Callbacks always run in the m
 
 | Hook | Called by | When |
 |---|---|---|
-| `on_run_start(config)` | `run` | Before the first episode |
-| `on_step_end(episode, step)` | `run` | After each step's auction; it runs once per auction, so keep it fast |
-| `on_episode_end(episode, reports)` | `run` | After each episode; `reports` maps each campaign name to its `EpisodeReport` |
-| `on_run_end(log)` | `run` | With the finished `RunLog` |
-| `on_run_many_start(config, seeds)` | `run_many` | Before the first seed |
-| `on_seed_end(seed, results)` | `run_many` | After each seed, in seed order |
-| `on_run_many_end(results)` | `run_many` | With the `Results` it returns |
+| `on_run_start(config, seed)` | `run` with an int seed | Before the first episode |
+| `on_step_end(episode, step)` | `run` with an int seed | After each step's auction; it runs once per auction, so keep it fast |
+| `on_episode_end(episode, reports)` | `run` with an int seed | After each episode; `reports` maps each campaign name to its `EpisodeReport` |
+| `on_run_end(log)` | `run` with an int seed | With the finished `RunLog` |
+| `on_seeds_start(config, seeds)` | `run` with a seed list | Before the first seed |
+| `on_seed_progress(seed, episode, step)` | `run` with a seed list | About every `steps // 20` steps of a seed's episode, and at its last step; before that seed's `on_seed_end` |
+| `on_seed_end(seed, results)` | `run` with a seed list | After each seed, in seed order |
+| `on_seeds_end(results)` | `run` with a seed list | With the `Results` it returns |
+
+A seed list calls only the seed hooks, not the run hooks, with any number of workers.
 
 ```python
 class Progress(bl.Callback):
@@ -74,14 +77,21 @@ class Progress(bl.Callback):
 
 
 bl.run(watched, callbacks=[Progress()])
-results = bl.run_many(watched, seeds=range(2), callbacks=[Progress()])
+results = bl.run(watched, seed=range(2), callbacks=[Progress()])
 print(results.logged["bidders.1.multiplier"]["paced"].shape)  # (2, 3, 200)
 ```
 
-`bl.ProgressBar()` is a built-in callback that shows a tqdm bar on stderr. `run` and `run_many` add one by default, after your callbacks; a `ProgressBar` you pass yourself is not doubled. In `run`, one line counts the current episode's steps, such as `episode 3/5:  45%|████▌     | 900/2000`, and starts again at each episode. In `run_many`, it counts seeds. In a notebook it shows tqdm's widget. Pass `progress_bar=False` to hide it:
+`bl.ProgressBar()` is a built-in callback that shows tqdm bars on stderr. `run` adds one by default, after your callbacks; a `ProgressBar` you pass yourself is not doubled. With an int seed, one line counts the current episode's steps and starts again at each episode. With a seed list, a `seeds` line counts finished seeds, and each running seed has its own line below it, so there are at most `workers` such lines:
+
+```text
+seeds   2/5  40%|████      | [00:12<00:18]
+seed 2 episode 1/3  45%|████▌     | 900/2000 [00:01<00:01, 1.6k step/s]
+```
+
+In a notebook it shows tqdm's widgets. Pass `progress_bar=False` to hide it:
 
 ```python
-results = bl.run_many(watched, seeds=range(2), progress_bar=False)
+results = bl.run(watched, seed=range(2), progress_bar=False)
 ```
 
 ## Examples

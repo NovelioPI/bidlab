@@ -1,4 +1,4 @@
-"""The `Results` table that `run_many` returns."""
+"""The `Results` table that `run` returns for a seed list."""
 
 import csv
 from collections.abc import Mapping, Sequence
@@ -27,7 +27,7 @@ CONFIDENCE = 0.95
 
 @dataclass(frozen=True)
 class Results:
-    """Rows from `run_many`: one per seed and campaign, averaged over episodes.
+    """Per-seed rows from `run`: one per seed and campaign, averaged over episodes.
 
     Compare two tables with `equals`, not ``==``: some metrics are NaN by
     design.
@@ -37,7 +37,7 @@ class Results:
     columns : tuple[str, ...]
         Column names, in order.
     rows : tuple[Mapping[str, str | int | float], ...]
-        Read-only rows, ordered by seed, then bidder.
+        Read-only rows, ordered by seed as given, then bidder.
     segment_rows : Results or None
         One row per seed, bidder and market segment; None inside that table.
     logged : Mapping[str, Mapping[str, numpy.ndarray]]
@@ -46,7 +46,7 @@ class Results:
         the name. Read-only.
     profile : tuple[Profile, ...] or None
         One `Profile` per seed, in seed order, from
-        ``run_many(..., profiler=True)``; None otherwise. `equals` ignores it.
+        ``run(config, seed=[...], profiler=True)``; None otherwise. `equals` ignores it.
 
     Examples
     --------
@@ -57,10 +57,10 @@ class Results:
     ...     episodes=2,
     ...     steps=50,
     ... )
-    >>> results = bl.run_many(config, seeds=range(3))
+    >>> results = bl.run(config, seed=range(3))
     >>> len(results), results.columns[:3]
     (3, ('seed', 'campaign', 'spend'))
-    >>> results.equals(bl.run_many(config, seeds=range(3)))
+    >>> results.equals(bl.run(config, seed=range(3)))
     True
     """
 
@@ -153,12 +153,12 @@ class Results:
         Raises
         ------
         ValueError
-            If the results hold no profiles, since `run_many` ran without
+            If the results hold no profiles, since `run` ran without
             ``profiler=True``.
         """
         if self.profile is None:
             raise ValueError(
-                "these results hold no profiles; run run_many(..., profiler=True)"
+                "these results hold no profiles; run run(config, seed=[...], profiler=True)"
             )
 
         write_profile_csv(path, self.profile)

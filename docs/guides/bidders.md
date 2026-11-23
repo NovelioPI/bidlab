@@ -130,7 +130,7 @@ learning = bl.SimConfig(
     episodes=3,
     steps=200,
 )
-print(len(bl.run_many(learning, seeds=range(2))))  # 4 rows
+print(len(bl.run(learning, seed=range(2))))  # 4 rows
 ```
 
 ## Value estimators
@@ -213,7 +213,7 @@ estimated = bl.SimConfig(
     episodes=3,
     steps=200,
 )
-print(len(bl.run_many(estimated, seeds=range(2))))  # 6 rows
+print(len(bl.run(estimated, seed=range(2))))  # 6 rows
 ```
 
 `bl.OracleValue(noise=0.5)` adds normal noise with that standard deviation to logit(pCTR) and logit(pCVR), from its own random stream. Only the stages the campaign's event uses enter its value, and a pCTR of 1, from a market without a click stage, stays exact. Use it to test how a bid control copes with a known error. Metrics always use the true value, in `RunLog.true_values`.

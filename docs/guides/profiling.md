@@ -67,10 +67,10 @@ Memory is sampled, not traced, so an object made and freed within one episode ca
 
 ## Many seeds
 
-`bl.run_many(config, seeds, profiler=True)` profiles each seed's run. `results.profile` holds one `Profile` per seed, in seed order:
+`bl.run(config, seed=[...], profiler=True)` profiles each seed's run. `results.profile` holds one `Profile` per seed, in seed order:
 
 ```python
-results = bl.run_many(config, seeds=range(3), profiler=True)
+results = bl.run(config, seed=range(3), profiler=True)
 for profile in results.profile:
     print(f"{profile.steps / profile.wall_time:,.0f} steps/s")
 ```
@@ -88,12 +88,12 @@ results.save_profile_csv("profiles.csv")
 
 | Column | Meaning |
 |---|---|
-| `seed` | The run's `config.seed`, also in `profile.seed` |
+| `seed` | The run's seed, also in `profile.seed` and `RunLog.seed` |
 | `campaign`, `path`, `hook`, `calls` | As in `HookTime`; `path` is empty for the top bidder |
 | `total_seconds`, `self_seconds` | The row's total and self time |
 | `wall_seconds`, `steps`, `memory_start`, `memory_peak` | The run totals, repeated on every line of the run |
 
-Times keep every digit, so reading the file back gives the exact numbers. `save_profile_csv` raises `ValueError` when `run_many` ran without `profiler=True`.
+Times keep every digit, so reading the file back gives the exact numbers. `save_profile_csv` raises `ValueError` when `run` ran without `profiler=True`.
 
 ## Profiles stay out of the results
 

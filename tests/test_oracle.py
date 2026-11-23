@@ -54,9 +54,9 @@ def test_oracle_stage_bids_true_value(event, clicks):
             campaigns=[oracle_campaign("a", event), oracle_campaign("b")],
             episodes=2,
             steps=200,
-            seed=3,
             market=market,
-        )
+        ),
+        seed=3,
     )
     assert log.bids[:, :, 0].tobytes() == log.true_values[:, :, 0].tobytes()
 
@@ -115,8 +115,8 @@ def test_noise_keeps_missing_click_stage(event):
 
 
 def first_campaign_log(*campaigns):
-    config = bl.SimConfig(campaigns=campaigns, episodes=2, steps=200, seed=5)
-    log = bl.run(config)
+    config = bl.SimConfig(campaigns=campaigns, episodes=2, steps=200)
+    log = bl.run(config, seed=5)
     return log.bids[:, :, 0], log.true_values[:, :, 0]
 
 

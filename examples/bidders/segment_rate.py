@@ -68,7 +68,7 @@ config = bl.SimConfig(
 )
 
 if __name__ == "__main__":
-    results = bl.run_many(config, seeds=range(5))
+    results = bl.run(config, seed=range(5))
     print(results.summary())
     # The stack's first child, at path "bidders.0", logged the rates.
     news = results.logged["bidders.0.rate_news"]["learned"][:, -1]
