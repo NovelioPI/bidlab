@@ -9,6 +9,7 @@ bidlab has no reward setting. A bidder computes its reward from what it learns, 
 | Hook | Reads | Typical reward |
 |---|---|---|
 | `update(result)` | One `BidResult` | `result.realized_value - result.price`, `float(result.converted)` |
+| `update_conversions(conversions)` | Late `Conversion` objects, under a `Feedback.conversion_delay` | `sum(c.realized_value for c in conversions)` |
 | `on_episode_end(report)` | The episode's `EpisodeReport` | `report.realized_value - report.spend` |
 | `on_episode_start(campaign)` | The `Campaign` | Settings such as `campaign.cpa_target` |
 

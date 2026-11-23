@@ -8,7 +8,7 @@ Call `self.log(name, value)`, or `self.log({name: value, ...})`, in any bidder h
 
 | Logged in | Saved in `log.logged[name][campaign]` as | In `results.logged[name][campaign]` as |
 |---|---|---|
-| `forward`, `update_batch`, `update` | (episodes, steps), one cell per auction | (seeds, episodes, steps) |
+| `forward`, `update_batch`, `update`, `update_conversions` | (episodes, steps), one cell per auction; delayed feedback logs at the step it arrives | (seeds, episodes, steps) |
 | `on_episode_start`, `on_episode_end` | (episodes,) | (seeds, episodes) |
 
 Cells nobody logged are NaN. Outside a run, `self.log` does nothing.

@@ -11,7 +11,7 @@ A bidder can hold children in attributes, lists or tuples. Call each child's `fo
 The simulator does the rest:
 
 - Each child gets its own `self.rng`.
-- Each child gets `on_episode_start`, `update_batch` and `on_episode_end`, parent first.
+- Each child gets `on_episode_start`, `update_batch`, `update_conversions` and `on_episode_end`, parent first.
 
 Do not call those hooks on a child yourself, or it learns twice. Create children in `__init__`: a child added during a run raises an error.
 

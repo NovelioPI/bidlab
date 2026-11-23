@@ -82,7 +82,7 @@ print(bl.run_many(flat, seeds=range(2)).summary())
 
 | Guide | Covers |
 |---|---|
-| [Simulation](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/simulation.md) | Each step in detail, the clock, parallel runs, reproducibility |
+| [Simulation](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/simulation.md) | Each step in detail, the clock, delayed feedback, parallel runs, reproducibility |
 | [Campaigns](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/campaigns.md) | Budget, the event a campaign pays for, base value, CPA target, segments |
 | [Bidders](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/bidders.md) | Inputs, hooks, value models and bid control, `Stack`, built-in bidders |
 | [Composite bidders](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/composite-bidders.md) | Bidders that hold and call other bidders |

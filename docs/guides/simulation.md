@@ -1,6 +1,6 @@
 # Simulation
 
-This guide explains what happens inside a run: each step, the clock, parallel runs and reproducibility.
+This guide explains what happens inside a run: each step, the clock, feedback delivery, parallel runs and reproducibility.
 
 ## One step in detail
 
@@ -52,6 +52,36 @@ log = bl.run(office)
 print(log.bids[0, :12, 0])  # 0 until 9:00, which is step 24
 ```
 
+## Feedback delivery
+
+By default, each bidder gets its `BidResult` right after its auction, with the click and the conversion in it. Real bidders learn later: conversions arrive hours after the click, and reports arrive in batches. Set this with `SimConfig(feedback=bl.Feedback(...))`. Every setting is in seconds and defaults to 0.
+
+| Setting | Meaning |
+|---|---|
+| `interval` | Seconds between deliveries; 0 delivers after every auction |
+| `report_delay` | Seconds from an auction until its `BidResult` is due |
+| `conversion_delay` | Seconds from an auction until its conversion is due, never before its `BidResult` |
+
+```python
+late = bl.SimConfig(
+    campaigns=office.campaigns,
+    feedback=bl.Feedback(interval=900, report_delay=120, conversion_delay=6 * 3600),
+)
+```
+
+The delivery rule:
+
+1. An item is due at its auction's `time` plus its delay.
+2. A delivery step is every step when `interval` is 0. Otherwise it is the first step at or after each multiple of `interval`.
+3. After the auction of a delivery step, each bidder gets every item now due. `update_batch` gets the results first, then `update_conversions` gets the conversions.
+4. After an episode's last auction, everything still pending arrives, before `on_episode_end`. So `EpisodeReport` and the delivered items agree.
+
+Under a `conversion_delay`, `BidResult.converted` is always False, and a `conversion` campaign's `BidResult.realized_value` is 0. The conversion arrives later as a `bl.Conversion(time, realized_value)`, whose `time` names the auction. ⚠️ A learner that reads only `result.converted` sees no conversion at all. Override `update_conversions` to count them.
+
+Under a `report_delay`, the `budget_left` input counts only the spend in delivered results, so a bidder that trusts it can bid as if it had more money. The simulator still caps each bid at the true budget left, so spend never passes the budget.
+
+Delays draw no random numbers: a run whose bidders ignore feedback gives the same log with or without them.
+
 ## Parallel runs
 
 `run_many(config, seeds, workers=4)` runs seeds in 4 processes and gives the same rows as `workers=1`. Lambdas and closures work.
@@ -78,3 +108,4 @@ On one OS and CPU type, the same seed gives a bit-identical log. Other platforms
 |---|---|
 | [getting_started/basic.py](../../examples/getting_started/basic.py) | When the budget is tight, does PID pacing earn more surplus than truthful bidding? |
 | [simulation/clock.py](../../examples/simulation/clock.py) | With a 12-hour day from 9:00, does an even-schedule bidder still have budget at 20:00, when truthful bidding has run out? |
+| [simulation/delayed_conversions.py](../../examples/simulation/delayed_conversions.py) | When conversions arrive 6 hours late, does a learner that counts each unconverted click as a miss bid lower? |

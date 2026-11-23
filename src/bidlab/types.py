@@ -103,11 +103,14 @@ class BidResult:
         market without a click stage, every won impression is clicked.
     converted : bool
         True only when this bidder won and the impression converted. A
-        conversion needs a click.
+        conversion needs a click. Always False under a
+        `Feedback.conversion_delay`: the conversion arrives later as a
+        `Conversion`, so a learner that reads only this field sees none.
     realized_value : float, optional
         Realized value of this auction: `Campaign.base_value` when the
         campaign's event happened, else 0. A won impression, a clicked one or
-        a converted one, by `Campaign.event`.
+        a converted one, by `Campaign.event`. Under a conversion delay, a
+        ``conversion`` campaign's value comes in the `Conversion`.
 
     See Also
     --------
@@ -138,6 +141,39 @@ class BidResult:
     clicked: bool
     converted: bool
     realized_value: float = 0.0
+
+
+@dataclass(frozen=True)
+class Conversion:
+    """A conversion that reaches its bidder `Feedback.conversion_delay` after its auction.
+
+    Parameters
+    ----------
+    time : float
+        The ``time`` input of the auction that converted, the same as its
+        `BidResult.time`. Within an episode it names one auction.
+    realized_value : float
+        `Campaign.base_value` for a ``conversion`` campaign, else 0: an
+        ``impression`` or ``click`` campaign already counted its value in the
+        `BidResult`.
+
+    See Also
+    --------
+    Bidder.update_conversions : Receives a list of these objects.
+
+    Examples
+    --------
+    A bidder matches a conversion to the auction it kept by time:
+
+    >>> import bidlab as bl
+    >>> clicks = {1800.0: [0.3, -1.2]}
+    >>> conversion = bl.Conversion(time=1800.0, realized_value=5.0)
+    >>> clicks.pop(conversion.time)
+    [0.3, -1.2]
+    """
+
+    time: float
+    realized_value: float
 
 
 @dataclass(frozen=True)
