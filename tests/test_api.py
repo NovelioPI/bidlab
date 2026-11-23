@@ -232,6 +232,8 @@ def test_click_stage_matches_main(kind):
 PUBLIC_NAMES = {
     "Callback",
     "SimConfig",
+    "Feedback",
+    "Conversion",
     "Stack",
     "Campaign",
     "markets",

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Protocol, overload
 
 import numpy as np
 
-from bidlab.types import BidResult, EpisodeReport
+from bidlab.types import BidResult, Conversion, EpisodeReport
 
 if TYPE_CHECKING:
     from bidlab.config import Campaign
@@ -142,7 +142,9 @@ class Bidder(ABC):
         hour_of_day : float
             Hour of day at ``time``, in [0, 24).
         budget_left : float
-            The campaign's budget left before this auction.
+            The campaign's budget minus the spend in the `BidResult` objects
+            delivered so far this episode. With no `Feedback.report_delay`,
+            that is the budget left before this auction.
         segment : str
             The auction's market segment; ``"all"`` in a market without
             segments.
@@ -170,8 +172,10 @@ class Bidder(ABC):
     def update_batch(self, bid_results: Sequence[BidResult]) -> None:
         """Learn from the outcomes of auctions this bidder took part in.
 
-        Today each batch holds the result of one auction. The default calls
-        `update` once per item, in time order.
+        With the default `Feedback`, each batch holds the result of one
+        auction, right after it. With a ``report_delay`` or an ``interval``,
+        a batch can hold many results, of auctions before the current one.
+        The default calls `update` once per item, in time order.
 
         Parameters
         ----------
@@ -189,6 +193,41 @@ class Bidder(ABC):
         ----------
         result : BidResult
             This bidder's own outcome.
+        """
+
+    def update_conversions(self, conversions: Sequence[Conversion]) -> None:
+        """Learn from conversions that arrived after a delay.
+
+        Called only under a `Feedback.conversion_delay`, after `update_batch`
+        in the same delivery, so a conversion never arrives before its
+        auction's `BidResult`. The default does nothing.
+
+        Parameters
+        ----------
+        conversions : Sequence[Conversion]
+            This bidder's own conversions, in time order.
+
+        Examples
+        --------
+        Count conversions per click, with late conversions:
+
+        >>> import bidlab as bl
+        >>> class ConversionRate(bl.Bidder):
+        ...     def __init__(self):
+        ...         self.clicks = self.conversions = 0
+        ...
+        ...     def forward(self, value):
+        ...         return value
+        ...
+        ...     def update(self, result):
+        ...         self.clicks += result.clicked
+        ...
+        ...     def update_conversions(self, conversions):
+        ...         self.conversions += len(conversions)
+        >>> bidder = ConversionRate()
+        >>> bidder.update_conversions([bl.Conversion(time=36.0, realized_value=5.0)])
+        >>> bidder.conversions
+        1
         """
 
     def on_episode_end(self, report: EpisodeReport) -> None:
@@ -220,10 +259,11 @@ class Bidder(ABC):
     ) -> None:
         """Save a number, or a dict of numbers, in the run's `RunLog.logged`.
 
-        A value logged in `forward`, `update_batch` or `update` is saved at
-        the current auction step; one logged in `on_episode_start` or
-        `on_episode_end` is saved per episode. Logging one name twice in one
-        step keeps the last value. Outside a run, such as in a unit test or in
+        A value logged in `forward`, `update_batch`, `update` or
+        `update_conversions` is saved at the current auction step; feedback
+        delivered after an episode's last auction logs at that step. One
+        logged in `on_episode_start` or `on_episode_end` is saved per
+        episode. Logging one name twice in one step keeps the last value. Outside a run, such as in a unit test or in
         `bind`, nothing is saved.
 
         Parameters

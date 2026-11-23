@@ -25,8 +25,9 @@ Subclass `bl.Bidder` and implement `forward`. Every other hook is optional.
 |---|---|
 | `on_episode_start(campaign)` | At the start of each episode, with the `Campaign`: budget, event, base value, CPA target, segments |
 | `forward(...)` | At each auction the bidder takes part in, with the inputs it names; returns the bid or value |
-| `update_batch(results)` | After each step, with that step's `BidResult` list |
+| `update_batch(results)` | After each step, with that step's `BidResult` list; later and in batches under a `bl.Feedback` delay |
 | `update(result)` | Once per result, if you do not override `update_batch` |
+| `update_conversions(conversions)` | Under a `Feedback.conversion_delay`, with the `Conversion` list that just arrived |
 | `on_episode_end(report)` | At the end of each episode, with its `EpisodeReport` |
 
 A bidder keeps what it learns on `self`. Take settings as constructor arguments. Each bidder gets its own random stream as `self.rng`.

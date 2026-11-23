@@ -1,6 +1,7 @@
 """Frozen, validated settings for one simulation."""
 
 import copy
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -168,6 +169,59 @@ class Campaign:
 
 
 @dataclass(frozen=True)
+class Feedback:
+    """When each bidder learns its outcomes; every setting is in seconds.
+
+    The defaults are 0: each `BidResult` reaches the bidder right after its
+    auction, with its conversion in it. A delivery step is every step when
+    ``interval`` is 0, else the first step at or after each multiple of
+    ``interval``. It delivers every item whose due time has passed, reports
+    first. Items still pending after an episode's last auction are delivered
+    before `Bidder.on_episode_end`.
+
+    Parameters
+    ----------
+    interval : float, optional
+        Seconds between deliveries; 0 delivers after every auction.
+    report_delay : float, optional
+        Seconds from an auction until its `BidResult` is due. The
+        ``budget_left`` input counts only the spend in delivered results; the
+        simulator still caps each bid at the true budget left.
+    conversion_delay : float, optional
+        Seconds from an auction until its conversion is due, never before its
+        `BidResult`. Above 0, `BidResult.converted` is False and the
+        conversion arrives as a `Conversion` in `Bidder.update_conversions`.
+
+    Raises
+    ------
+    ValueError
+        If a setting is negative, NaN or infinite.
+
+    Examples
+    --------
+    Conversions arrive 6 hours after the auction, and reports every 15
+    minutes, 2 minutes late:
+
+    >>> import bidlab as bl
+    >>> feedback = bl.Feedback(interval=900, report_delay=120, conversion_delay=6 * 3600)
+    >>> feedback.conversion_delay
+    21600.0
+    """
+
+    interval: float = 0.0
+    report_delay: float = 0.0
+    conversion_delay: float = 0.0
+
+    def __post_init__(self) -> None:
+        for name in ("interval", "report_delay", "conversion_delay"):
+            seconds = float(getattr(self, name))
+            if not (math.isfinite(seconds) and seconds >= 0):
+                raise ValueError(f"{name} must be finite and >= 0, got {seconds}")
+
+            object.__setattr__(self, name, seconds)
+
+
+@dataclass(frozen=True)
 class SimConfig:
     """Everything one simulation needs; the same config and seed give the same run.
 
@@ -191,11 +245,13 @@ class SimConfig:
         > 0.
     start_hour : float, optional
         Hour of day when each episode starts, in [0, 24).
+    feedback : Feedback, optional
+        When bidders learn their outcomes. Defaults to no delay.
 
     Raises
     ------
     TypeError
-        If ``auction`` or ``market`` has the wrong type.
+        If ``auction``, ``market`` or ``feedback`` has the wrong type.
     ValueError
         If ``campaigns`` is empty, names repeat, ``episodes`` or ``steps`` is
         below 1, the schedule is out of range, or a campaign names a
@@ -235,6 +291,7 @@ class SimConfig:
     market: Market = field(default_factory=LogisticMarket)
     horizon_hours: float = 24.0
     start_hour: float = 0.0
+    feedback: Feedback = Feedback()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "campaigns", tuple(self.campaigns))
@@ -267,6 +324,12 @@ class SimConfig:
         if not isinstance(market, Market):
             raise TypeError(
                 f"market must be a bidlab.markets.Market, got {type(market).__name__}"
+            )
+
+        feedback: object = self.feedback
+        if not isinstance(feedback, Feedback):
+            raise TypeError(
+                f"feedback must be a bidlab.Feedback, got {type(feedback).__name__}"
             )
 
         known = set(self.market.segment_names)
