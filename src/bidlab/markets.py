@@ -130,7 +130,7 @@ class Market(ABC):
 
     >>> import numpy as np
     >>> import bidlab as bl
-    >>> class Flat(bl.markets.Market):
+    >>> class Flat(bl.Market):
     ...     def draws(self, count, rng):
     ...         while True:
     ...             yield bl.markets.MarketDraw({}, pcvr=np.full(count, 0.1))

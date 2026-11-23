@@ -67,7 +67,7 @@ class LoggingProbe(Probe):
 def probe_run(
     feedback=None,
     *,
-    market: bl.markets.Market = CLICKY,
+    market: bl.Market = CLICKY,
     bid=1.0,
     budget=1000.0,
     episodes=2,
