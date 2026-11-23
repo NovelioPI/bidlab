@@ -11,6 +11,7 @@ from bidlab.auctions import FirstPrice
 from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import LogisticMarket, Market, MarketDraw, Segment, Segmented
+from bidlab.metrics import campaign_metrics, segment_metrics
 from bidlab.results import Results
 from bidlab.runner import COLUMNS, SEGMENT_COLUMNS, run_many
 from bidlab.simulator import run
@@ -224,6 +225,7 @@ def test_segments_table_columns():
         "clicks",
         "conversions",
         "surplus",
+        "expected_surplus",
     )
     assert len(results.segment_rows) == 2 * 3 * 2
 
@@ -561,3 +563,73 @@ def test_repr_without_a_metric_column():
         rows=tuple({column: row[column] for column in columns} for row in results.rows),
     )
     assert repr(table) == f"Results(columns={columns!r}, 4 rows)"
+
+
+NEW_COLUMNS = (
+    "win_rate",
+    "expected_surplus",
+    "budget_out",
+    "cvr",
+    "cost_per_expected_event",
+    "lost_budget",
+    "lost_floor",
+    "lost_market",
+    "lost_rival",
+)
+
+
+def budget_out_config():
+    # Budget 6 runs out in every episode of seed 0 and in some of seeds 1 and 2.
+    market = Segmented((Segment("x", 0.5), Segment("y", 0.5)))
+    campaigns = [
+        Campaign("t", Stack(OracleValue(), Linear()), budget=6.0, base_value=5.0),
+        Campaign(
+            "big",
+            Stack(OracleValue(), Linear(multiplier=0.8)),
+            budget=1e9,
+            base_value=5.0,
+        ),
+    ]
+    return SimConfig(campaigns=campaigns, episodes=4, steps=100, market=market)
+
+
+@pytest.mark.filterwarnings("error")
+def test_new_columns_and_budget_out_mean():
+    cfg = budget_out_config()
+    results = run_many(cfg, seeds=range(3))
+    after_regret = results.columns.index("regret") + 1
+    assert results.columns[after_regret:] == (*NEW_COLUMNS, "revenue", "welfare")
+    assert "expected_surplus" in segments_table(results).columns
+    seen = set()
+    for row in results.rows:
+        log = run(dataclasses.replace(cfg, seed=row["seed"]))
+        own = [m for m in campaign_metrics(log) if m.campaign == row["campaign"]]
+        for column in NEW_COLUMNS:
+            if column != "budget_out":
+                expected = np.mean([getattr(m, column) for m in own])
+                assert row[column] == pytest.approx(expected, nan_ok=True)
+        ran_out = [m.budget_out for m in own if not np.isnan(m.budget_out)]
+        if ran_out:
+            assert row["budget_out"] == pytest.approx(np.mean(ran_out))
+        else:
+            assert np.isnan(row["budget_out"])
+        seen.add((len(ran_out) > 0, len(ran_out) == len(own)))
+        for segment in segments_table(results).rows:
+            if (segment["seed"], segment["campaign"]) != (row["seed"], row["campaign"]):
+                continue
+            own_segment = [
+                m.expected_surplus
+                for m in segment_metrics(log)
+                if (m.campaign, m.segment) == (row["campaign"], segment["segment"])
+            ]
+            assert segment["expected_surplus"] == pytest.approx(np.mean(own_segment))
+    # Some seed ran out in every episode, some in a few only, some in none.
+    assert seen == {(True, True), (True, False), (False, False)}
+
+
+def test_workers_match_with_new_columns():
+    cfg = budget_out_config()
+    serial = run_many(cfg, seeds=range(3))
+    parallel = run_many(cfg, seeds=range(3), workers=2)
+    assert all(column in serial.columns for column in NEW_COLUMNS)
+    assert parallel.equals(serial)
