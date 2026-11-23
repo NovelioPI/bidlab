@@ -16,6 +16,10 @@ bidlab follows [semantic versioning](https://semver.org/). Before 1.0, a minor v
 - `Callback.on_step_end(episode, step)` runs in `run` after each step's auction.
 - `Callback.on_run_many_start(config, seeds)` and `Callback.on_run_many_end(results)` run before the first seed and after the last in `run_many`.
 
+### Results
+
+- `print(results)`, or `results` in a notebook, shows the summary table instead of the raw rows.
+
 ## 0.2.0 (2026-11-23)
 
 ### Simulation
