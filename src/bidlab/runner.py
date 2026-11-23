@@ -59,8 +59,8 @@ def run_many(
 
     Each row holds one bidder's metrics for one seed, averaged over the
     episodes. ``budget_out`` is averaged only over the episodes where the
-    budget ran out, and is NaN when it never did. ``workers > 1`` runs seeds in parallel processes and gives the
-    same results as ``workers=1``.
+    budget ran out, and is NaN when it never did. ``workers > 1`` runs seeds
+    in parallel processes and gives the same results as ``workers=1``.
 
     Parameters
     ----------

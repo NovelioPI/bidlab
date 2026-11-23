@@ -616,8 +616,8 @@ def test_segment_expected_surplus_sums_to_campaign(competing):
 
 
 def test_bid_at_the_floor_without_a_market_price_loses_to_the_rival():
-    # Bid 0.3 equals r, so it passes the floor; no market price adds nothing to the
-    # price to win, so b's 0.4 is within a's budget 0.5.
+    # Bid 0.3 equals r, so it passes the floor. Without a market price the price to
+    # win is b's 0.4, within a's budget 0.5.
     log = two_campaign_log([Step(0, (0.3, 0.4), 1, price=0.4, floor=0.3)], budget=0.5)
     a, _ = campaign_metrics(log)
     assert losses(a) == (0, 0, 0, 1)
