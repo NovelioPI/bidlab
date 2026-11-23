@@ -16,6 +16,15 @@ bidlab follows [semantic versioning](https://semver.org/). Before 1.0, a minor v
 - `Callback.on_step_end(episode, step)` runs in `run` after each step's auction.
 - `Callback.on_run_many_start(config, seeds)` and `Callback.on_run_many_end(results)` run before the first seed and after the last in `run_many`.
 
+### Results
+
+- `print(results)`, or `results` in a notebook, shows the summary table instead of the raw rows.
+
+### Bidders
+
+- A bidder prints as its constructor call, such as `Stack(OracleValue(), PidPacing(kp=5.0))`, also inside `SimConfig` and `RunLog`. It reads each argument from the attribute of the same name; without one, it prints as before.
+- `UcbMultiplier` keeps `min_multiplier`, `max_multiplier` and `multiplier_step` as attributes.
+
 ## 0.2.0 (2026-11-23)
 
 ### Simulation

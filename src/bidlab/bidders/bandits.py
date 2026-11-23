@@ -70,6 +70,9 @@ class UcbMultiplier(Bidder):
         if exploration < 0:
             raise ValueError(f"exploration must be >= 0, got {exploration}")
 
+        self.min_multiplier = min_multiplier
+        self.max_multiplier = max_multiplier
+        self.multiplier_step = multiplier_step
         self.arms = np.arange(
             min_multiplier, max_multiplier + ARM_GRID_END_MARGIN, multiplier_step
         )

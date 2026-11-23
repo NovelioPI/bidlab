@@ -333,6 +333,30 @@ class Bidder(ABC):
         for path, bidder, _ in _walk(self, "", {id(self)}):
             yield path, bidder
 
+    def __repr__(self) -> str:
+        """Show the constructor call, such as ``Stack(OracleValue(), PidPacing(kp=5.0))``.
+
+        Each argument comes from the attribute of the same name, and arguments
+        equal to their default are left out. If an argument is not kept under
+        its own name, the default ``<... object at 0x...>`` text is used, so
+        the text never leaves an argument out by mistake.
+        """
+        parts: list[str] = []
+        for name, parameter in inspect.signature(type(self)).parameters.items():
+            if parameter.kind is parameter.VAR_KEYWORD or not hasattr(self, name):
+                return object.__repr__(self)
+
+            value = getattr(self, name)
+            if parameter.kind is parameter.VAR_POSITIONAL:
+                if not isinstance(value, _SEQUENCES):
+                    return object.__repr__(self)
+
+                parts.extend(repr(item) for item in value)
+            elif not _is_default(value, parameter.default):
+                parts.append(f"{name}={value!r}")
+
+        return f"{type(self).__name__}({', '.join(parts)})"
+
 
 def bind_tree(bidder: Bidder, rng: np.random.Generator) -> None:
     """Bind every bidder in ``bidder``'s tree to its own stream; the simulator calls this.
@@ -581,3 +605,8 @@ def _reject_hidden(value: object, path: str) -> None:
             f"the {type(value).__name__} at {path!r} holds a bidder the simulator "
             "cannot find; hold child bidders in an attribute, list or tuple"
         )
+
+
+def _is_default(value: object, default: object) -> bool:
+    # An array compares element by element, so its == has no single answer.
+    return not isinstance(value, np.ndarray) and bool(value == default)

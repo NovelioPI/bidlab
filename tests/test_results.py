@@ -524,3 +524,40 @@ def test_regret_and_welfare_follow_event(event, factor):
     total_value = 100 * 2.0 * factor
     assert row["welfare"] == pytest.approx(total_value)
     assert row["regret"] == pytest.approx(0.95 * total_value)
+
+
+def test_repr_shows_summary():
+    results = run_many(config(), seeds=range(3))
+    assert repr(results) == (
+        "Results: 6 rows, mean ± 95% interval over 3 seeds\n" + results.summary()
+    )
+    segments = results.segment_rows
+    assert segments is not None
+    assert repr(segments) == (
+        "Results: 6 rows, mean ± 95% interval over 3 seeds\n" + segments.summary()
+    )
+
+
+def test_repr_without_summary_columns():
+    table = Results(columns=("seed", "score"), rows=({"seed": 0, "score": 1.5},))
+    assert repr(table) == "Results(columns=('seed', 'score'), 1 rows)"
+
+
+def test_repr_without_seed_column():
+    results = run_many(config(), seeds=range(2))
+    columns = COLUMNS[1:]
+    table = Results(
+        columns=columns,
+        rows=tuple({column: row[column] for column in columns} for row in results.rows),
+    )
+    assert repr(table) == f"Results(columns={columns!r}, 4 rows)"
+
+
+def test_repr_without_a_metric_column():
+    results = run_many(config(), seeds=range(2))
+    columns = tuple(column for column in COLUMNS if column != "regret")
+    table = Results(
+        columns=columns,
+        rows=tuple({column: row[column] for column in columns} for row in results.rows),
+    )
+    assert repr(table) == f"Results(columns={columns!r}, 4 rows)"
