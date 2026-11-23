@@ -124,6 +124,9 @@ class PlatformEpisodeMetrics:
         market price, adds nothing: its price is unknown.
     welfare : float
         Sum of the winner's expected value, over auctions a campaign won.
+
+    Both are NaN with ``competing=False``: each campaign buys the impression
+    in its own auction, so no single sale exists.
     """
 
     episode: int
@@ -145,6 +148,12 @@ def platform_metrics(log: RunLog) -> list[PlatformEpisodeMetrics]:
     [0.0, 0.0]
     """
     rows = []
+    if not log.config.competing:
+        return [
+            PlatformEpisodeMetrics(episode=episode, revenue=np.nan, welfare=np.nan)
+            for episode in range(log.won.shape[0])
+        ]
+
     for episode in range(log.won.shape[0]):
         won = log.won[episode]
         rows.append(
