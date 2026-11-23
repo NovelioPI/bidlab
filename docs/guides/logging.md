@@ -59,7 +59,9 @@ A `bl.Callback` watches a run without changing it. Callbacks always run in the m
 | `on_run_start(config)` | `run` | Before the first episode |
 | `on_episode_end(episode, reports)` | `run` | After each episode; `reports` maps each campaign name to its `EpisodeReport` |
 | `on_run_end(log)` | `run` | With the finished `RunLog` |
+| `on_run_many_start(config, seeds)` | `run_many` | Before the first seed |
 | `on_seed_end(seed, results)` | `run_many` | After each seed, in seed order |
+| `on_run_many_end(results)` | `run_many` | With the `Results` it returns |
 
 ```python
 class Progress(bl.Callback):
@@ -73,6 +75,12 @@ class Progress(bl.Callback):
 bl.run(watched, callbacks=[Progress()])
 results = bl.run_many(watched, seeds=range(2), callbacks=[Progress()])
 print(results.logged["bidders.1.multiplier"]["paced"].shape)  # (2, 3, 200)
+```
+
+`bl.ProgressBar()` is a built-in callback that shows a tqdm bar on stderr: one tick per episode in `run`, one per seed in `run_many`. In a notebook it shows tqdm's widget.
+
+```python
+results = bl.run_many(watched, seeds=range(2), callbacks=[bl.ProgressBar()])
 ```
 
 ## Examples

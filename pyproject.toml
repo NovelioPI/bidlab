@@ -23,6 +23,7 @@ dependencies = [
     "cloudpickle>=3.0",
     "numpy>=2.0",
     "scipy>=1.13",
+    "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]

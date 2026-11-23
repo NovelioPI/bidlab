@@ -63,8 +63,10 @@ def run_many(
     workers : int, optional
         Number of processes.
     callbacks : Sequence[Callback], optional
-        Read-only hooks; each gets `Callback.on_seed_end` in the main process
-        after each seed, in seed order.
+        Read-only hooks, all called in the main process:
+        `Callback.on_run_many_start` before the first seed,
+        `Callback.on_seed_end` after each seed in seed order, and
+        `Callback.on_run_many_end` with the results.
 
     Returns
     -------
@@ -109,6 +111,8 @@ def run_many(
 
     checked = checked_callbacks(callbacks)
     seed_list = list(seeds)
+    for callback in checked:
+        callback.on_run_many_start(config, tuple(seed_list))
     if workers == 1:
         computed = (_seed_rows(config, seed) for seed in seed_list)
         per_seed = _collect(seed_list, computed, checked)
@@ -120,7 +124,10 @@ def run_many(
             computed = pool.map(_run_seed, repeat(payload), seed_list)
             per_seed = _collect(seed_list, computed, checked)
 
-    return _results(per_seed)
+    results = _results(per_seed)
+    for callback in checked:
+        callback.on_run_many_end(results)
+    return results
 
 
 def _collect(

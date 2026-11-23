@@ -1,7 +1,9 @@
 """`Callback`: read-only hooks that watch a run, or a set of seeds, as it goes."""
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
+
+from tqdm.auto import tqdm
 
 from bidlab.config import SimConfig
 from bidlab.results import Results
@@ -16,8 +18,9 @@ class Callback:
 
     Hooks run in the main process, in the order the callbacks are given, and
     cannot change the run. `run` calls `on_run_start`, `on_episode_end` and
-    `on_run_end`; `run_many` calls only `on_seed_end`, also with
-    ``workers > 1``. An error raised in a hook reaches the caller.
+    `on_run_end`; `run_many` calls only `on_run_many_start`, `on_seed_end`
+    and `on_run_many_end`, also with ``workers > 1``. An error raised in a
+    hook reaches the caller.
 
     Examples
     --------
@@ -75,6 +78,80 @@ class Callback:
         results : Results
             That seed's rows and logs, as `run_many` with that seed alone.
         """
+
+    def on_run_many_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
+        """Run once in `run_many`, before the first seed.
+
+        Parameters
+        ----------
+        config : SimConfig
+            The config every seed runs.
+        seeds : Sequence[int]
+            Every seed, in the order they will run.
+        """
+
+    def on_run_many_end(self, results: Results) -> None:
+        """Run once with the `Results` that `run_many` returns.
+
+        Parameters
+        ----------
+        results : Results
+            Every seed's rows and logs.
+        """
+
+
+class ProgressBar(Callback):
+    """Show a tqdm progress bar on stderr: episodes in `run`, seeds in `run_many`.
+
+    In a notebook it shows tqdm's notebook widget. One instance can watch any
+    number of runs; each gets its own bar.
+
+    Examples
+    --------
+    >>> import bidlab as bl
+    >>> campaign = bl.Campaign(
+    ...     "t", bl.Stack(bl.OracleValue(), bl.Linear()), budget=10, base_value=5
+    ... )
+    >>> config = bl.SimConfig(campaigns=[campaign], episodes=2, steps=50)
+    >>> log = bl.run(config, callbacks=[bl.ProgressBar()])
+    >>> results = bl.run_many(config, seeds=range(3), callbacks=[bl.ProgressBar()])
+    """
+
+    def __init__(self) -> None:
+        self._bar: tqdm[NoReturn] | None = None
+
+    def on_run_start(self, config: SimConfig) -> None:
+        """Open a bar with one tick per episode."""
+        self._bar = tqdm(total=config.episodes, desc="run", unit="episode")
+
+    def on_episode_end(
+        self, episode: int, reports: Mapping[str, EpisodeReport]
+    ) -> None:
+        """Tick the episode bar."""
+        if self._bar is not None:
+            self._bar.update()
+
+    def on_run_end(self, log: "RunLog") -> None:
+        """Close the episode bar."""
+        self._close()
+
+    def on_run_many_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
+        """Open a bar with one tick per seed."""
+        self._bar = tqdm(total=len(seeds), desc="run_many", unit="seed")
+
+    def on_seed_end(self, seed: int, results: Results) -> None:
+        """Tick the seed bar."""
+        if self._bar is not None:
+            self._bar.update()
+
+    def on_run_many_end(self, results: Results) -> None:
+        """Close the seed bar."""
+        self._close()
+
+    def _close(self) -> None:
+        if self._bar is not None:
+            self._bar.close()
+            self._bar = None
 
 
 def checked_callbacks(callbacks: Sequence[object]) -> tuple[Callback, ...]:

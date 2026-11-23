@@ -37,7 +37,7 @@ from bidlab.bidders import (
     Stack,
     UcbMultiplier,
 )
-from bidlab.callbacks import Callback
+from bidlab.callbacks import Callback, ProgressBar
 from bidlab.config import Campaign, Feedback, SimConfig
 from bidlab.markets import Market
 from bidlab.metrics import campaign_metrics, platform_metrics, regret, segment_metrics
@@ -61,6 +61,7 @@ __all__ = [
     "MarketTruth",
     "OracleValue",
     "PidPacing",
+    "ProgressBar",
     "Results",
     "RunLog",
     "SecondPrice",
