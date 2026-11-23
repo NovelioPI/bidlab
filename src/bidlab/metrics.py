@@ -147,13 +147,13 @@ def platform_metrics(log: RunLog) -> list[PlatformEpisodeMetrics]:
     >>> [row.revenue for row in bl.platform_metrics(log)]
     [0.0, 0.0]
     """
-    rows = []
     if not log.config.competing:
         return [
             PlatformEpisodeMetrics(episode=episode, revenue=np.nan, welfare=np.nan)
             for episode in range(log.won.shape[0])
         ]
 
+    rows = []
     for episode in range(log.won.shape[0]):
         won = log.won[episode]
         rows.append(
@@ -305,7 +305,8 @@ def regret(
     Other bidders' logged bids, the market price and the floor stay fixed
     while the episode is replayed with this bidder bidding m × value for each
     multiplier m. With ``competing=False`` only the market price and the
-    floor stay fixed, since other campaigns are not in its auction. See the Regret section of ``docs/metrics.md`` for every rule
+    floor stay fixed, since other campaigns are not in its auction. See the
+    Regret section of ``docs/metrics.md`` for every rule
     and its limits.
 
     Parameters
