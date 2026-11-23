@@ -116,10 +116,12 @@ class Callback:
 class ProgressBar(Callback):
     """Show a tqdm progress bar on stderr: steps in `run`, seeds in `run_many`.
 
-    In `run`, one line counts the current episode's steps under an
-    ``episode 2/5`` label and starts again at each episode. In a notebook it
-    shows tqdm's notebook widget. One instance can watch any number of runs;
-    each gets its own bar.
+    `run` and `run_many` add one by default; pass ``progress_bar=False`` to
+    hide it. Passing an instance in ``callbacks`` adds no second bar. In
+    `run`, one line counts the current episode's steps under an ``episode
+    2/5`` label and starts again at each episode. In a notebook it shows
+    tqdm's notebook widget. One instance can watch any number of runs; each
+    gets its own bar.
 
     Examples
     --------
@@ -204,3 +206,11 @@ def checked_callbacks(callbacks: Sequence[object]) -> tuple[Callback, ...]:
         checked.append(callback)
 
     return tuple(checked)
+
+
+def with_progress_bar(callbacks: tuple[Callback, ...]) -> tuple[Callback, ...]:
+    """Return ``callbacks`` with a `ProgressBar` added unless one is there."""
+    if any(isinstance(callback, ProgressBar) for callback in callbacks):
+        return callbacks
+
+    return (*callbacks, ProgressBar())
