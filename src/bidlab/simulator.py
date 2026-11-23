@@ -288,6 +288,7 @@ class _Simulation:
             if budget is None:
                 if self.replayed is None:
                     self.replayed = self._replay(market_seed)
+
                 budget = self._market_cost(i, campaign, self.replayed)
                 if budget == 0:
                     raise ValueError(
@@ -298,6 +299,7 @@ class _Simulation:
                     )
 
             budgets[i] = campaign.budget_fraction * budget
+
         return budgets
 
     def _replay(self, market_seed: np.random.SeedSequence) -> _MarketLog:
@@ -318,11 +320,13 @@ class _Simulation:
                 draw = self._next_draw(draws, episode, step)
                 if draw.market_price is not None:
                     replayed.market_price[episode, step] = draw.market_price
+
                 replayed.floor[episode, step] = draw.floor
                 replayed.segment[episode, step] = self.segment_index[draw.segment]
                 replayed.true_values[episode, step] = self._event_values(
                     *self._rates(draw)
                 )
+
         return replayed
 
     def _market_cost(
@@ -337,8 +341,8 @@ class _Simulation:
             replayed.floor,
         )
         allowed = [
-            index
-            for name, index in self.segment_index.items()
+            segment
+            for name, segment in self.segment_index.items()
             if campaign.segments is None or name in campaign.segments
         ]
         # A request worth less than its cost adds nothing a truthful bidder would buy.
