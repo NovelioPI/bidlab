@@ -94,7 +94,7 @@ def test_bad_market_price_or_floor_rejected(field, bad):
 
 def test_zero_market_price_and_floor_accepted():
     log, _ = run_market(PricedMarket([(0.0, 0.0)]), 1.0)
-    assert (log.winner == 0).all()
+    assert log.won[:, :, 0].all()
 
 
 def test_run_applies_market_price_and_floor():
@@ -103,14 +103,15 @@ def test_run_applies_market_price_and_floor():
         [(None, 0.0), (0.6, 0.0), (0.5, 0.0), (0.4, 0.0), (None, 0.55), (None, 0.5)]
     )
     log, _ = run_market(market, 0.5, 0.3, auction=SecondPrice(0.1), steps=6)
-    np.testing.assert_array_equal(log.winner, [[0, -1, -1, 0, -1, 0]])
-    np.testing.assert_array_equal(log.price, [[0.3, 0.0, 0.0, 0.4, 0.0, 0.5]])
+    np.testing.assert_array_equal(log.won[0, :, 0], [1, 0, 0, 1, 0, 1])
+    assert not log.won[:, :, 1].any()
+    np.testing.assert_array_equal(log.price[0, :, 0], [0.3, 0.0, 0.0, 0.4, 0.0, 0.5])
 
 
 @pytest.mark.parametrize("auction", [FirstPrice(), SecondPrice()])
 def test_sold_outside_logs_no_winner(auction):
     log, spies = run_market(PricedMarket([(2.0, 0.0)], pcvr=1.0), 1.0, 0.5)
-    assert (log.winner == -1).all()
+    assert not log.won.any()
     assert (log.price == 0).all()
     assert not log.clicked.any() and not log.converted.any()
     for spy in spies:
@@ -221,19 +222,18 @@ def test_regret_replay_meets_market_floor():
         market=PricedMarket([(None, 1.2)]),
     )
     log = run(config)
-    assert (log.winner == -1).all()
+    assert not log.won.any()
     assert abs(regret(log, 0, 0)) < 1e-9
 
 
 def test_revenue_and_welfare_count_campaign_wins():
     market = PricedMarket([(0.2, 0.0), (0.9, 0.0), (None, 0.0), (0.45, 0.1)])
     log, _ = run_market(market, 0.8, 0.4, steps=40)
-    sold = log.winner[0] >= 0
+    sold = log.won[0].any(axis=1)
     assert 0 < sold.sum() < sold.size
     (platform,) = platform_metrics(log)
     spend = sum(row.spend for row in campaign_metrics(log))
     assert platform.revenue == pytest.approx(spend)
-    winners = log.winner[0, sold]
-    expected_welfare = log.true_values[0, sold, winners].sum()
+    expected_welfare = log.true_values[0][log.won[0]].sum()
     assert platform.welfare == pytest.approx(expected_welfare)
     assert platform.welfare < log.true_values[0].max(axis=1).sum()

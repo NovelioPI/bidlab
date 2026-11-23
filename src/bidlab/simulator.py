@@ -2,7 +2,7 @@
 
 import math
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
@@ -61,15 +61,16 @@ class RunLog:
         the true rate of its event: 1 for an impression, pCTR for a click,
         pCTR × pCVR for a conversion, with pCTR 1 when the market has no click
         stage.
-    winner : numpy.ndarray
-        Index of the winning bidder per step; -1 when nobody won.
+    won : numpy.ndarray
+        Whether each campaign won its auction per step. At most one campaign
+        wins a step unless ``config.competing`` is False.
     price : numpy.ndarray
-        Price the winner paid per step; 0 when nobody won.
+        Price each campaign paid per step; 0 where it did not win.
     clicked : numpy.ndarray
-        Whether the winner was clicked per step; every win is a click when the
-        market has no click stage. False when nobody won.
+        Whether each campaign won and was clicked per step; every win is a
+        click when the market has no click stage.
     converted : numpy.ndarray
-        Whether the winner converted per step; only a click can convert.
+        Whether each campaign converted per step; only a click can convert.
     segment : numpy.ndarray
         Index into ``config.market.segment_names`` per step.
     market_price : numpy.ndarray
@@ -90,8 +91,7 @@ class RunLog:
     ...     "t", bl.Stack(bl.OracleValue(), bl.Linear()), budget=10, base_value=5
     ... )
     >>> log = bl.run(bl.SimConfig(campaigns=[campaign], episodes=2, steps=50))
-    >>> won = log.winner[0] == 0
-    >>> bool(log.price[0][won].sum() <= campaign.budget)
+    >>> bool(log.price[0, :, 0].sum() <= campaign.budget)
     True
     >>> log.bids.flags.writeable
     False
@@ -100,7 +100,7 @@ class RunLog:
     config: SimConfig
     bids: npt.NDArray[np.float64]
     true_values: npt.NDArray[np.float64]
-    winner: npt.NDArray[np.int64]
+    won: npt.NDArray[np.bool_]
     price: npt.NDArray[np.float64]
     clicked: npt.NDArray[np.bool_]
     converted: npt.NDArray[np.bool_]
@@ -175,8 +175,8 @@ def run(
     ...     steps=50,
     ... )
     >>> log = bl.run(config)
-    >>> log.bids.shape, log.winner.shape
-    ((2, 50, 1), (2, 50))
+    >>> log.bids.shape, log.won.shape
+    ((2, 50, 1), (2, 50, 1))
     >>> bool((bl.run(config).bids == log.bids).all())
     True
     """
@@ -212,8 +212,10 @@ class _Simulation:
         self.only_conversions = bool(self.values_conversion.all())
         self.horizon = config.horizon_hours * SECONDS_PER_HOUR
         self.seconds_per_step = self.horizon / config.steps
+        # Without competition every campaign sees one shared draw, made for one campaign.
+        self.market_count = count if config.competing else 1
         self.market_draws = config.market.draws(
-            count, np.random.default_rng(market_seed)
+            self.market_count, np.random.default_rng(market_seed)
         )
         self.tie_rng = np.random.default_rng(tie_seed)
         self.conversion_rng = np.random.default_rng(conversion_seed)
@@ -237,10 +239,10 @@ class _Simulation:
             config=config,
             bids=np.zeros((*shape, count)),
             true_values=np.zeros((*shape, count)),
-            winner=np.full(shape, NO_WINNER),
-            price=np.zeros(shape),
-            clicked=np.zeros(shape, dtype=bool),
-            converted=np.zeros(shape, dtype=bool),
+            won=np.zeros((*shape, count), dtype=bool),
+            price=np.zeros((*shape, count)),
+            clicked=np.zeros((*shape, count), dtype=bool),
+            converted=np.zeros((*shape, count), dtype=bool),
             segment=np.zeros(shape, dtype=np.int64),
             market_price=np.full(shape, np.nan),
             floor=np.zeros(shape),
@@ -271,7 +273,7 @@ class _Simulation:
         for array in (
             self.log.bids,
             self.log.true_values,
-            self.log.winner,
+            self.log.won,
             self.log.price,
             self.log.clicked,
             self.log.converted,
@@ -311,6 +313,9 @@ class _Simulation:
         self.book.at_step(episode, step)
         pctr = self.every_click if draw.pctr is None else draw.pctr
         pcvr = draw.pcvr
+        if not self.config.competing:
+            pctr = np.full(len(self.participants), pctr[0])
+            pcvr = np.full(len(self.participants), pcvr[0])
         values = self._event_values(pctr, pcvr)
         time = step * self.seconds_per_step
         # Bidders outside their segments are not asked to bid, so they cannot learn from it.
@@ -346,22 +351,20 @@ class _Simulation:
         # Same bits as clip(nan_to_num(...)), which took about 15% of run time.
         bids[~np.isfinite(bids)] = 0.0
         bids = np.minimum(np.maximum(bids, 0.0), budget_left)
-        # A logged bid of 0 would win at reserve 0, so absent bidders bid -inf.
-        auction_bids = np.full(len(self.participants), -np.inf)
-        auction_bids[active] = bids[active]
-        winner, price = self.config.auction.run(
-            auction_bids,
-            self.tie_rng,
-            floor=draw.floor,
-            market_price=draw.market_price,
-        )
-        clicked, converted = self._click_and_conversion(draw, winner)
-        if winner != NO_WINNER:
-            budget_left[winner] -= price
+        paid = self._sell(draw, bids, active)
+        for i, amount in paid.items():
+            budget_left[i] -= amount
+        clicked, converted = self._click_and_conversion(draw, paid, pctr, pcvr)
 
         for i in active:
             self._post_feedback(
-                i, time, float(bids[i]), winner, price, clicked, converted
+                i,
+                time,
+                float(bids[i]),
+                i in paid,
+                paid.get(i, 0.0),
+                i in clicked,
+                i in converted,
             )
 
         if self._delivers_at(step):
@@ -369,19 +372,52 @@ class _Simulation:
 
         self.log.bids[episode, step] = bids
         self.log.true_values[episode, step] = values
-        self.log.winner[episode, step] = winner
-        self.log.price[episode, step] = price
-        self.log.clicked[episode, step] = clicked
-        self.log.converted[episode, step] = converted
+        # Writing only the winners' entries into zeroed rows keeps default runs as fast.
+        for i, amount in paid.items():
+            self.log.won[episode, step, i] = True
+            self.log.price[episode, step, i] = amount
+        for i in clicked:
+            self.log.clicked[episode, step, i] = True
+        for i in converted:
+            self.log.converted[episode, step, i] = True
         self.log.segment[episode, step] = self.segment_index[draw.segment]
         self._log_market(episode, step, draw)
+
+    def _sell(
+        self, draw: MarketDraw, bids: npt.NDArray[np.float64], active: list[int]
+    ) -> dict[int, float]:
+        auction = self.config.auction
+        if self.config.competing:
+            # A logged bid of 0 would win at reserve 0, so absent bidders bid -inf.
+            auction_bids = np.full(len(self.participants), -np.inf)
+            auction_bids[active] = bids[active]
+            winner, price = auction.run(
+                auction_bids,
+                self.tie_rng,
+                floor=draw.floor,
+                market_price=draw.market_price,
+            )
+            return {} if winner == NO_WINNER else {winner: price}
+
+        paid: dict[int, float] = {}
+        for i in active:
+            # The same call a run of this campaign alone makes, so the two match bit for bit.
+            winner, price = auction.run(
+                bids[i : i + 1],
+                self.tie_rng,
+                floor=draw.floor,
+                market_price=draw.market_price,
+            )
+            if winner != NO_WINNER:
+                paid[i] = price
+        return paid
 
     def _post_feedback(
         self,
         index: int,
         time: float,
         bid: float,
-        winner: int,
+        won: bool,
         price: float,
         clicked: bool,
         converted: bool,
@@ -389,18 +425,17 @@ class _Simulation:
         feedback = self.config.feedback
         campaign = self.participants[index].campaign
         inbox = self.inboxes[index]
-        won = index == winner
-        late_conversion = converted and won and feedback.conversion_delay > 0
+        late_conversion = converted and feedback.conversion_delay > 0
         reported_conversion = converted and not late_conversion
         result = BidResult(
             time=time,
             bid=bid,
             won=won,
-            price=price if won else 0.0,
-            clicked=clicked and won,
-            converted=reported_conversion and won,
+            price=price,
+            clicked=clicked,
+            converted=reported_conversion,
             realized_value=campaign.base_value
-            if won and event_happened(campaign.event, won, clicked, reported_conversion)
+            if event_happened(campaign.event, won, clicked, reported_conversion)
             else 0.0,
         )
         inbox.reports.append((time + feedback.report_delay, result))
@@ -467,16 +502,22 @@ class _Simulation:
 
         return reads_market
 
-    def _click_and_conversion(self, draw: MarketDraw, winner: int) -> tuple[bool, bool]:
-        clicked = winner != NO_WINNER
+    def _click_and_conversion(
+        self,
+        draw: MarketDraw,
+        winners: Iterable[int],
+        pctr: npt.NDArray[np.float64],
+        pcvr: npt.NDArray[np.float64],
+    ) -> tuple[list[int], list[int]]:
+        clicked = list(winners)
         # Only a click stage draws a click, every step, so other runs keep their streams.
         if draw.pctr is not None:
             click_draw = self.click_rng.random()
-            clicked = clicked and click_draw < draw.pctr[winner]
+            clicked = [i for i in clicked if click_draw < pctr[i]]
 
         # One draw every step keeps the conversion stream aligned across runs.
         conversion_draw = self.conversion_rng.random()
-        return clicked, clicked and conversion_draw < draw.pcvr[winner]
+        return clicked, [i for i in clicked if conversion_draw < pcvr[i]]
 
     def _event_values(
         self, pctr: npt.NDArray[np.float64], pcvr: npt.NDArray[np.float64]
@@ -504,10 +545,10 @@ class _Simulation:
             if rates is None:
                 continue
 
-            if rates.shape != (len(self.participants),):
+            if rates.shape != (self.market_count,):
                 raise ValueError(
                     f"{where}: got {name} of shape {rates.shape}, "
-                    f"expected ({len(self.participants)},)"
+                    f"expected ({self.market_count},)"
                 )
 
             # The negated check also catches NaN, which fails every comparison.
@@ -517,6 +558,12 @@ class _Simulation:
         # Most draws have neither, so the checks are skipped there to keep runs fast.
         if draw.market_price is not None:
             _check_money(where, "market_price", draw.market_price)
+        elif not self.config.competing:
+            raise ValueError(
+                f"{where}: competing=False needs a market price on every draw, since "
+                "the market is each campaign's only rival; give the market one, "
+                "such as LogisticMarket(price_median=0.2)"
+            )
         if draw.floor:
             _check_money(where, "floor", draw.floor)
 
@@ -537,19 +584,18 @@ class _Simulation:
 
     def _end_episode(self, episode: int) -> None:
         self.book.at_episode(episode)
-        winner = self.log.winner[episode]
         reports: dict[str, EpisodeReport] = {}
         for i, participant in enumerate(self.participants):
-            won = winner == i
-            clicked = self.log.clicked[episode]
-            converted = self.log.converted[episode]
+            won = self.log.won[episode, :, i]
+            clicked = self.log.clicked[episode, :, i]
+            converted = self.log.converted[episode, :, i]
             events = event_happened(participant.campaign.event, won, clicked, converted)
             report = EpisodeReport(
                 budget=participant.campaign.budget,
-                spend=float(np.sum(self.log.price[episode][won])),
+                spend=float(np.sum(self.log.price[episode, :, i][won])),
                 wins=int(np.sum(won)),
-                clicks=int(np.sum(clicked & won)),
-                conversions=int(np.sum(converted & won)),
+                clicks=int(np.sum(clicked)),
+                conversions=int(np.sum(converted)),
                 realized_value=int(np.sum(events)) * participant.campaign.base_value,
             )
             for node in participant.nodes:
@@ -585,8 +631,8 @@ def event_happened[Outcome: (bool, npt.NDArray[np.bool_])](
 ) -> Outcome:
     """Whether a campaign's event happened, per auction or per step of an array.
 
-    ``clicked`` and ``converted`` hold the winner's outcome, so each is
-    combined with ``won``.
+    ``won`` can be narrower than the campaign's wins, such as its wins in one
+    segment, so each outcome is combined with it.
     """
     if event == Event.IMPRESSION:
         return won

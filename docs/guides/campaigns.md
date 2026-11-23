@@ -1,6 +1,6 @@
 # Campaigns
 
-This guide shows a campaign's settings: its budget, the event it pays for, its base value, a CPA target and segments.
+This guide shows a campaign's settings: its budget, the event it pays for, its base value, a CPA target and segments. It also shows how to compare campaigns that do not compete.
 
 ## Settings
 
@@ -58,9 +58,47 @@ Keep these limits in mind:
 - `cpa_target` limits cost per conversion, even for a click or impression campaign.
 - A market without a click stage counts every won impression as clicked. There, a click campaign acts like an impression campaign.
 
+## Compare campaigns without competition
+
+By default, all campaigns bid in one auction per step, so each campaign's result depends on the others' bids. To benchmark bid policies, set `competing=False`:
+
+```python
+import bidlab as bl
+
+
+def campaign(name, policy):
+    return bl.Campaign(
+        name, bl.Stack(bl.OracleValue(), policy), budget=3, base_value=20
+    )
+
+
+benchmark = bl.SimConfig(
+    campaigns=[campaign("truthful", bl.Linear()), campaign("pid", bl.PidPacing())],
+    market=bl.markets.LogisticMarket(price_median=0.2),
+    competing=False,
+    episodes=2,
+    steps=200,
+)
+print(bl.run_many(benchmark, seeds=range(3)).summary())
+```
+
+With `competing=False`, the run changes in these ways:
+
+| Part | Behavior |
+|---|---|
+| Market | Drawn once per step for one campaign. Every campaign sees the same features, pCTR, pCVR, market price and floor |
+| Auction | Each campaign bids alone against the market price and floor, so several campaigns can win one impression |
+| Clicks and conversions | One click draw and one conversion draw per step decide every winner, so equal campaigns get equal outcomes |
+| Market price | Required on every draw. Without one, a campaign alone at reserve 0 wins every impression for free, so the run raises `ValueError` |
+| Platform `revenue` and `welfare` | NaN: no single sale exists |
+| `regret` | Replays without other campaigns' bids |
+
+Each campaign's results equal a run of that campaign alone, with the same market and seed, bit for bit. This holds while its bidder draws no random number, since a bidder's stream depends on its place in the config. Give the campaigns the same budget, base value, event and segments, and only the bidder differs.
+
 ## Examples
 
 | Script | Question |
 |---|---|
 | [campaigns/events.py](../../examples/campaigns/events.py) | With the same budget, does a click campaign pay less per click than a conversion campaign? |
+| [campaigns/benchmark.py](../../examples/campaigns/benchmark.py) | On one shared market, does PID pacing earn more surplus than truthful bidding? |
 | [rewards/cpa_target.py](../../examples/rewards/cpa_target.py) | Does bidding target/value of the value meet a CPA target that truthful bidding misses? |

@@ -134,7 +134,7 @@ By default, campaigns compete only with each other. A campaign alone then pays t
 | Market floor | The publisher's floor at one auction |
 | Effective floor, r | The higher of the auction's `reserve` and the market floor |
 
-A campaign wins when its bid is above m, at or above r, and the highest campaign bid. A campaign bid equal to m loses. When no campaign wins, the auction is sold outside: `log.winner` is -1, `log.price` is 0, and nothing is clicked or converted.
+A campaign wins when its bid is above m, at or above r, and the highest campaign bid. A campaign bid equal to m loses. When no campaign wins, the auction is sold outside: `log.won` is False for every campaign, `log.price` is 0, and nothing is clicked or converted.
 
 | Auction | The winner pays |
 |---|---|
@@ -179,7 +179,7 @@ priced = bl.SimConfig(
     steps=200,
 )
 priced_log = bl.run(priced)
-print((priced_log.winner == -1).mean())  # share of auctions sold outside
+print((~priced_log.won.any(axis=2)).mean())  # share of auctions sold outside
 ```
 
 ### IndependentValues

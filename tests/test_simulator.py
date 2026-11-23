@@ -4,7 +4,7 @@ from typing import Any, ClassVar
 import numpy as np
 import pytest
 
-from bidlab.auctions import NO_WINNER, FirstPrice
+from bidlab.auctions import FirstPrice
 from bidlab.bidders import Bidder
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import LogisticMarket, Market, MarketDraw, Segment, Segmented
@@ -77,10 +77,23 @@ def run_spies(cfg):
     return log, list(Spy.instances)
 
 
-def test_log_shapes():
-    log = run(config(campaign("a"), campaign("b"), episodes=2, steps=50))
+def test_outcome_arrays_have_a_campaign_axis():
+    clicks = LogisticMarket(ctr_bias_mean=-1.0)
+    log = run(config(campaign("a"), campaign("b"), episodes=2, steps=50, market=clicks))
     assert log.bids.shape == log.true_values.shape == (2, 50, 2)
-    assert log.winner.shape == log.price.shape == log.converted.shape == (2, 50)
+    for array in (log.won, log.price, log.clicked, log.converted):
+        assert array.shape == (2, 50, 2)
+    assert not hasattr(log, "winner")
+    lost = ~log.won
+    assert lost.any() and log.won.any()
+    assert (log.price[lost] == 0.0).all()
+    assert not log.clicked[lost].any() and not log.converted[lost].any()
+
+
+def test_competing_run_has_one_winner_per_step():
+    log = run(config(campaign("a"), campaign("b"), campaign("c", multiplier=0.9)))
+    assert log.won.sum(axis=2).max() == 1
+    assert (log.won.sum(axis=2) == 1).any()
 
 
 def test_loser_result_has_no_price():
@@ -131,7 +144,7 @@ def test_result_value_is_realized():
         config(campaign("a", base_value=3.0), campaign("b", multiplier=0.9))
     )
     for i, (spy, value) in enumerate(zip(spies, (3.0, 5.0), strict=True)):
-        realized = np.where(log.converted & (log.winner == i), value, 0.0).ravel()
+        realized = np.where(log.converted[:, :, i], value, 0.0).ravel()
         assert [f.realized_value for f in spy.results] == list(realized)
         assert any(f.realized_value == value for f in spy.results)
 
@@ -154,17 +167,17 @@ def test_winner_result_matches_log():
     )
     for i, spy in enumerate(spies):
         for step, fb in enumerate(spy.results):
-            assert fb.won == (log.winner[0, step] == i)
+            assert fb.won == log.won[0, step, i]
             if fb.won:
-                assert fb.price == log.price[0, step]
-                assert fb.converted == log.converted[0, step]
+                assert fb.price == log.price[0, step, i]
+                assert fb.converted == log.converted[0, step, i]
 
 
 def test_spend_never_exceeds_budget():
     greedy = campaign("greedy", multiplier=1e9, budget=2.0)
     log = run(config(greedy, campaign("b")))
-    for episode in range(log.winner.shape[0]):
-        spend = log.price[episode][log.winner[episode] == 0].sum()
+    for episode in range(log.won.shape[0]):
+        spend = log.price[episode, :, 0][log.won[episode, :, 0]].sum()
         assert spend <= 2.0 + 1e-12
     assert np.all(log.bids[:, :, 0] <= 2.0)
 
@@ -190,7 +203,7 @@ def test_same_seed_same_log():
     first = run(config(campaign("a"), campaign("b", multiplier=0.8)))
     second = run(config(campaign("a"), campaign("b", multiplier=0.8)))
     np.testing.assert_array_equal(first.bids, second.bids)
-    np.testing.assert_array_equal(first.winner, second.winner)
+    np.testing.assert_array_equal(first.won, second.won)
     np.testing.assert_array_equal(first.converted, second.converted)
     other = run(config(campaign("a"), campaign("b", multiplier=0.8), seed=8))
     assert not np.array_equal(first.true_values, other.true_values)
@@ -210,7 +223,7 @@ def test_episode_end_gets_report_only():
 
 def test_reserve_above_all_bids_gives_no_sales():
     log = run(config(campaign("a"), auction=FirstPrice(reserve=1e6)))
-    assert np.all(log.winner == -1)
+    assert not log.won.any()
     assert np.all(log.price == 0)
 
 
@@ -298,7 +311,7 @@ def test_targeted_bidder_skips_other_segments():
     sports = log.segment == NEWS_AND_SPORTS.segment_names.index("sports")
     assert sports.any() and (~sports).any()
     assert np.all(log.bids[sports][:, 0] == 0.0)
-    assert not np.any(log.winner[sports] == 0)
+    assert not np.any(log.won[sports][:, 0])
     assert len(news_only.requests) == np.sum(~sports)
     assert len(news_only.results) == np.sum(~sports)
     assert isinstance(news_batches, BatchSpy)
@@ -310,7 +323,7 @@ def test_lone_targeted_bidder_never_wins_outside_its_segments():
     cfg = config(campaign("news_only", segments=("news",)), market=NEWS_AND_SPORTS)
     log = run(cfg)
     sports = log.segment == NEWS_AND_SPORTS.segment_names.index("sports")
-    assert np.all(log.winner[sports] == NO_WINNER)
+    assert not log.won[sports].any()
     assert np.all(log.price[sports] == 0.0)
 
 
@@ -346,7 +359,7 @@ def test_custom_market_segments_drive_targeting_and_log():
     step = np.arange(cfg.episodes * cfg.steps).reshape(cfg.episodes, cfg.steps)
     np.testing.assert_array_equal(log.segment, (step % 10 >= 6).astype(int))
     assert len(night_only.requests) == np.sum(step % 10 >= 6)
-    assert not np.any(log.winner[log.segment == 0] == 0)
+    assert not np.any(log.won[log.segment == 0][:, 0])
 
 
 def click_config(pctr, pcvr, **kwargs):
@@ -360,9 +373,9 @@ def click_config(pctr, pcvr, **kwargs):
 def test_click_and_conversion_shares():
     cfg = click_config([0.2], [0.5], episodes=1, steps=20_000)
     log = run(dataclasses.replace(cfg, campaigns=(campaign("a", budget=1e9),)))
-    wins = log.winner == 0
+    wins = log.won[:, :, 0]
     assert wins.all()
-    assert abs(log.clicked[wins].mean() - 0.2) < 0.02
+    assert abs(log.clicked[:, :, 0][wins].mean() - 0.2) < 0.02
     assert abs(log.converted[log.clicked].mean() - 0.5) < 0.03
 
 
@@ -375,7 +388,7 @@ def test_no_conversion_without_click(pctr):
 
 def test_no_click_stage_clicks_every_win():
     log, spies = run_spies(click_config(None, [0.1, 0.1]))
-    np.testing.assert_array_equal(log.clicked, log.winner != NO_WINNER)
+    np.testing.assert_array_equal(log.clicked, log.won)
     for spy in spies:
         assert all(result.clicked == result.won for result in spy.results)
 
@@ -383,18 +396,19 @@ def test_no_click_stage_clicks_every_win():
 def test_clicked_array_shape_and_read_only():
     cfg = click_config([0.5, 0.5], [0.5, 0.5], auction=FirstPrice(reserve=0.3))
     log = run(cfg)
-    assert log.clicked.shape == (cfg.episodes, cfg.steps)
+    assert log.clicked.shape == (cfg.episodes, cfg.steps, 2)
     assert log.clicked.dtype == np.bool_
     assert not log.clicked.flags.writeable
-    assert (log.winner == NO_WINNER).any()
-    assert not log.clicked[log.winner == NO_WINNER].any()
+    unsold = ~log.won.any(axis=2)
+    assert unsold.any()
+    assert not log.clicked[unsold].any()
 
 
 def test_bid_result_clicked_only_for_clicked_winner():
     log, spies = run_spies(click_config([0.4, 0.4], [0.5, 0.5]))
     for i, spy in enumerate(spies):
         clicked = [result.clicked for result in spy.results]
-        expected = (log.clicked & (log.winner == i)).ravel().tolist()
+        expected = log.clicked[:, :, i].ravel().tolist()
         assert clicked == expected
         assert any(clicked)
         assert all(result.won for result in spy.results if result.clicked)
@@ -477,4 +491,4 @@ def test_bad_bid_counts_as_zero(bid):
     bad = Campaign("bad", FixedBid(bid), budget=100.0, base_value=5.0)
     log = run(config(bad, campaign("b"), episodes=1, steps=50))
     assert (log.bids[:, :, 0] == 0.0).all()
-    assert not (log.winner == 0).any()
+    assert not log.won[:, :, 0].any()
