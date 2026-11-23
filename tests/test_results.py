@@ -2,6 +2,7 @@ import csv
 import dataclasses
 import sys
 import threading
+from typing import assert_type
 
 import numpy as np
 import pytest
@@ -13,8 +14,8 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.markets import LogisticMarket, Market, MarketDraw, Segment, Segmented
 from bidlab.metrics import campaign_metrics, segment_metrics
 from bidlab.results import Results
-from bidlab.runner import COLUMNS, SEGMENT_COLUMNS, run_many
-from bidlab.simulator import run
+from bidlab.runner import COLUMNS, SEGMENT_COLUMNS
+from bidlab.simulator import RunLog, run
 from bidlab.types import Event
 
 
@@ -33,7 +34,7 @@ def config(*extra):
 
 
 def test_rows_ordered_by_seed_then_bidder():
-    results = run_many(config(), seeds=range(3))
+    results = run(config(), seed=range(3))
     assert len(results) == 3 * 2
     assert [(row["seed"], row["campaign"]) for row in results.rows] == [
         (0, "t"),
@@ -47,9 +48,86 @@ def test_rows_ordered_by_seed_then_bidder():
     assert results.columns == COLUMNS
 
 
+def test_rows_follow_the_given_seed_order():
+    results = run(config(), seed=[2, 0])
+    assert [row["seed"] for row in results.rows] == [2, 2, 0, 0]
+
+
+# Factories, since a generator would be used up after one run of the test.
+@pytest.mark.parametrize(
+    "make_seeds",
+    [
+        lambda: [3, 1],
+        lambda: (3, 1),
+        lambda: np.array([3, 1]),
+        lambda: (seed for seed in [3, 1]),
+        lambda: iter([np.int32(3), 1]),
+    ],
+    ids=["list", "tuple", "array", "generator", "numpy-ints"],
+)
+def test_any_iterable_of_ints_is_a_seed_list(make_seeds):
+    results = run(config(), seed=make_seeds())
+    assert isinstance(results, Results)
+    assert results.equals(run(config(), seed=[3, 1]))
+    assert all(type(row["seed"]) is int for row in results.rows)
+
+
+def test_one_seed_list_gives_results_and_an_int_gives_a_log():
+    listed = run(config(), seed=[42])
+    assert isinstance(listed, Results)
+    assert [row["seed"] for row in listed.rows] == [42, 42]
+    single = run(config(), seed=42, progress_bar=False)
+    assert isinstance(single, RunLog)
+    assert single.seed == 42
+    assert isinstance(run(config(), seed=np.int64(42), progress_bar=False), RunLog)
+
+
+def test_run_return_type_follows_seed():
+    # pyright checks these; at run time assert_type only returns its argument.
+    assert_type(run(config(), progress_bar=False), RunLog)
+    assert_type(run(config(), seed=1, progress_bar=False), RunLog)
+    assert_type(run(config(), seed=np.int64(1), progress_bar=False), RunLog)
+    assert_type(run(config(), seed=[1]), Results)
+    assert_type(run(config(), seed=range(1)), Results)
+
+
+@pytest.mark.parametrize(
+    ("seed", "match"),
+    [
+        (1.5, "an int or an iterable of ints, got float"),
+        ("12", "an int or an iterable of ints, got str"),
+        (b"12", "an int or an iterable of ints, got bytes"),
+        (True, "an int or an iterable of ints, got bool"),
+        (None, "an int or an iterable of ints, got NoneType"),
+        ([0, 1.0], "only ints, got float"),
+        ([0, True], "only ints, got bool"),
+        (["0"], "only ints, got str"),
+        (np.array([0.0]), "only ints, got float64"),
+    ],
+)
+def test_seed_that_is_no_int_or_int_list_rejected(seed, match):
+    with pytest.raises(TypeError, match=match):
+        run(config(), seed=seed)
+
+
+@pytest.mark.parametrize("make_seeds", [list, lambda: range(0), lambda: iter([])])
+def test_empty_seed_list_rejected(make_seeds):
+    with pytest.raises(ValueError, match="empty"):
+        run(config(), seed=make_seeds())
+
+
+@pytest.mark.parametrize("seed", [0, np.int64(0)])
+def test_workers_need_a_seed_list(seed):
+    with pytest.raises(ValueError, match="workers=2 needs a seed list"):
+        run(config(), seed=seed, workers=2)
+
+    with pytest.raises(ValueError, match="workers must be >= 1"):
+        run(config(), seed=seed, workers=0)
+
+
 def test_workers_give_same_rows():
-    serial = run_many(config(), seeds=range(4))
-    parallel = run_many(config(), seeds=range(4), workers=2)
+    serial = run(config(), seed=range(4))
+    parallel = run(config(), seed=range(4), workers=2)
     assert parallel.equals(serial)
 
 
@@ -66,8 +144,8 @@ def test_lambdas_and_closures_run_in_parallel():
         budget=20.0,
         base_value=5.0,
     )
-    serial = run_many(config(extra), seeds=range(3))
-    parallel = run_many(config(extra), seeds=range(3), workers=2)
+    serial = run(config(extra), seed=range(3))
+    parallel = run(config(extra), seed=range(3), workers=2)
     assert parallel.equals(serial)
 
 
@@ -85,7 +163,7 @@ def test_unpicklable_spec_fails_before_runs(monkeypatch):
     )
     extra = Campaign("locked", Locked(), budget=20.0, base_value=5.0)
     with pytest.raises(TypeError, match="'locked'.*workers=1"):
-        run_many(config(extra), seeds=range(2), workers=2)
+        run(config(extra), seed=range(2), workers=2)
 
     assert pools == []
 
@@ -116,7 +194,7 @@ def test_summary_one_seed_shows_na():
 
 
 def test_save_csv_round_trip(tmp_path):
-    results = run_many(config(), seeds=range(2))
+    results = run(config(), seed=range(2))
     path = tmp_path / "runs.csv"
     results.save_csv(path)
     with path.open() as file:
@@ -132,7 +210,7 @@ def test_save_csv_round_trip(tmp_path):
 
 def test_to_pandas_matches_rows():
     pandas = pytest.importorskip("pandas")
-    results = run_many(config(), seeds=range(2))
+    results = run(config(), seed=range(2))
     frame = results.to_pandas()
     assert isinstance(frame, pandas.DataFrame)
     assert tuple(frame.columns) == COLUMNS
@@ -150,12 +228,12 @@ def test_to_pandas_without_pandas_names_extra(monkeypatch):
 
 def test_workers_below_one_rejected():
     with pytest.raises(ValueError, match="workers"):
-        run_many(config(), seeds=range(1), workers=0)
+        run(config(), seed=range(1), workers=0)
 
 
 def test_nothing_printed(capsys, tmp_path):
     run(config())
-    results = run_many(config(), seeds=range(2))
+    results = run(config(), seed=range(2))
     results.summary()
     results.save_csv(tmp_path / "out.csv")
     captured = capsys.readouterr()
@@ -163,16 +241,16 @@ def test_nothing_printed(capsys, tmp_path):
 
 
 def test_equals_treats_nan_as_equal():
-    first = run_many(config(), seeds=range(2))
-    second = run_many(config(), seeds=range(2))
+    first = run(config(), seed=range(2))
+    second = run(config(), seed=range(2))
     assert first.rows != second.rows  # NaN cells make plain == fail
     assert first.equals(second)
-    assert not first.equals(run_many(config(), seeds=range(1, 3)))
+    assert not first.equals(run(config(), seed=range(1, 3)))
     assert not first.equals(Results(columns=COLUMNS[:-1], rows=first.rows))
 
 
 def test_results_rows_are_read_only():
-    results = run_many(config(), seeds=range(1))
+    results = run(config(), seed=range(1))
     with pytest.raises(TypeError):
         results.rows[0]["spend"] = 0.0  # pyright: ignore[reportIndexIssue]  Reason: the test checks that rows are read-only.
 
@@ -191,8 +269,8 @@ def test_custom_market_same_rows_in_parallel():
                 yield MarketDraw({}, pcvr=rng.uniform(0.0, 0.2, size=count))
 
     cfg = dataclasses.replace(config(), market=LowRates())
-    serial = run_many(cfg, seeds=range(3))
-    parallel = run_many(cfg, seeds=range(3), workers=2)
+    serial = run(cfg, seed=range(3))
+    parallel = run(cfg, seed=range(3), workers=2)
     assert parallel.equals(serial)
     assert segments_table(parallel).equals(segments_table(serial))
 
@@ -212,7 +290,7 @@ def segmented_config():
 
 
 def test_segments_table_columns():
-    results = run_many(segmented_config(), seeds=range(2))
+    results = run(segmented_config(), seed=range(2))
     assert results.columns == COLUMNS
     assert isinstance(results.segment_rows, Results)
     assert results.segment_rows.columns == SEGMENT_COLUMNS
@@ -231,7 +309,7 @@ def test_segments_table_columns():
 
 
 def test_segment_sums_match_main_table():
-    results = run_many(segmented_config(), seeds=range(3))
+    results = run(segmented_config(), seed=range(3))
     for row in results.rows:
         own = [
             segment
@@ -244,7 +322,7 @@ def test_segment_sums_match_main_table():
 
 
 def test_targeted_bidder_has_nothing_in_other_segments():
-    results = run_many(segmented_config(), seeds=range(2))
+    results = run(segmented_config(), seed=range(2))
     sports = [
         row
         for row in segments_table(results).rows
@@ -254,7 +332,7 @@ def test_targeted_bidder_has_nothing_in_other_segments():
 
 
 def test_unsegmented_market_has_all_segment():
-    results = run_many(config(), seeds=range(2))
+    results = run(config(), seed=range(2))
     assert [
         (row["seed"], row["campaign"], row["segment"])
         for row in segments_table(results).rows
@@ -267,7 +345,7 @@ def test_unsegmented_market_has_all_segment():
 
 
 def test_segments_summary_and_csv(tmp_path):
-    segments = segments_table(run_many(segmented_config(), seeds=range(3)))
+    segments = segments_table(run(segmented_config(), seed=range(3)))
     lines = segments.summary().splitlines()
     assert lines[0].split() == [
         "campaign",
@@ -300,7 +378,7 @@ def test_segments_summary_and_csv(tmp_path):
 
 def test_segments_to_pandas():
     pytest.importorskip("pandas")
-    segments = segments_table(run_many(segmented_config(), seeds=range(2)))
+    segments = segments_table(run(segmented_config(), seed=range(2)))
     frame = segments.to_pandas()
     assert tuple(frame.columns) == SEGMENT_COLUMNS
     round_trip = Results(columns=SEGMENT_COLUMNS, rows=tuple(frame.to_dict("records")))
@@ -333,7 +411,7 @@ def test_custom_market_segments_reach_segments_table():
         steps=100,
         market=DayAndNight(),
     )
-    segments = segments_table(run_many(cfg, seeds=range(2)))
+    segments = segments_table(run(cfg, seed=range(2)))
     assert {row["segment"] for row in segments.rows} == {"day", "night"}
     day_rows = [
         r for r in segments.rows if r["campaign"] == "n" and r["segment"] == "day"
@@ -346,15 +424,15 @@ def test_noisy_parallel_equals_serial():
         "n", Stack(OracleValue(noise=0.5), Linear()), budget=20.0, base_value=5.0
     )
     cfg = config(noisy)
-    serial = run_many(cfg, seeds=range(3))
-    parallel = run_many(cfg, seeds=range(3), workers=2)
+    serial = run(cfg, seed=range(3))
+    parallel = run(cfg, seed=range(3), workers=2)
     assert parallel.equals(serial)
     exact = Campaign("n", Stack(OracleValue(), Linear()), budget=20.0, base_value=5.0)
-    assert not serial.equals(run_many(config(exact), seeds=range(3)))
+    assert not serial.equals(run(config(exact), seed=range(3)))
 
 
 def test_no_reward_columns():
-    results = run_many(segmented_config(), seeds=range(2))
+    results = run(segmented_config(), seed=range(2))
     segments = segments_table(results)
     for columns in (results.columns, segments.columns, results.summary().split()):
         assert "reward" not in columns and "episode_reward" not in columns
@@ -362,14 +440,14 @@ def test_no_reward_columns():
 
 
 def test_clicks_column():
-    plain = run_many(config(), seeds=range(2))
+    plain = run(config(), seed=range(2))
     assert plain.columns.index("clicks") == plain.columns.index("wins") + 1
     assert all(row["clicks"] == row["wins"] for row in plain.rows)
 
     clicking = dataclasses.replace(config(), market=LogisticMarket(ctr_bias_mean=-1.0))
-    results = run_many(clicking, seeds=range(2))
+    results = run(clicking, seed=range(2))
     for row in results.rows:
-        log = run(dataclasses.replace(clicking, seed=row["seed"]))
+        log = run(clicking, seed=int(row["seed"]))
         index = [c.name for c in clicking.campaigns].index(str(row["campaign"]))
         clicked_wins = log.clicked[:, :, index].sum(axis=1)
         assert row["clicks"] == pytest.approx(clicked_wins.mean())
@@ -383,7 +461,7 @@ def test_segment_clicks_sum_to_main():
     clicking = dataclasses.replace(
         segmented, market=dataclasses.replace(segmented.market, base=base)
     )
-    results = run_many(clicking, seeds=range(3))
+    results = run(clicking, seed=range(3))
     for row in results.rows:
         own = [
             float(segment["clicks"])
@@ -429,10 +507,10 @@ def episode_counts(log, index, steps=None):
 
 
 def rows_with_counts(cfg, seeds=range(2)):
-    results = run_many(cfg, seeds=seeds)
+    results = run(cfg, seed=seeds)
     names = [campaign.name for campaign in cfg.campaigns]
     for row in results.rows:
-        log = run(dataclasses.replace(cfg, seed=int(row["seed"])))
+        log = run(cfg, seed=int(row["seed"]))
         name = str(row["campaign"])
         yield row, name, episode_counts(log, names.index(name))
 
@@ -451,10 +529,10 @@ def test_segment_surplus_follows_event():
         (Segment("news", 0.6), Segment("sports", 0.4, cvr_lift=1.0)), base
     )
     cfg = event_config(market)
-    results = run_many(cfg, seeds=range(2))
+    results = run(cfg, seed=range(2))
     names = [campaign.name for campaign in cfg.campaigns]
     for row in segments_table(results).rows:
-        log = run(dataclasses.replace(cfg, seed=int(row["seed"])))
+        log = run(cfg, seed=int(row["seed"]))
         name = str(row["campaign"])
         here = log.segment == market.segment_names.index(str(row["segment"]))
         counts = episode_counts(log, names.index(name), here)
@@ -464,7 +542,7 @@ def test_segment_surplus_follows_event():
 
 def test_ctr_and_cpc_columns():
     cfg = event_config()
-    columns = run_many(cfg, seeds=range(1)).columns
+    columns = run(cfg, seed=range(1)).columns
     assert columns.index("ctr") == columns.index("budget_used") + 1
     assert columns.index("cpc") == columns.index("ctr") + 1
     assert columns.index("cpa") == columns.index("cpc") + 1
@@ -522,14 +600,14 @@ def test_regret_and_welfare_follow_event(event, factor):
         market=FixedRates(),
         auction=FirstPrice(),
     )
-    (row,) = run_many(cfg, seeds=[0]).rows
+    (row,) = run(cfg, seed=[0]).rows
     total_value = 100 * 2.0 * factor
     assert row["welfare"] == pytest.approx(total_value)
     assert row["regret"] == pytest.approx(0.95 * total_value)
 
 
 def test_repr_shows_summary():
-    results = run_many(config(), seeds=range(3))
+    results = run(config(), seed=range(3))
     assert repr(results) == (
         "Results: 6 rows, mean ± 95% interval over 3 seeds\n" + results.summary()
     )
@@ -546,7 +624,7 @@ def test_repr_without_summary_columns():
 
 
 def test_repr_without_seed_column():
-    results = run_many(config(), seeds=range(2))
+    results = run(config(), seed=range(2))
     columns = COLUMNS[1:]
     table = Results(
         columns=columns,
@@ -556,7 +634,7 @@ def test_repr_without_seed_column():
 
 
 def test_repr_without_a_metric_column():
-    results = run_many(config(), seeds=range(2))
+    results = run(config(), seed=range(2))
     columns = tuple(column for column in COLUMNS if column != "regret")
     table = Results(
         columns=columns,
@@ -596,13 +674,13 @@ def budget_out_config():
 @pytest.mark.filterwarnings("error")
 def test_new_columns_and_budget_out_mean():
     cfg = budget_out_config()
-    results = run_many(cfg, seeds=range(3))
+    results = run(cfg, seed=range(3))
     after_regret = results.columns.index("regret") + 1
     assert results.columns[after_regret:] == (*NEW_COLUMNS, "revenue", "welfare")
     assert "expected_surplus" in segments_table(results).columns
     seen = set()
     for row in results.rows:
-        log = run(dataclasses.replace(cfg, seed=row["seed"]))
+        log = run(cfg, seed=int(row["seed"]))
         own = [m for m in campaign_metrics(log) if m.campaign == row["campaign"]]
         for column in NEW_COLUMNS:
             if column != "budget_out":
@@ -629,7 +707,7 @@ def test_new_columns_and_budget_out_mean():
 
 def test_workers_match_with_new_columns():
     cfg = budget_out_config()
-    serial = run_many(cfg, seeds=range(3))
-    parallel = run_many(cfg, seeds=range(3), workers=2)
+    serial = run(cfg, seed=range(3))
+    parallel = run(cfg, seed=range(3), workers=2)
     assert all(column in serial.columns for column in NEW_COLUMNS)
     assert parallel.equals(serial)

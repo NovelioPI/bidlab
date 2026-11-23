@@ -87,9 +87,8 @@ def probe_run(
         steps=STEPS,
         horizon_hours=1,
         feedback=feedback or bl.Feedback(),
-        seed=3,
     )
-    log = bl.run(config)
+    log = bl.run(config, seed=3)
     (probe,) = Probe.instances
     return log, probe
 
@@ -328,9 +327,9 @@ def test_feedback_results_repeat():
         horizon_hours=1,
         feedback=bl.Feedback(interval=360, report_delay=100, conversion_delay=900),
     )
-    first = bl.run_many(config, seeds=range(2))
-    assert first.equals(bl.run_many(config, seeds=range(2)))
-    assert first.equals(bl.run_many(config, seeds=range(2), workers=2))
+    first = bl.run(config, seed=range(2))
+    assert first.equals(bl.run(config, seed=range(2)))
+    assert first.equals(bl.run(config, seed=range(2), workers=2))
 
 
 def converted_steps(log, episode):
@@ -441,9 +440,8 @@ def test_conversion_hook_alone_makes_a_learner(monkeypatch):
         steps=STEPS,
         horizon_hours=1,
         feedback=bl.Feedback(conversion_delay=900),
-        seed=3,
     )
-    log = bl.run(config)
+    log = bl.run(config, seed=3)
     (probe,) = Probe.instances
     holder_copy = probe.campaign.bidder
     assert isinstance(holder_copy, bl.Stack)

@@ -11,6 +11,8 @@ from bidlab.markets import LogisticMarket, Market, MarketDraw, Segment, Segmente
 from bidlab.simulator import BUILT_IN_INPUTS, run
 from bidlab.types import BidResult, EpisodeReport, MarketTruth
 
+SEED = 7
+
 
 class Spy(Bidder):
     """Bids `multiplier` × its true value and records every call it receives."""
@@ -67,19 +69,22 @@ def campaign(name, multiplier=1.0, budget=100.0, bidder=Spy, base_value=5.0, **k
 
 
 def config(*bidders, **kwargs):
-    defaults: dict[str, Any] = {"episodes": 3, "steps": 200, "seed": 7}
+    defaults: dict[str, Any] = {"episodes": 3, "steps": 200}
     return SimConfig(campaigns=tuple(bidders), **(defaults | kwargs))
 
 
 def run_spies(cfg):
     Spy.instances.clear()
-    log = run(cfg)
+    log = run(cfg, seed=SEED)
     return log, list(Spy.instances)
 
 
 def test_outcome_arrays_have_a_campaign_axis():
     clicks = LogisticMarket(ctr_bias_mean=-1.0)
-    log = run(config(campaign("a"), campaign("b"), episodes=2, steps=50, market=clicks))
+    log = run(
+        config(campaign("a"), campaign("b"), episodes=2, steps=50, market=clicks),
+        seed=SEED,
+    )
     assert log.bids.shape == log.true_values.shape == (2, 50, 2)
     for array in (log.won, log.price, log.clicked, log.converted):
         assert array.shape == (2, 50, 2)
@@ -91,7 +96,9 @@ def test_outcome_arrays_have_a_campaign_axis():
 
 
 def test_competing_run_has_one_winner_per_step():
-    log = run(config(campaign("a"), campaign("b"), campaign("c", multiplier=0.9)))
+    log = run(
+        config(campaign("a"), campaign("b"), campaign("c", multiplier=0.9)), seed=SEED
+    )
     assert log.won.sum(axis=2).max() == 1
     assert (log.won.sum(axis=2) == 1).any()
 
@@ -175,7 +182,7 @@ def test_winner_result_matches_log():
 
 def test_spend_never_exceeds_budget():
     greedy = campaign("greedy", multiplier=1e9, budget=2.0)
-    log = run(config(greedy, campaign("b")))
+    log = run(config(greedy, campaign("b")), seed=SEED)
     for episode in range(log.won.shape[0]):
         spend = log.price[episode, :, 0][log.won[episode, :, 0]].sum()
         assert spend <= 2.0 + 1e-12
@@ -200,18 +207,18 @@ def test_same_bidder_object_and_hook_per_episode():
 
 
 def test_same_seed_same_log():
-    first = run(config(campaign("a"), campaign("b", multiplier=0.8)))
-    second = run(config(campaign("a"), campaign("b", multiplier=0.8)))
+    first = run(config(campaign("a"), campaign("b", multiplier=0.8)), seed=SEED)
+    second = run(config(campaign("a"), campaign("b", multiplier=0.8)), seed=SEED)
     np.testing.assert_array_equal(first.bids, second.bids)
     np.testing.assert_array_equal(first.won, second.won)
     np.testing.assert_array_equal(first.converted, second.converted)
-    other = run(config(campaign("a"), campaign("b", multiplier=0.8), seed=8))
+    other = run(config(campaign("a"), campaign("b", multiplier=0.8)), seed=8)
     assert not np.array_equal(first.true_values, other.true_values)
 
 
 def test_adding_bidder_keeps_world_draws():
-    two = run(config(campaign("a"), campaign("b")))
-    three = run(config(campaign("a"), campaign("b"), campaign("c")))
+    two = run(config(campaign("a"), campaign("b")), seed=SEED)
+    three = run(config(campaign("a"), campaign("b"), campaign("c")), seed=SEED)
     np.testing.assert_array_equal(two.true_values, three.true_values[:, :, :2])
 
 
@@ -222,7 +229,7 @@ def test_episode_end_gets_report_only():
 
 
 def test_reserve_above_all_bids_gives_no_sales():
-    log = run(config(campaign("a"), auction=FirstPrice(reserve=1e6)))
+    log = run(config(campaign("a"), auction=FirstPrice(reserve=1e6)), seed=SEED)
     assert not log.won.any()
     assert np.all(log.price == 0)
 
@@ -258,7 +265,7 @@ def test_custom_market_values_are_weight_times_probability():
         market=CountingMarket(),
         steps=30,
     )
-    log = run(cfg)
+    log = run(cfg, seed=SEED)
     step = np.arange(cfg.episodes * cfg.steps).reshape(cfg.episodes, cfg.steps)
     expected = (step[..., None] % 10 + np.arange(2)) / 20 * np.array([2.0, 4.0])
     np.testing.assert_array_equal(log.true_values, expected)
@@ -272,7 +279,7 @@ def test_custom_market_values_are_weight_times_probability():
 def test_bad_market_draw_rejected(pcvr):
     cfg = config(campaign("a"), campaign("b"), market=FixedMarket(pcvr))
     with pytest.raises(ValueError, match="FixedMarket at episode 0, step 0"):
-        run(cfg)
+        run(cfg, seed=SEED)
 
 
 def test_market_that_stops_names_the_market():
@@ -281,7 +288,7 @@ def test_market_that_stops_names_the_market():
             yield MarketDraw({}, pcvr=np.full(count, 0.5))
 
     with pytest.raises(RuntimeError, match="Short at episode 0, step 1"):
-        run(config(campaign("a"), market=Short()))
+        run(config(campaign("a"), market=Short()), seed=SEED)
 
 
 def test_features_reach_every_bidder():
@@ -321,7 +328,7 @@ def test_targeted_bidder_skips_other_segments():
 
 def test_lone_targeted_bidder_never_wins_outside_its_segments():
     cfg = config(campaign("news_only", segments=("news",)), market=NEWS_AND_SPORTS)
-    log = run(cfg)
+    log = run(cfg, seed=SEED)
     sports = log.segment == NEWS_AND_SPORTS.segment_names.index("sports")
     assert not log.won[sports].any()
     assert np.all(log.price[sports] == 0.0)
@@ -372,7 +379,9 @@ def click_config(pctr, pcvr, **kwargs):
 
 def test_click_and_conversion_shares():
     cfg = click_config([0.2], [0.5], episodes=1, steps=20_000)
-    log = run(dataclasses.replace(cfg, campaigns=(campaign("a", budget=1e9),)))
+    log = run(
+        dataclasses.replace(cfg, campaigns=(campaign("a", budget=1e9),)), seed=SEED
+    )
     wins = log.won[:, :, 0]
     assert wins.all()
     assert abs(log.clicked[:, :, 0][wins].mean() - 0.2) < 0.02
@@ -381,7 +390,7 @@ def test_click_and_conversion_shares():
 
 @pytest.mark.parametrize("pctr", [None, [0.3, 0.6]])
 def test_no_conversion_without_click(pctr):
-    log = run(click_config(pctr, [0.9, 0.8]))
+    log = run(click_config(pctr, [0.9, 0.8]), seed=SEED)
     assert log.converted.any()
     assert not (log.converted & ~log.clicked).any()
 
@@ -395,7 +404,7 @@ def test_no_click_stage_clicks_every_win():
 
 def test_clicked_array_shape_and_read_only():
     cfg = click_config([0.5, 0.5], [0.5, 0.5], auction=FirstPrice(reserve=0.3))
-    log = run(cfg)
+    log = run(cfg, seed=SEED)
     assert log.clicked.shape == (cfg.episodes, cfg.steps, 2)
     assert log.clicked.dtype == np.bool_
     assert not log.clicked.flags.writeable
@@ -415,11 +424,11 @@ def test_bid_result_clicked_only_for_clicked_winner():
 
 
 def test_true_values_use_both_stages():
-    clicks = run(click_config([0.2, 0.4], [0.5, 0.25]))
+    clicks = run(click_config([0.2, 0.4], [0.5, 0.25]), seed=SEED)
     np.testing.assert_array_equal(
         clicks.true_values[0, 0], [5.0 * 0.2 * 0.5, 5.0 * 0.4 * 0.25]
     )
-    no_clicks = run(click_config(None, [0.5, 0.25]))
+    no_clicks = run(click_config(None, [0.5, 0.25]), seed=SEED)
     np.testing.assert_array_equal(no_clicks.true_values[0, 0], [5.0 * 0.5, 5.0 * 0.25])
 
 
@@ -430,7 +439,7 @@ def test_true_values_use_both_stages():
 )
 def test_bad_pctr_rejected(pctr):
     with pytest.raises(ValueError, match="FixedMarket at episode 0, step 0: .*pctr"):
-        run(click_config(pctr, [0.5, 0.5]))
+        run(click_config(pctr, [0.5, 0.5]), seed=SEED)
 
 
 @pytest.mark.parametrize("pctr", [None, [0.3, 0.6]])
@@ -473,7 +482,10 @@ class Oracle(Bidder):
 def test_market_input_by_name():
     oracle = Campaign("o", Oracle(), budget=100.0, base_value=5.0)
     other = Campaign("p", Oracle(), budget=100.0, base_value=5.0)
-    log = run(config(oracle, other, market=FixedMarket([0.1, 0.2], pctr=[0.5, 0.25])))
+    log = run(
+        config(oracle, other, market=FixedMarket([0.1, 0.2], pctr=[0.5, 0.25])),
+        seed=SEED,
+    )
     np.testing.assert_array_equal(log.bids[..., 0], 5.0 * 0.5 * 0.1)
     np.testing.assert_array_equal(log.bids[..., 1], 5.0 * 0.25 * 0.2)
 
@@ -489,6 +501,34 @@ class FixedBid(Bidder):
 @pytest.mark.parametrize("bid", [np.nan, np.inf, -np.inf, -1.0])
 def test_bad_bid_counts_as_zero(bid):
     bad = Campaign("bad", FixedBid(bid), budget=100.0, base_value=5.0)
-    log = run(config(bad, campaign("b"), episodes=1, steps=50))
+    log = run(config(bad, campaign("b"), episodes=1, steps=50), seed=SEED)
     assert (log.bids[:, :, 0] == 0.0).all()
     assert not log.won[:, :, 0].any()
+
+
+def test_run_log_records_its_seed():
+    cfg = config(campaign("a"), episodes=1, steps=20)
+    assert run(cfg).seed == 0
+    seeded = run(cfg, seed=SEED)
+    assert seeded.seed == SEED
+    assert not np.array_equal(seeded.true_values, run(cfg).true_values)
+
+
+def test_numpy_integer_seed_runs_like_its_int():
+    cfg = config(campaign("a"), campaign("b"), episodes=1, steps=50)
+    plain = run(cfg, seed=SEED)
+    numpy_seeded = run(cfg, seed=np.int64(SEED))
+    assert type(numpy_seeded.seed) is int
+    for name in ("bids", "true_values", "won", "price", "converted"):
+        assert getattr(numpy_seeded, name).tobytes() == getattr(plain, name).tobytes()
+
+
+@pytest.mark.parametrize("seed", [True, 1.0, "1", None])
+def test_seed_must_be_an_int(seed):
+    with pytest.raises(TypeError, match="seed"):
+        run(config(campaign("a"), episodes=1, steps=5), seed=seed)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
+
+
+def test_config_has_no_seed():
+    with pytest.raises(TypeError, match="seed"):
+        SimConfig(campaigns=[campaign("a")], seed=1)  # pyright: ignore[reportCallIssue]  Reason: the test checks that the removed field is rejected.

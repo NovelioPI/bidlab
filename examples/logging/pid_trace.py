@@ -17,9 +17,12 @@ class SpendShare(bl.Callback):
     def __init__(self):
         self.shares = []
 
-    def on_run_start(self, config):
+    def on_run_start(self, config, seed):
         names = [campaign.name for campaign in config.campaigns]
-        print(f"run: {names}, {config.episodes} episodes of {config.steps} auctions")
+        print(
+            f"run with seed {seed}: {names},"
+            f" {config.episodes} episodes of {config.steps} auctions"
+        )
 
     def on_episode_end(self, episode, reports):
         pid = reports["pid"]
@@ -63,7 +66,7 @@ if __name__ == "__main__":
     blocks = multiplier[-1].reshape(-1, per_block).mean(axis=1)
     print(f"last-episode multiplier per {BLOCK_HOURS} hours: {np.round(blocks, 2)}")
 
-    results = bl.run_many(config, seeds=range(3), callbacks=[watcher])
+    results = bl.run(config, seed=range(3), callbacks=[watcher])
     print(
         f"multiplier over seeds: {results.logged['bidders.1.multiplier']['pid'].shape}"
     )

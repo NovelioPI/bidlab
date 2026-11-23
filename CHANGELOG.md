@@ -8,11 +8,21 @@ bidlab follows [semantic versioning](https://semver.org/). Before 1.0, a minor v
 
 ### Breaking
 
+- `run_many` is removed: `run` takes the seed. `run(config, seed=[0, 1, 2])`, or any other iterable of ints, returns the `Results` that `run_many(config, seeds=[0, 1, 2])` did, with the same `workers`, `callbacks`, `progress_bar` and `profiler` arguments. `seed=[42]` also returns `Results`.
+- `SimConfig.seed` is removed: pass `run(config, seed=7)`. The seed defaults to 0, and `RunLog.seed` records it. A `RunLog` built by hand needs `seed`.
+- `run` takes `callbacks`, `progress_bar` and `profiler` as keywords only.
+- Callback hooks are renamed: `on_run_many_start(config, seeds)` is `on_seeds_start(config, seeds)` and `on_run_many_end(results)` is `on_seeds_end(results)`. `on_run_start(config)` is `on_run_start(config, seed)`, so a callback sees the seed during a run.
 - Every `Campaign` setting after `bidder` is keyword-only: `Campaign(name, bidder, budget=..., base_value=...)`. A positional budget would now swap with the value, so it raises `TypeError`.
 - `Campaign.budget` defaults to None, which sizes the budget from the market. Set `budget` to keep a fixed budget.
 - A `RunLog` built by hand needs `budgets`.
-- `run_many` results and their CSV files have a new `budget` column.
-- `run_many` results have nine new columns after `regret`, so `revenue` and `welfare` move right in a CSV. Code that reads columns by name is not affected.
+- Seed-list results and their CSV files have a new `budget` column.
+- Seed-list results have nine new columns after `regret`, so `revenue` and `welfare` move right in a CSV. Code that reads columns by name is not affected.
+
+### Runs
+
+- `run(config, seed)` raises `TypeError` for a seed that is neither an int nor an iterable of ints (a bool counts as neither), and `ValueError` for an empty seed list or for `workers > 1` with an int seed.
+- `Callback.on_seed_progress(seed, episode, step)` reports each seed's progress in a seed list, about 20 times per episode and at its last step, in the main process, also with `workers > 1`.
+- `ProgressBar` labels a run's bar `seed 42 episode 1/3`. For a seed list it shows a `seeds` line and one line per running seed, at most `workers` of them.
 
 ### Campaigns
 
@@ -22,15 +32,15 @@ bidlab follows [semantic versioning](https://semver.org/). Before 1.0, a minor v
 
 ### Metrics
 
-- New campaign metrics in `campaign_metrics` and `run_many` results: `win_rate`, `expected_surplus`, `budget_out`, `cvr` and `cost_per_expected_event`.
+- New campaign metrics in `campaign_metrics` and seed-list results: `win_rate`, `expected_surplus`, `budget_out`, `cvr` and `cost_per_expected_event`.
 - `lost_budget`, `lost_floor`, `lost_market` and `lost_rival` count why each request was lost. `docs/metrics.md` gives the order of the rules.
-- `budget_out` is the share of the episode before the budget first blocked a win. `run_many` averages it over the episodes that ran out.
+- `budget_out` is the share of the episode before the budget first blocked a win. Seed-list results average it over the episodes that ran out.
 - `segment_metrics` and `results.segment_rows` have `expected_surplus`.
 
 ### Profiling
 
 - `run(config, profiler=True)` times every hook of every bidder node and samples memory into `RunLog.profile`, a `bl.Profile`. `Profile.summary()` prints a table of total and self time per hook, slowest first, then wall time, steps per second, simulator time and memory.
-- `run_many(..., profiler=True)` gives one `Profile` per seed in `Results.profile`, in seed order.
+- `run(config, seed=[...], profiler=True)` gives one `Profile` per seed in `Results.profile`, in seed order.
 - `Profile.save_csv(path)` and `Results.save_profile_csv(path)` write the rows with their seed and run totals to a CSV file, with exact times.
 - Profiles change no array and take no part in `RunLog` `==` or `Results.equals`. Without `profiler=True`, runs keep their speed and every bit.
 - `psutil` is a new runtime dependency, used to read memory on every OS.

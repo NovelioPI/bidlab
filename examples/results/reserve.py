@@ -33,13 +33,13 @@ def platform_mean(results, column):
 
 
 if __name__ == "__main__":
-    without = bl.run_many(config, seeds=range(5))
+    without = bl.run(config, seed=range(5))
     reserved = dataclasses.replace(config, auction=bl.SecondPrice(reserve=RESERVE))
-    with_reserve = bl.run_many(reserved, seeds=range(5))
+    with_reserve = bl.run(reserved, seed=range(5))
     print(with_reserve.summary())
     print(f"columns: {with_reserve.columns}")
     print(
-        f"same seeds give the same results: {without.equals(bl.run_many(config, seeds=range(5)))}"
+        f"same seeds give the same results: {without.equals(bl.run(config, seed=range(5)))}"
     )
 
     with tempfile.TemporaryDirectory() as folder:

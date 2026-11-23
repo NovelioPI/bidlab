@@ -5,8 +5,6 @@ fixed multiplier m, with the other bids held fixed. In second price, bidding the
 value is the best reply to any fixed bids, so no multiplier beats it.
 """
 
-import dataclasses
-
 import bidlab as bl
 
 TOLERANCE = 1e-9
@@ -58,7 +56,7 @@ if __name__ == "__main__":
     truthful = []
     shaded = []
     for seed in range(5):
-        seed_log = bl.run(dataclasses.replace(config, seed=seed))
+        seed_log = bl.run(config, seed=seed)
         for episode in range(config.episodes):
             truthful.append(bl.regret(seed_log, episode, 0))
             shaded.append(bl.regret(seed_log, episode, 1))

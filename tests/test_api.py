@@ -24,7 +24,6 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.markets import IndependentValues, LogisticMarket, Segment, Segmented
 from bidlab.metrics import platform_metrics
 from bidlab.results import Results
-from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import BidResult
 
@@ -90,7 +89,6 @@ def fingerprint_config(kind):
         campaigns=campaigns,
         episodes=3,
         steps=300,
-        seed=12,
         auction=FirstPrice(0.01) if kind == "first" else SecondPrice(0.01),
     )
 
@@ -109,7 +107,7 @@ def old_arrays(log: RunLog, *names: str) -> list[np.ndarray]:
 
 @pytest.mark.parametrize("kind", ["first", "second"])
 def test_run_log_fingerprint(kind):
-    log = run(fingerprint_config(kind))
+    log = run(fingerprint_config(kind), seed=12)
     digest = hashlib.sha256()
     for array in (
         log.bids,
@@ -123,7 +121,7 @@ def test_run_log_fingerprint(kind):
 
 def test_results_fingerprint(tmp_path):
     path = tmp_path / "results.csv"
-    results = run_many(fingerprint_config("second"), seeds=[0, 1])
+    results = run(fingerprint_config("second"), seed=[0, 1])
     # Later columns (features 016, 017) came after this hash; the old ones keep it.
     recorded = Results(
         columns=RESULTS_HASH_COLUMNS,
@@ -167,7 +165,7 @@ def test_run_log_without_pid_matches_main(kind):
     )
     auction = FirstPrice(0.01) if kind == "first" else SecondPrice(0.01)
     log = run(
-        SimConfig(campaigns=campaigns, episodes=3, steps=300, seed=12, auction=auction)
+        SimConfig(campaigns=campaigns, episodes=3, steps=300, auction=auction), seed=12
     )
     digest = hashlib.sha256()
     for array in (
@@ -218,10 +216,9 @@ def test_no_click_stage_matches_main(kind):
         campaigns=campaigns,
         episodes=2,
         steps=300,
-        seed=7,
         market=market_without_clicks(kind),
     )
-    log = run(config)
+    log = run(config, seed=7)
     digest = hashlib.sha256()
     for array in (
         log.bids,
@@ -268,10 +265,9 @@ def test_click_stage_matches_main(kind):
         campaigns=campaigns,
         episodes=2,
         steps=300,
-        seed=7,
         market=market_with_clicks(kind),
     )
-    log = run(config)
+    log = run(config, seed=7)
     digest = hashlib.sha256()
     for array in (
         log.bids,
@@ -299,9 +295,9 @@ def test_revenue_matches_main():
         for i in range(4)
     )
     config = SimConfig(
-        campaigns=campaigns, episodes=2, steps=3000, seed=0, auction=FirstPrice()
+        campaigns=campaigns, episodes=2, steps=3000, auction=FirstPrice()
     )
-    revenue = [row.revenue for row in platform_metrics(run(config))]
+    revenue = [row.revenue for row in platform_metrics(run(config, seed=0))]
     assert revenue == MAIN_REVENUE
 
 
@@ -329,7 +325,6 @@ PUBLIC_NAMES = {
     "Event",
     "RunLog",
     "run",
-    "run_many",
     "Results",
     "campaign_metrics",
     "platform_metrics",
@@ -400,7 +395,7 @@ def test_removed_interfaces():
     assert pyproject["project"]["name"] == "bidlab"
 
 
-@pytest.mark.parametrize("name", ["Brief", "BidRequest"])
+@pytest.mark.parametrize("name", ["Brief", "BidRequest", "run_many"])
 def test_removed_names(name):
     assert not hasattr(importlib.import_module("bidlab"), name)
     assert not hasattr(importlib.import_module("bidlab.types"), name)

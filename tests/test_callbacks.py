@@ -1,17 +1,23 @@
 import os
 import re
+import threading
+import time
 from collections.abc import Mapping, Sequence
+from multiprocessing.context import SpawnContext
+from queue import Queue
 from typing import Any, ClassVar, override
 
 import pytest
 
+from bidlab import runner
 from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
 from bidlab.callbacks import Callback, ProgressBar
 from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
-from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import EpisodeReport
+
+SEED = 3
 
 
 class Record(Callback):
@@ -22,8 +28,8 @@ class Record(Callback):
         self.calls: list[tuple[str, str, Any]] = []
 
     @override
-    def on_run_start(self, config: SimConfig) -> None:
-        self.calls.append((self.name, "run_start", config))
+    def on_run_start(self, config: SimConfig, seed: int) -> None:
+        self.calls.append((self.name, "run_start", (config, seed)))
 
     @override
     def on_episode_end(
@@ -46,7 +52,7 @@ class Shared(Record):
     order: ClassVar[list[tuple[str, str]]] = []
 
     @override
-    def on_run_start(self, config: SimConfig) -> None:
+    def on_run_start(self, config: SimConfig, seed: int) -> None:
         Shared.order.append((self.name, "run_start"))
 
     @override
@@ -75,7 +81,7 @@ class Reports(Bidder):
 
 
 def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
-    defaults: dict[str, Any] = {"episodes": 3, "steps": 50, "seed": 3}
+    defaults: dict[str, Any] = {"episodes": 3, "steps": 50}
     return SimConfig(campaigns=campaigns, **(defaults | kwargs))
 
 
@@ -89,7 +95,7 @@ def two() -> tuple[Campaign, ...]:
 def test_run_hook_order():
     callback = Record()
     settings = config(*two())
-    log = run(settings, callbacks=[callback])
+    log = run(settings, callbacks=[callback], seed=SEED)
     hooks = [hook for _, hook, _ in callback.calls]
     assert hooks == [
         "run_start",
@@ -98,7 +104,8 @@ def test_run_hook_order():
         "episode_end",
         "run_end",
     ]
-    assert callback.calls[0][2] is settings
+    assert callback.calls[0][2] == (settings, SEED)
+    assert callback.calls[0][2][0] is settings
     assert [args[0] for _, hook, args in callback.calls if hook == "episode_end"] == [
         0,
         1,
@@ -114,7 +121,7 @@ def test_episode_report_match_bidders():
         Campaign("s", Stack(OracleValue(), Reports()), budget=1e6, base_value=5.0),
         Campaign("t", Stack(OracleValue(), Linear()), budget=1e6, base_value=5.0),
     )
-    run(config(*campaigns), callbacks=[callback])
+    run(config(*campaigns), callbacks=[callback], seed=SEED)
     reports = [args[1] for _, hook, args in callback.calls if hook == "episode_end"]
     assert [set(episode) for episode in reports] == [{"s", "t"}] * 3
     assert [episode["s"] for episode in reports] == Reports.seen
@@ -124,7 +131,7 @@ def test_episode_report_match_bidders():
 
 def test_callbacks_in_list_order():
     Shared.order.clear()
-    run(config(*two(), episodes=1), callbacks=[Shared("a"), Shared("b")])
+    run(config(*two(), episodes=1), callbacks=[Shared("a"), Shared("b")], seed=SEED)
     assert Shared.order == [
         ("a", "run_start"),
         ("b", "run_start"),
@@ -139,17 +146,17 @@ def test_callbacks_in_list_order():
 def test_seed_end_in_seed_order(workers: int):
     callback = Record()
     settings = config(*two())
-    run_many(settings, seeds=[4, 1, 7], workers=workers, callbacks=[callback])
+    run(settings, seed=[4, 1, 7], workers=workers, callbacks=[callback])
     seeds = [args[0] for _, _, args in callback.calls]
     assert seeds == [4, 1, 7]
     assert {args[2] for _, _, args in callback.calls} == {os.getpid()}
     for _, _, (seed, results, _) in callback.calls:
-        assert results.equals(run_many(settings, seeds=[seed]))
+        assert results.equals(run(settings, seed=[seed]))
 
 
-def test_run_many_skips_run_hooks():
+def test_seed_list_skips_run_hooks():
     callback = Record()
-    run_many(config(*two()), seeds=range(2), callbacks=[callback])
+    run(config(*two()), seed=range(2), callbacks=[callback])
     assert {hook for _, hook, _ in callback.calls} == {"seed_end"}
 
 
@@ -164,7 +171,7 @@ class Fails(Callback):
             raise RuntimeError(f"stop in {hook}")
 
     @override
-    def on_run_start(self, config: SimConfig) -> None:
+    def on_run_start(self, config: SimConfig, seed: int) -> None:
         self.fail("on_run_start")
 
     @override
@@ -185,10 +192,10 @@ class Fails(Callback):
 @pytest.mark.parametrize("hook", ["on_run_start", "on_episode_end", "on_run_end"])
 def test_callback_error_reaches_caller(hook: str):
     with pytest.raises(RuntimeError, match=f"stop in {hook}"):
-        run(config(*two()), callbacks=[Fails(hook)])
+        run(config(*two()), callbacks=[Fails(hook)], seed=SEED)
 
     with pytest.raises(RuntimeError, match="stop in on_seed_end"):
-        run_many(config(*two()), seeds=[0], callbacks=[Fails("on_seed_end")])
+        run(config(*two()), seed=[0], callbacks=[Fails("on_seed_end")])
 
 
 @pytest.mark.parametrize(
@@ -198,10 +205,10 @@ def test_callback_type_checked(bad: object):
     instances = f"Callback instances, got {type(bad).__name__}"
     match = "pass an instance" if isinstance(bad, type) else instances
     with pytest.raises(TypeError, match=match):
-        run(config(*two()), callbacks=[bad])  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
+        run(config(*two()), callbacks=[bad], seed=SEED)  # pyright: ignore[reportArgumentType, reportCallIssue]  Reason: the test checks the runtime error for a wrong type.
 
     with pytest.raises(TypeError, match=match):
-        run_many(config(*two()), seeds=[0], callbacks=[bad])  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
+        run(config(*two()), seed=[0], callbacks=[bad])  # pyright: ignore[reportArgumentType, reportCallIssue]  Reason: the test checks the runtime error for a wrong type.
 
 
 class OnlyEnd(Callback):
@@ -217,60 +224,219 @@ class OnlyEnd(Callback):
 
 def test_partial_callback():
     callback = OnlyEnd()
-    log = run(config(*two()), callbacks=[callback])
-    run_many(config(*two()), seeds=[0, 1], callbacks=[callback])
+    log = run(config(*two()), callbacks=[callback], seed=SEED)
+    run(config(*two()), seed=[0, 1], callbacks=[callback])
     assert len(callback.logged) == 1 and callback.logged[0] is log
 
 
 def test_callbacks_leave_run_unchanged():
-    plain = run(config(*two()))
-    watched = run(config(*two()), callbacks=[Record(), OnlyEnd()])
+    plain = run(config(*two()), seed=SEED)
+    watched = run(config(*two()), callbacks=[Record(), OnlyEnd()], seed=SEED)
     for name in ("bids", "price", "won", "converted"):
         assert (getattr(plain, name) == getattr(watched, name)).all()
 
 
 class RecordMany(Record):
-    """Also records the run_many start and end hooks."""
+    """Also records the seed list start and end hooks."""
 
     @override
-    def on_run_many_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
-        self.calls.append((self.name, "run_many_start", (config, seeds)))
+    def on_seeds_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
+        self.calls.append((self.name, "seeds_start", (config, seeds)))
 
     @override
-    def on_run_many_end(self, results: Results) -> None:
-        self.calls.append((self.name, "run_many_end", results))
+    def on_seeds_end(self, results: Results) -> None:
+        self.calls.append((self.name, "seeds_end", results))
 
 
 @pytest.mark.parametrize("workers", [1, 2])
-def test_run_many_hook_order(workers: int):
+def test_seed_list_hook_order(workers: int):
     callback = RecordMany()
     settings = config(*two())
-    results = run_many(
-        settings, seeds=iter([4, 1, 7]), workers=workers, callbacks=[callback]
-    )
+    results = run(settings, seed=iter([4, 1, 7]), workers=workers, callbacks=[callback])
     hooks = [hook for _, hook, _ in callback.calls]
     assert hooks == [
-        "run_many_start",
+        "seeds_start",
         "seed_end",
         "seed_end",
         "seed_end",
-        "run_many_end",
+        "seeds_end",
     ]
     assert callback.calls[0][2] == (settings, (4, 1, 7))
     assert callback.calls[-1][2] is results
 
 
+class Progress(RecordMany):
+    """Also records every seed progress call and the thread it ran on."""
+
+    @override
+    def on_seed_progress(self, seed: int, episode: int, step: int) -> None:
+        main = threading.current_thread() is threading.main_thread()
+        self.calls.append((self.name, "progress", (seed, episode, step, main)))
+
+
+def progress_steps(steps: int) -> list[int]:
+    """The steps a seed reports per episode: every max(1, steps // 20), and the last."""
+    every = max(1, steps // 20)
+    return [
+        step for step in range(steps) if (step + 1) % every == 0 or step == steps - 1
+    ]
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("steps", [45, 7])
+def test_seed_progress_reaches_each_episode_end(workers: int, steps: int):
+    callback = Progress()
+    seeds = [4, 1, 7]
+    run(
+        config(*two(), steps=steps),
+        seed=seeds,
+        workers=workers,
+        callbacks=[callback],
+        progress_bar=False,
+    )
+    progress = [args for _, hook, args in callback.calls if hook == "progress"]
+    expected = [
+        (episode, step) for episode in range(3) for step in progress_steps(steps)
+    ]
+    for seed in seeds:
+        assert [(e, s) for seed_, e, s, _ in progress if seed_ == seed] == expected
+
+    assert all(main for *_, main in progress)
+    assert len(progress) == len(seeds) * len(expected)
+
+
+class SlowSteps(Bidder):
+    """Sleeps a fixed time each step, so a run lasts long enough to watch."""
+
+    def __init__(self, seconds: float = 0.0):
+        self.seconds = seconds
+
+    @override
+    def forward(self, value: float) -> float:
+        time.sleep(self.seconds)
+        return value
+
+
+class Timed(Callback):
+    """Records when each progress call and each seed end reaches the main process."""
+
+    def __init__(self):
+        self.progress: dict[int, list[float]] = {}
+        self.ends: dict[int, float] = {}
+
+    @override
+    def on_seed_progress(self, seed: int, episode: int, step: int) -> None:
+        self.progress.setdefault(seed, []).append(time.perf_counter())
+
+    @override
+    def on_seed_end(self, seed: int, results: Results) -> None:
+        self.ends[seed] = time.perf_counter()
+
+
+def test_parallel_progress_arrives_while_the_seed_runs():
+    campaign = Campaign(
+        "slow", Stack(OracleValue(), SlowSteps(0.01)), budget=1e6, base_value=5.0
+    )
+    timed = Timed()
+    run(
+        config(campaign, episodes=1, steps=100),
+        seed=[4, 1],
+        workers=2,
+        callbacks=[timed],
+        progress_bar=False,
+    )
+    # The seed runs about 1 s, so its first report must come well before its end.
+    for seed in (4, 1):
+        assert timed.ends[seed] - timed.progress[seed][0] > 0.5
+
+
+def test_drain_hands_over_every_queued_item_without_waiting_after():
+    queue: Queue[runner.Progress] = Queue()
+    for step in range(3):
+        queue.put((4, 0, step))
+    callback = Progress()
+    start = time.perf_counter()
+    runner._drain(queue, (callback,), 1.0)
+    assert time.perf_counter() - start < 0.5
+    assert [args[2] for _, _, args in callback.calls] == [0, 1, 2]
+    runner._drain(queue, (callback,), 0.0)
+    assert len(callback.calls) == 3
+
+
+def test_progress_steps_rule():
+    assert progress_steps(45) == [*range(1, 44, 2), 44]
+    assert progress_steps(2000) == list(range(99, 2000, 100))
+    assert progress_steps(7) == list(range(7))
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_seed_progress_comes_before_its_seed_end(workers: int):
+    callback = Progress()
+    run(
+        config(*two()),
+        seed=[4, 1, 7],
+        workers=workers,
+        callbacks=[callback],
+        progress_bar=False,
+    )
+    hooks = [(hook, args[0]) for _, hook, args in callback.calls[1:-1]]
+    ends = [seed for hook, seed in hooks if hook == "seed_end"]
+    assert ends == [4, 1, 7]
+    for seed in ends:
+        own = [i for i, (hook, s) in enumerate(hooks) if s == seed]
+        assert hooks[own[-1]] == ("seed_end", seed)
+        assert all(hooks[i][0] == "progress" for i in own[:-1])
+        assert len(own) > 1
+    assert callback.calls[0][1] == "seeds_start"
+    assert callback.calls[-1][1] == "seeds_end"
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_seed_callbacks_leave_results_unchanged(workers: int):
+    settings = config(*two())
+    plain = run(settings, seed=[4, 1], workers=workers, progress_bar=False)
+    watched = run(
+        settings, seed=[4, 1], workers=workers, callbacks=[Progress(), OnlyEnd()]
+    )
+    assert watched.equals(plain)
+    assert watched.equals(run(settings, seed=[4, 1], progress_bar=False))
+
+
+def test_no_progress_work_without_callbacks(monkeypatch: pytest.MonkeyPatch):
+    reports: list[tuple[int, int]] = []
+    original = runner._SeedProgress.on_step_end
+
+    def counted(self: runner._SeedProgress, episode: int, step: int) -> None:
+        reports.append((episode, step))
+        original(self, episode, step)
+
+    monkeypatch.setattr(runner._SeedProgress, "on_step_end", counted)
+    run(config(*two()), seed=[4], progress_bar=False)
+    assert reports == []
+    run(config(*two()), seed=[4], callbacks=[OnlyEnd()], progress_bar=False)
+    assert len(reports) == 3 * 50
+
+
+def test_no_progress_queue_without_callbacks(monkeypatch: pytest.MonkeyPatch):
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("a Manager started without callbacks")
+
+    monkeypatch.setattr(SpawnContext, "Manager", refuse)
+    results = run(config(*two()), seed=[4, 1], workers=2, progress_bar=False)
+    assert len(results) == 4
+    with pytest.raises(AssertionError, match="Manager started"):
+        run(config(*two()), seed=[4, 1], workers=2)
+
+
 def test_progress_bar_counts_steps(capsys: pytest.CaptureFixture[str]):
-    plain = run(config(*two()), progress_bar=False)
+    plain = run(config(*two()), progress_bar=False, seed=42)
     # Keep the bar referenced, so garbage collection cannot close it for the run.
     bar = ProgressBar()
-    watched = run(config(*two()), callbacks=[bar])
+    watched = run(config(*two()), callbacks=[bar], seed=42)
     out, err = capsys.readouterr()
     assert out == ""
-    assert "episode 1/3: " in err and "episode 2/3: " in err
-    assert re.search(
-        r"(^|\r)episode 3/3: 100%\|.*\| 50/50 \[.*(\bs/step|[\d.]step/s)\]\n$", err
-    )
+    assert "seed 42 episode 1/3 " in err and "seed 42 episode 2/3 " in err
+    assert re.search(RUN_DONE, err)
     assert "episode/s" not in err and "/episode" not in err
     assert (plain.bids == watched.bids).all()
 
@@ -285,7 +451,7 @@ class Steps(Record):
 
 def test_step_end_order():
     callback = Steps()
-    run(config(*two(), episodes=2, steps=3), callbacks=[callback])
+    run(config(*two(), episodes=2, steps=3), callbacks=[callback], seed=SEED)
     calls = [
         (hook, args if hook != "episode_end" else args[0])
         for _, hook, args in callback.calls[1:-1]
@@ -302,43 +468,157 @@ def test_step_end_order():
     ]
 
 
-def test_run_many_skips_step_end():
+def test_seed_list_skips_step_end():
     callback = Steps()
-    run_many(config(*two()), seeds=range(2), workers=1, callbacks=[callback])
+    run(config(*two()), seed=range(2), workers=1, callbacks=[callback])
     assert "step_end" not in {hook for _, hook, _ in callback.calls}
 
 
-def test_progress_bar_counts_seeds(capsys: pytest.CaptureFixture[str]):
+SEEDS_DONE = r"\rseeds   2/2 100%\|█+\| \[\d\d:\d\d<\d\d:\d\d\]\n$"
+RUN_DONE = (
+    r"\rseed 42 episode 3/3 100%\|█+\| 50/50 \[\d\d:\d\d<\d\d:\d\d, .* step/s\]\n$"
+)
+# tqdm clears a closed bar's line with spaces, then moves back up.
+CLEARED_LINE = r"\r {20,}\x1b\[A"
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_progress_bar_counts_seeds(capsys: pytest.CaptureFixture[str], workers: int):
     bar = ProgressBar()
-    results = run_many(config(*two()), seeds=[4, 1], callbacks=[bar])
+    results = run(config(*two()), seed=[4, 1], workers=workers, callbacks=[bar])
     out, err = capsys.readouterr()
     assert out == ""
-    assert re.search(r"\brun_many: 100%\|.*\| 2/2 \[.*(\bs/seed|[\d.]seed/s)\]\n$", err)
-    assert "episode" not in err
-    assert results.equals(run_many(config(*two()), seeds=[4, 1]))
+    assert re.search(SEEDS_DONE, err)
+    for seed in (4, 1):
+        for episode in (1, 2, 3):
+            assert f"seed {seed} episode {episode}/3 " in err
+    assert len(re.findall(CLEARED_LINE, err)) == 2
+    assert results.equals(run(config(*two()), seed=[4, 1], progress_bar=False))
+
+
+def bar_text(
+    capsys: pytest.CaptureFixture[str], *calls: tuple[str, int, int, int]
+) -> str:
+    """Drive a ProgressBar for seeds 1, 2 and 3 of 3 × 50 steps, return stderr."""
+    bar = ProgressBar()
+    empty = Results(columns=(), rows=())
+    bar.on_seeds_start(config(*two()), [1, 2, 3])
+    for hook, seed, episode, step in calls:
+        if hook == "progress":
+            bar.on_seed_progress(seed, episode, step)
+        else:
+            bar.on_seed_end(seed, empty)
+    bar.on_seeds_end(empty)
+    return capsys.readouterr().err
+
+
+def test_seed_bars_reuse_freed_lines(capsys: pytest.CaptureFixture[str]):
+    err = bar_text(
+        capsys,
+        ("progress", 1, 0, 4),
+        ("progress", 2, 0, 4),
+        # Seed 1 reaches its last step, so its line is free for seed 3.
+        ("progress", 1, 2, 49),
+        ("progress", 3, 0, 4),
+        ("progress", 3, 1, 4),
+        ("end", 1, 0, 0),
+        ("end", 2, 0, 0),
+        ("end", 3, 0, 0),
+    )
+    # tqdm moves down one newline per line below the seeds bar.
+    assert re.search(r"(?<!\n)\n\rseed 1 episode 1/3 ", err)
+    assert "\n\n\rseed 2 episode 1/3 " in err
+    assert re.search(r"(?<!\n)\n\rseed 3 episode 1/3 ", err)
+    assert re.search(r"(?<!\n)\n\rseed 3 episode 2/3 ", err)
+    assert "episode 2/3:" not in err
+    assert len(re.findall(CLEARED_LINE, err)) == 3
+    # The seeds bar is the first line, with no newline before it.
+    assert err.startswith("\rseeds   0/3 ")
+    assert err.endswith("\n") and "seeds   3/3 100%" in err.rsplit("\r", 1)[-1]
+
+
+def test_seed_bar_shows_every_progress_call(capsys: pytest.CaptureFixture[str]):
+    bar = ProgressBar()
+    empty = Results(columns=(), rows=())
+    bar.on_seeds_start(config(*two(), steps=30), [1])
+    for episode, step in [(0, 4), (0, 9), (1, 4), (1, 9)]:
+        bar.on_seed_progress(1, episode, step)
+    bar.on_seed_end(1, empty)
+    bar.on_seeds_end(empty)
+    frames = re.findall(
+        r"\rseed 1 (episode \d/3) +\d+%\|[^|]*\| (\d+/\d+)", capsys.readouterr().err
+    )
+    assert frames == [
+        ("episode 1/3", "0/30"),
+        ("episode 1/3", "5/30"),
+        ("episode 1/3", "10/30"),
+        ("episode 2/3", "0/30"),
+        ("episode 2/3", "5/30"),
+        ("episode 2/3", "10/30"),
+    ]
+
+
+def test_finished_seed_frees_its_line_before_its_seed_end(
+    capsys: pytest.CaptureFixture[str],
+):
+    # With 2 workers, seed 1 can finish and seed 2 start while seed 0 still runs.
+    bar = ProgressBar()
+    empty = Results(columns=(), rows=())
+    bar.on_seeds_start(config(*two(), steps=30), [0, 1, 2])
+    bar.on_seed_progress(0, 0, 4)
+    for episode in range(3):
+        bar.on_seed_progress(1, episode, 29)
+    bar.on_seed_progress(2, 0, 4)
+    err = capsys.readouterr().err
+    for seed in (0, 1, 2):
+        bar.on_seed_end(seed, empty)
+    bar.on_seeds_end(empty)
+    # tqdm moves down one newline per line below the seeds bar.
+    lines = [len(down) for down in re.findall(r"(\n+)\rseed \d episode", err)]
+    assert max(lines) == 2
+    assert re.search(r"(?<!\n)\n\n\rseed 2 episode 1/3 ", err)
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_repeated_seeds_run_and_close_every_bar(
+    capsys: pytest.CaptureFixture[str], workers: int
+):
+    results = run(config(*two()), seed=[1, 1, 2], workers=workers)
+    err = capsys.readouterr().err
+    assert [row["seed"] for row in results.rows] == [1, 1, 1, 1, 2, 2]
+    assert re.search(r"\rseeds   3/3 100%\|█+\| \[\d\d:\d\d<\d\d:\d\d\]\n$", err)
+    # Two runs of seed 1 at once share its line, so count lines only at the end.
+    last_frame = max(frame.start() for frame in re.finditer(r"\rseed \d episode", err))
+    assert re.search(CLEARED_LINE, err[last_frame:])
+    assert len(re.findall(CLEARED_LINE, err)) >= 2
+
+
+def test_seeds_end_clears_open_seed_bars(capsys: pytest.CaptureFixture[str]):
+    err = bar_text(capsys, ("progress", 1, 0, 4), ("progress", 2, 0, 4))
+    assert len(re.findall(CLEARED_LINE, err)) == 2
+    assert "seeds   0/3" in err.rsplit("\r", 1)[-1]
 
 
 def test_run_shows_a_bar_by_default(capsys: pytest.CaptureFixture[str]):
-    run(config(*two()))
-    assert re.search(r"(^|\r)episode 3/3: 100%\|.*\| 50/50 ", capsys.readouterr().err)
+    run(config(*two()), seed=42)
+    assert re.search(RUN_DONE, capsys.readouterr().err)
 
 
 def test_run_without_progress_bar_prints_nothing(capsys: pytest.CaptureFixture[str]):
-    run(config(*two()), progress_bar=False)
-    run_many(config(*two()), seeds=range(2), progress_bar=False)
+    run(config(*two()), progress_bar=False, seed=SEED)
+    run(config(*two()), seed=range(2), progress_bar=False)
     assert capsys.readouterr() == ("", "")
 
 
 def test_given_progress_bar_is_not_doubled(capsys: pytest.CaptureFixture[str]):
     bar = ProgressBar()
-    run(config(*two()), callbacks=[bar])
-    assert capsys.readouterr().err.count("episode 1/3:   0%") == 1
+    run(config(*two()), callbacks=[bar], seed=SEED)
+    assert capsys.readouterr().err.count(f"seed {SEED} episode 1/3   0%") == 1
 
 
-def test_run_many_shows_only_the_seed_bar_by_default(
-    capsys: pytest.CaptureFixture[str],
-):
-    run_many(config(*two()), seeds=[4, 1])
+def test_seed_list_shows_seed_bars_by_default(capsys: pytest.CaptureFixture[str]):
+    run(config(*two()), seed=[4, 1])
     err = capsys.readouterr().err
-    assert re.search(r"\brun_many: 100%\|.*\| 2/2 ", err)
-    assert "episode" not in err
+    assert re.search(SEEDS_DONE, err)
+    assert "seed 4 episode 1/3 " in err and "seed 1 episode 3/3 " in err
+    assert len(re.findall(CLEARED_LINE, err)) == 2

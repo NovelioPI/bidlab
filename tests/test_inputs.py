@@ -9,6 +9,8 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.markets import Market, MarketDraw
 from bidlab.simulator import BUILT_IN_INPUTS, run
 
+SEED = 1
+
 
 class FeatureMarket(Market):
     """Yields probability 0.5 and the given features at every step."""
@@ -47,8 +49,8 @@ class TimeLeftOnly(Bidder):
 
 def run_one(bidder: Bidder, **kwargs: Any):
     campaign = Campaign("a", bidder, budget=kwargs.pop("budget", 1e6), base_value=5.0)
-    defaults: dict[str, Any] = {"episodes": 2, "steps": 10, "seed": 1}
-    return run(SimConfig(campaigns=[campaign], **(defaults | kwargs)))
+    defaults: dict[str, Any] = {"episodes": 2, "steps": 10}
+    return run(SimConfig(campaigns=[campaign], **(defaults | kwargs)), seed=SEED)
 
 
 def test_forward_gets_only_declared_inputs():

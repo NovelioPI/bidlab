@@ -29,7 +29,7 @@ config = bl.SimConfig(
 )
 
 if __name__ == "__main__":
-    results = bl.run_many(config, seeds=SEEDS)
+    results = bl.run(config, seed=SEEDS)
     print(results.summary())
     surplus = {
         name: np.array(

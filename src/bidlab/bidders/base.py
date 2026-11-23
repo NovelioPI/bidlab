@@ -63,7 +63,7 @@ class Bidder(ABC):
     tree, and `bind` binds only this bidder.
 
     Save any number with `log`, such as a learned multiplier. The run keeps
-    it in `RunLog.logged`, and `run_many` in `Results.logged`.
+    it in `RunLog.logged`, and a seed list in `Results.logged`.
 
     Attributes
     ----------

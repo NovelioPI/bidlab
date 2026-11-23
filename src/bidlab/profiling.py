@@ -94,7 +94,7 @@ class Profile:
         The highest resident memory sampled at the run start, each episode
         end and the run end, in bytes.
     seed : int
-        The run's ``config.seed``.
+        The run's seed, as in `RunLog.seed`.
 
     Examples
     --------
@@ -230,7 +230,7 @@ def write_profile_csv(path: str | Path, profiles: Iterable[Profile]) -> None:
 
 
 def check_profiler(profiler: object) -> None:
-    """Reject a ``profiler`` argument that is not a bool; `run` and `run_many` call this.
+    """Reject a ``profiler`` argument that is not a bool; `run` calls this.
 
     Parameters
     ----------

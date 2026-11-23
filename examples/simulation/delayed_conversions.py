@@ -54,8 +54,8 @@ late = dataclasses.replace(config, feedback=bl.Feedback(conversion_delay=DELAY))
 if __name__ == "__main__":
     lower = []
     for seed in range(5):
-        on_time = bl.run(dataclasses.replace(config, seed=seed))
-        delayed = bl.run(dataclasses.replace(late, seed=seed))
+        on_time = bl.run(config, seed=seed)
+        delayed = bl.run(late, seed=seed)
         bids = [log.bids[:, :, 0].mean() for log in (on_time, delayed)]
         rates = [
             np.nanmean(log.logged["rate"]["learner"]) for log in (on_time, delayed)

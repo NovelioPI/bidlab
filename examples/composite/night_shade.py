@@ -6,8 +6,6 @@ stream and every other hook, so the PID child keeps pacing while its parent
 changes the value it receives.
 """
 
-import dataclasses
-
 import numpy as np
 
 import bidlab as bl
@@ -56,7 +54,7 @@ if __name__ == "__main__":
     at_night = hours < NIGHT_END_HOUR
     higher = []
     for seed in range(5):
-        log = bl.run(dataclasses.replace(config, seed=seed))
+        log = bl.run(config, seed=seed)
         multiplier = log.logged["bidders.1.pacing.multiplier"]["night"]
         night = multiplier[:, at_night].mean()
         day = multiplier[:, ~at_night].mean()

@@ -31,7 +31,7 @@ def mean(results, bidder, column):
 
 
 if __name__ == "__main__":
-    results = bl.run_many(config, seeds=range(5), workers=4)
+    results = bl.run(config, seed=range(5), workers=4)
     print(results.summary())
     pid = mean(results, "pid", "surplus")
     truthful = mean(results, "truthful", "surplus")

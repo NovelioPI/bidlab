@@ -32,7 +32,7 @@ def competitors():
 def spend_curve(bidder, budget, seed=11):
     me = Campaign("me", Stack(OracleValue(), bidder), budget=budget, base_value=5.0)
     log = run(
-        SimConfig(campaigns=(me, *competitors()), episodes=1, steps=STEPS, seed=seed)
+        SimConfig(campaigns=(me, *competitors()), episodes=1, steps=STEPS), seed=seed
     )
     paid = log.price[0, :, 0]
     return np.cumsum(paid)
@@ -60,9 +60,8 @@ class ConversionBandit(UcbMultiplier):
 def bandit_log(bandit, episodes=80, seed=5):
     me = Campaign("me", Stack(OracleValue(), bandit), budget=1e6, base_value=5.0)
     return run(
-        SimConfig(
-            campaigns=(me, *competitors()), episodes=episodes, steps=300, seed=seed
-        )
+        SimConfig(campaigns=(me, *competitors()), episodes=episodes, steps=300),
+        seed=seed,
     )
 
 

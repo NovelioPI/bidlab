@@ -34,6 +34,7 @@ def hand_log(kind="second", reserve=0.0, budget=10.0, cpa_target=None):
     bids = values.copy()
     return RunLog(
         config=config,
+        seed=0,
         bids=bids,
         true_values=values,
         won=np.array([[[True, False], [False, True], [True, False]]]),
@@ -125,7 +126,7 @@ def test_regret_nonnegative_for_fixed_multipliers():
                 base_value=6.0,
             ),
         )
-        log = run(SimConfig(campaigns=campaigns, episodes=2, steps=300, seed=3))
+        log = run(SimConfig(campaigns=campaigns, episodes=2, steps=300), seed=3)
         for episode in range(2):
             assert regret(log, episode, 0) >= -1e-9
 
@@ -138,10 +139,10 @@ def test_regret_accepts_integer_budget():
             ),
             Campaign("x", Stack(OracleValue(), Linear()), budget=50.0, base_value=4.0),
         )
-        return SimConfig(campaigns=campaigns, episodes=1, steps=200, seed=4)
+        return SimConfig(campaigns=campaigns, episodes=1, steps=200)
 
-    integer_log = run(config(3))
-    float_log = run(config(3.0))
+    integer_log = run(config(3), seed=4)
+    float_log = run(config(3.0), seed=4)
     assert regret(integer_log, 0, 0) == regret(float_log, 0, 0)
 
 
@@ -159,6 +160,7 @@ def one_episode_log(episode, campaigns, auction):
     steps = len(episode.values)
     won = np.array(episode.winner)[:, None] == np.arange(len(campaigns))
     return RunLog(
+        seed=0,
         config=SimConfig(campaigns=campaigns, episodes=1, steps=steps, auction=auction),
         bids=np.array([episode.bids], dtype=float),
         true_values=np.array([episode.values], dtype=float),
@@ -211,7 +213,7 @@ def test_metric_rows_carry_their_episode():
         Campaign("a", Stack(OracleValue(), Linear()), budget=50.0, base_value=5.0),
         Campaign("b", Stack(OracleValue(), Linear()), budget=50.0, base_value=4.0),
     )
-    log = run(SimConfig(campaigns=campaigns, episodes=2, steps=50, seed=1))
+    log = run(SimConfig(campaigns=campaigns, episodes=2, steps=50), seed=1)
     assert [row.episode for row in platform_metrics(log)] == [0, 1]
     assert [row.episode for row in campaign_metrics(log)] == [0, 0, 1, 1]
 
@@ -453,6 +455,7 @@ def two_campaign_log(steps, budget=1.0, auction=None):
     bids = np.array([[s.bids for s in steps]])
     return RunLog(
         config=config,
+        seed=0,
         bids=bids,
         true_values=bids.copy(),
         won=won[None],
@@ -546,6 +549,9 @@ def test_budget_out_is_the_first_budget_loss():
     assert np.isnan(b.budget_out)
 
 
+PRICED_SEED = 5
+
+
 def priced_config(competing, auction, budget):
     base = LogisticMarket(price_median=0.05, floor_share=(2, 5))
     market = Segmented((Segment("x", 0.6), Segment("y", 0.4)), base=base)
@@ -569,7 +575,6 @@ def priced_config(competing, auction, budget):
         campaigns=campaigns,
         episodes=2,
         steps=300,
-        seed=5,
         auction=auction(0.02),
         market=market,
         competing=competing,
@@ -580,7 +585,7 @@ def priced_config(competing, auction, budget):
 @pytest.mark.parametrize("auction", [FirstPrice, SecondPrice])
 @pytest.mark.parametrize("budget", [20.0, None])
 def test_losses_sum_to_lost_requests(competing, auction, budget):
-    log = run(priced_config(competing, auction, budget))
+    log = run(priced_config(competing, auction, budget), seed=PRICED_SEED)
     names = log.config.market.segment_names
     for row in campaign_metrics(log):
         campaign = next(c for c in log.config.campaigns if c.name == row.campaign)
@@ -591,19 +596,25 @@ def test_losses_sum_to_lost_requests(competing, auction, budget):
 
 
 def test_losses_cover_every_kind():
-    rows = campaign_metrics(run(priced_config(True, SecondPrice, 20.0)))
+    rows = campaign_metrics(
+        run(priced_config(True, SecondPrice, 20.0), seed=PRICED_SEED)
+    )
     for kind in LOSS_KINDS:
         assert sum(getattr(row, kind) for row in rows) > 0, kind
 
 
 def test_no_rival_loss_without_competition():
-    rows = campaign_metrics(run(priced_config(False, SecondPrice, 20.0)))
+    rows = campaign_metrics(
+        run(priced_config(False, SecondPrice, 20.0), seed=PRICED_SEED)
+    )
     assert all(row.lost_rival == 0 for row in rows)
     assert sum(row.lost_market + row.lost_budget for row in rows) > 0
 
 
 def test_no_budget_loss_with_a_huge_budget():
-    rows = campaign_metrics(run(priced_config(True, SecondPrice, 1e9)))
+    rows = campaign_metrics(
+        run(priced_config(True, SecondPrice, 1e9), seed=PRICED_SEED)
+    )
     assert all(row.lost_budget == 0 for row in rows)
     assert all(np.isnan(row.budget_out) for row in rows)
     assert sum(row.lost_rival + row.lost_market for row in rows) > 0
@@ -611,7 +622,7 @@ def test_no_budget_loss_with_a_huge_budget():
 
 @pytest.mark.parametrize("competing", [True, False])
 def test_segment_expected_surplus_sums_to_campaign(competing):
-    log = run(priced_config(competing, FirstPrice, 20.0))
+    log = run(priced_config(competing, FirstPrice, 20.0), seed=PRICED_SEED)
     segments = segment_metrics(log)
     for row in campaign_metrics(log):
         total = sum(
@@ -632,7 +643,7 @@ def test_bid_at_the_floor_without_a_market_price_loses_to_the_rival():
 
 
 def test_win_rate_counts_each_episode_requests():
-    log = run(priced_config(True, SecondPrice, 20.0))
+    log = run(priced_config(True, SecondPrice, 20.0), seed=PRICED_SEED)
     names = log.config.market.segment_names
     targeted = [row for row in campaign_metrics(log) if row.campaign == "n"]
     requests = [int((log.segment[e] == names.index("x")).sum()) for e in (0, 1)]
