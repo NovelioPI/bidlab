@@ -207,11 +207,14 @@ def _seed_rows(config: SimConfig, seed: int) -> _SeedRows:
     welfare = float(np.mean([p.welfare for p in platform]))
     episodes = campaign_metrics(log)
     rows: list[ResultRow] = []
-    for campaign in config.campaigns:
+    for index, campaign in enumerate(config.campaigns):
         own = [m for m in episodes if m.campaign == campaign.name]
         row: RowBuilder = {"seed": seed, "campaign": campaign.name}
         for column in BIDDER_COLUMNS:
             row[column] = float(np.mean([getattr(m, column) for m in own]))
+
+        # The budget is the same every episode, and a mean of equal floats can move it.
+        row["budget"] = float(log.budgets[index])
 
         row["revenue"] = revenue
         row["welfare"] = welfare

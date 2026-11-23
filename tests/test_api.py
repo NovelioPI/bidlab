@@ -23,6 +23,7 @@ from bidlab.bidders import (
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import IndependentValues, LogisticMarket, Segment, Segmented
 from bidlab.metrics import platform_metrics
+from bidlab.results import Results
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import BidResult
@@ -103,8 +104,21 @@ def test_run_log_fingerprint(kind):
 
 def test_results_fingerprint(tmp_path):
     path = tmp_path / "results.csv"
-    run_many(fingerprint_config("second"), seeds=[0, 1]).save_csv(path)
+    results = run_many(fingerprint_config("second"), seeds=[0, 1])
+    # The budget column came after this hash (feature 016); every other value keeps it.
+    without_budget = Results(
+        columns=tuple(column for column in results.columns if column != "budget"),
+        rows=tuple(
+            {key: value for key, value in row.items() if key != "budget"}
+            for row in results.rows
+        ),
+    )
+    without_budget.save_csv(path)
     assert hashlib.sha256(path.read_bytes()).hexdigest() == RESULTS_HASH
+    budgets = {c.name: c.budget for c in fingerprint_config("second").campaigns}
+    assert [row["budget"] for row in results.rows] == [
+        budgets[str(row["campaign"])] for row in results.rows
+    ]
 
 
 # Main's floats from 151995c, re-hashed without the reward arrays (feature 009).

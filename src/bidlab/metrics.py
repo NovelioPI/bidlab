@@ -40,8 +40,11 @@ class CampaignEpisodeMetrics:
         or ``conversions``, by `Campaign.event`.
     surplus : float
         ``realized_value`` − ``spend``.
+    budget : float
+        The campaign's budget for the episode, from `RunLog.budgets`: scaled
+        by ``budget_fraction``, or sized from the market when set to None.
     budget_used : float
-        ``spend`` / budget; never above 1.
+        ``spend`` / ``budget``; never above 1.
     ctr : float
         ``clicks`` / ``wins``; NaN with no win.
     cpc : float
@@ -67,6 +70,7 @@ class CampaignEpisodeMetrics:
     conversions: int
     realized_value: float
     surplus: float
+    budget: float
     budget_used: float
     ctr: float
     cpc: float
@@ -218,6 +222,7 @@ def campaign_metrics(log: RunLog) -> list[CampaignEpisodeMetrics]:
                     conversions=conversions,
                     realized_value=value,
                     surplus=value - spend,
+                    budget=float(log.budgets[i]),
                     budget_used=spend / float(log.budgets[i]),
                     ctr=clicks / wins if wins else np.nan,
                     cpc=spend / clicks if clicks else np.nan,

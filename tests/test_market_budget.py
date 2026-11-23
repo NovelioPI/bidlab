@@ -12,6 +12,7 @@ from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import LogisticMarket, Market, MarketDraw, Segment, Segmented
 from bidlab.metrics import campaign_metrics
+from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import EpisodeReport
 
@@ -347,3 +348,17 @@ def test_market_that_breaks_the_contract_raises():
             config_of(Campaign("a", truthful(), base_value=5), market=DriftingMarket()),
             progress_bar=False,
         )
+
+
+def test_results_budget_column():
+    config = config_of(
+        Campaign("t", truthful(), base_value=5, budget_fraction=0.3),
+        Campaign("p", paced(), base_value=5, budget=3),
+    )
+    results = run_many(config, seeds=[0, 1], progress_bar=False)
+    for seed in (0, 1):
+        log = run(dataclasses.replace(config, seed=seed), progress_bar=False)
+        rows = [row for row in results.rows if row["seed"] == seed]
+        assert [row["budget"] for row in rows] == log.budgets.tolist()
+    parallel = run_many(config, seeds=[0, 1], workers=2, progress_bar=False)
+    assert parallel.equals(results)
