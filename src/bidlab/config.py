@@ -247,11 +247,17 @@ class SimConfig:
         Hour of day when each episode starts, in [0, 24).
     feedback : Feedback, optional
         When bidders learn their outcomes. Defaults to no delay.
+    competing : bool, optional
+        True runs one auction per step for all campaigns. False runs one
+        auction per campaign against the market alone, on one shared market
+        draw, so campaigns can be compared on the same traffic; every draw
+        then needs a market price.
 
     Raises
     ------
     TypeError
-        If ``auction``, ``market`` or ``feedback`` has the wrong type.
+        If ``auction``, ``market``, ``feedback`` or ``competing`` has the wrong
+        type.
     ValueError
         If ``campaigns`` is empty, names repeat, ``episodes`` or ``steps`` is
         below 1, the schedule is out of range, or a campaign names a
@@ -292,6 +298,7 @@ class SimConfig:
     horizon_hours: float = 24.0
     start_hour: float = 0.0
     feedback: Feedback = Feedback()
+    competing: bool = True
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "campaigns", tuple(self.campaigns))
@@ -331,6 +338,10 @@ class SimConfig:
             raise TypeError(
                 f"feedback must be a bidlab.Feedback, got {type(feedback).__name__}"
             )
+
+        competing: object = self.competing
+        if not isinstance(competing, bool):
+            raise TypeError(f"competing must be True or False, got {competing!r}")
 
         known = set(self.market.segment_names)
         for campaign in self.campaigns:
