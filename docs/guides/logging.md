@@ -78,10 +78,10 @@ results = bl.run_many(watched, seeds=range(2), callbacks=[Progress()])
 print(results.logged["bidders.1.multiplier"]["paced"].shape)  # (2, 3, 200)
 ```
 
-`bl.ProgressBar()` is a built-in callback that shows a tqdm bar on stderr. In `run`, one line counts the current episode's steps, such as `episode 3/5:  45%|████▌     | 900/2000`, and starts again at each episode. In `run_many`, it counts seeds. In a notebook it shows tqdm's widget.
+`bl.ProgressBar()` is a built-in callback that shows a tqdm bar on stderr. `run` and `run_many` add one by default, after your callbacks; a `ProgressBar` you pass yourself is not doubled. In `run`, one line counts the current episode's steps, such as `episode 3/5:  45%|████▌     | 900/2000`, and starts again at each episode. In `run_many`, it counts seeds. In a notebook it shows tqdm's widget. Pass `progress_bar=False` to hide it:
 
 ```python
-results = bl.run_many(watched, seeds=range(2), callbacks=[bl.ProgressBar()])
+results = bl.run_many(watched, seeds=range(2), progress_bar=False)
 ```
 
 ## Examples

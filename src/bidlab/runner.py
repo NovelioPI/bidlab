@@ -10,7 +10,7 @@ import cloudpickle
 import numpy as np
 import numpy.typing as npt
 
-from bidlab.callbacks import Callback, checked_callbacks
+from bidlab.callbacks import Callback, checked_callbacks, with_progress_bar
 from bidlab.config import SimConfig
 from bidlab.logs import Logs
 from bidlab.metrics import (
@@ -47,6 +47,7 @@ def run_many(
     seeds: Iterable[int],
     workers: int = 1,
     callbacks: Sequence[Callback] = (),
+    progress_bar: bool = True,
 ) -> Results:
     """Run each seed; rows are ordered by seed, then bidder.
 
@@ -67,6 +68,9 @@ def run_many(
         `Callback.on_run_many_start` before the first seed,
         `Callback.on_seed_end` after each seed in seed order, and
         `Callback.on_run_many_end` with the results.
+    progress_bar : bool, optional
+        Show a `ProgressBar` that counts seeds on stderr, after the other
+        callbacks. Each seed's own run shows no step bar.
 
     Returns
     -------
@@ -110,6 +114,8 @@ def run_many(
         raise ValueError(f"workers must be >= 1, got {workers}")
 
     checked = checked_callbacks(callbacks)
+    if progress_bar:
+        checked = with_progress_bar(checked)
     seed_list = list(seeds)
     for callback in checked:
         callback.on_run_many_start(config, tuple(seed_list))
@@ -195,7 +201,7 @@ def _run_seed(payload: bytes, seed: int) -> _SeedRows:
 
 
 def _seed_rows(config: SimConfig, seed: int) -> _SeedRows:
-    log = run(dataclasses.replace(config, seed=seed))
+    log = run(dataclasses.replace(config, seed=seed), progress_bar=False)
     platform = platform_metrics(log)
     revenue = float(np.mean([p.revenue for p in platform]))
     welfare = float(np.mean([p.welfare for p in platform]))

@@ -261,7 +261,7 @@ def test_run_many_hook_order(workers: int):
 
 
 def test_progress_bar_counts_steps(capsys: pytest.CaptureFixture[str]):
-    plain = run(config(*two()))
+    plain = run(config(*two()), progress_bar=False)
     # Keep the bar referenced, so garbage collection cannot close it for the run.
     bar = ProgressBar()
     watched = run(config(*two()), callbacks=[bar])
@@ -316,3 +316,29 @@ def test_progress_bar_counts_seeds(capsys: pytest.CaptureFixture[str]):
     assert re.search(r"\brun_many: 100%\|.*\| 2/2 \[.*(\bs/seed|[\d.]seed/s)\]\n$", err)
     assert "episode" not in err
     assert results.equals(run_many(config(*two()), seeds=[4, 1]))
+
+
+def test_run_shows_a_bar_by_default(capsys: pytest.CaptureFixture[str]):
+    run(config(*two()))
+    assert re.search(r"(^|\r)episode 3/3: 100%\|.*\| 50/50 ", capsys.readouterr().err)
+
+
+def test_run_without_progress_bar_prints_nothing(capsys: pytest.CaptureFixture[str]):
+    run(config(*two()), progress_bar=False)
+    run_many(config(*two()), seeds=range(2), progress_bar=False)
+    assert capsys.readouterr() == ("", "")
+
+
+def test_given_progress_bar_is_not_doubled(capsys: pytest.CaptureFixture[str]):
+    bar = ProgressBar()
+    run(config(*two()), callbacks=[bar])
+    assert capsys.readouterr().err.count("episode 1/3:   0%") == 1
+
+
+def test_run_many_shows_only_the_seed_bar_by_default(
+    capsys: pytest.CaptureFixture[str],
+):
+    run_many(config(*two()), seeds=[4, 1])
+    err = capsys.readouterr().err
+    assert re.search(r"\brun_many: 100%\|.*\| 2/2 ", err)
+    assert "episode" not in err
