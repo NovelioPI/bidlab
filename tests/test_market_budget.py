@@ -144,6 +144,7 @@ def test_bad_budget_raises_and_none_builds(budget):
     campaign = Campaign("a", truthful(), budget=None, base_value=5, budget_fraction=2)
     assert campaign.budget is None
     assert campaign.budget_fraction == 2.0
+    assert type(campaign.budget_fraction) is float
 
 
 def test_pid_pacing_rejects_an_unresolved_budget():
@@ -344,24 +345,61 @@ def test_replay_only_when_a_budget_is_none(budget, calls):
 
 @dataclass(frozen=True)
 class DriftingMarket(Market):
-    """Breaks the draws contract: each call prices higher than the last."""
+    """Breaks the draws contract: each call raises its price or its rate."""
 
+    drifts: str
     calls: list[int] = field(default_factory=list)
 
     @override
     def draws(self, count: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
         self.calls.append(count)
-        price = 0.1 * len(self.calls)
+        rise = 0.1 * len(self.calls)
+        price = rise if self.drifts == "price" else 0.1
+        rate = rise if self.drifts == "rate" else 0.1
         while True:
-            yield MarketDraw({}, pcvr=np.full(count, 0.1), market_price=price)
+            yield MarketDraw({}, pcvr=np.full(count, rate), market_price=price)
 
 
-def test_market_that_breaks_the_contract_raises():
+@pytest.mark.parametrize("drifts", ["price", "rate"])
+def test_market_that_breaks_the_contract_raises(drifts):
     with pytest.raises(RuntimeError, match="Market.draws"):
         run(
-            config_of(Campaign("a", truthful(), base_value=5), market=DriftingMarket()),
+            config_of(
+                Campaign("a", truthful(), base_value=5), market=DriftingMarket(drifts)
+            ),
             progress_bar=False,
         )
+
+
+@dataclass(frozen=True)
+class FixedMarket(Market):
+    """Every step has the same market price and floor."""
+
+    price: float
+    floor: float = 0.0
+
+    @override
+    def draws(self, count: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
+        while True:
+            yield MarketDraw(
+                {}, pcvr=np.full(count, 0.1), market_price=self.price, floor=self.floor
+            )
+
+
+@pytest.mark.parametrize(
+    ("market", "base_value", "cost"),
+    [(FixedMarket(0.1, floor=0.3), 1.0, 0.3), (FixedMarket(0.2), 0.2, 0.2)],
+    ids=["floor above the price", "value equal to the cost"],
+)
+def test_request_cost_and_worth(market, base_value, cost):
+    log = run(
+        config_of(
+            Campaign("a", truthful(), base_value=base_value, event="impression"),
+            market=market,
+        ),
+        progress_bar=False,
+    )
+    assert log.budgets[0] == pytest.approx(cost * 200, rel=1e-12)
 
 
 def test_results_budget_column():
