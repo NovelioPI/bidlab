@@ -90,6 +90,7 @@ print(bl.run_many(flat, seeds=range(2)).summary())
 | [Rewards](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/rewards.md) | A reward in the bidder's own code, logging it, comparing bidders |
 | [Logging and callbacks](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/logging.md) | `self.log` in a bidder, and watching a run |
 | [Results](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/results.md) | `Results`, `RunLog`, metric functions, regret |
+| [Profiling](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/profiling.md) | Time per bidder hook, simulator time and memory with `profiler=True` |
 
 [Metrics](https://github.com/NovelioPI/bidlab/blob/main/docs/metrics.md) defines every metric and its limits.
 
@@ -114,5 +115,6 @@ Each script runs on its own, prints its results, and ends with the answer to its
 | [rewards/custom_reward.py](https://github.com/NovelioPI/bidlab/blob/main/examples/rewards/custom_reward.py) | Does a bandit rewarded for conversions pick a higher multiplier than one rewarded for surplus? |
 | [logging/pid_trace.py](https://github.com/NovelioPI/bidlab/blob/main/examples/logging/pid_trace.py) | Does PID pacing spend its whole budget in each episode? |
 | [simulation/clock.py](https://github.com/NovelioPI/bidlab/blob/main/examples/simulation/clock.py) | With a 12-hour day from 9:00, does an even-schedule bidder still have budget at 20:00, when truthful bidding has run out? |
+| [simulation/profiling.py](https://github.com/NovelioPI/bidlab/blob/main/examples/simulation/profiling.py) | Is UcbMultiplier's update slower per call than PidPacing's? |
 | [results/regret.py](https://github.com/NovelioPI/bidlab/blob/main/examples/results/regret.py) | With no budget limit in a second-price auction, is truthful bidding's regret zero? |
 | [results/reserve.py](https://github.com/NovelioPI/bidlab/blob/main/examples/results/reserve.py) | Does a reserve price of 0.1 raise the platform's revenue? |

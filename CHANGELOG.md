@@ -27,6 +27,14 @@ bidlab follows [semantic versioning](https://semver.org/). Before 1.0, a minor v
 - `budget_out` is the share of the episode before the budget first blocked a win. `run_many` averages it over the episodes that ran out.
 - `segment_metrics` and `results.segment_rows` have `expected_surplus`.
 
+### Profiling
+
+- `run(config, profiler=True)` times every hook of every bidder node and samples memory into `RunLog.profile`, a `bl.Profile`. `Profile.summary()` prints a table of total and self time per hook, slowest first, then wall time, steps per second, simulator time and memory.
+- `run_many(..., profiler=True)` gives one `Profile` per seed in `Results.profile`, in seed order.
+- `Profile.save_csv(path)` and `Results.save_profile_csv(path)` write the rows with their seed and run totals to a CSV file, with exact times.
+- Profiles change no array and take no part in `RunLog` `==` or `Results.equals`. Without `profiler=True`, runs keep their speed and every bit.
+- `psutil` is a new runtime dependency, used to read memory on every OS.
+
 ## 0.4.0 (2026-11-23)
 
 ### Breaking
