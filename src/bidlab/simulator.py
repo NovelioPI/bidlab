@@ -12,7 +12,7 @@ import numpy.typing as npt
 from bidlab.auctions import NO_WINNER
 from bidlab.bidders import Bidder, Stack
 from bidlab.bidders.base import attach_logger, call_forward, takes_input
-from bidlab.callbacks import Callback, checked_callbacks
+from bidlab.callbacks import Callback, checked_callbacks, with_progress_bar
 from bidlab.config import Campaign, SimConfig
 from bidlab.logs import LogBook, Logs
 from bidlab.markets import MarketDraw
@@ -134,7 +134,9 @@ class _Participant:
                 )
 
 
-def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
+def run(
+    config: SimConfig, callbacks: Sequence[Callback] = (), progress_bar: bool = True
+) -> RunLog:
     """Simulate every episode of ``config`` and return the full log.
 
     On one OS and CPU type, the same config and seed give a bit-identical
@@ -147,6 +149,8 @@ def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
     callbacks : Sequence[Callback], optional
         Read-only hooks called at run start, at each step end, at each
         episode end and at run end, in this order.
+    progress_bar : bool, optional
+        Show a `ProgressBar` on stderr, after the other callbacks.
 
     Raises
     ------
@@ -177,6 +181,8 @@ def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
     True
     """
     checked = checked_callbacks(callbacks)
+    if progress_bar:
+        checked = with_progress_bar(checked)
     simulation = _Simulation(config, checked)
     for callback in checked:
         callback.on_run_start(config)
