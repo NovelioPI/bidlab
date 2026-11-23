@@ -29,7 +29,8 @@ class Callback:
     cannot change the run. `run` calls `on_run_start`, `on_step_end`,
     `on_episode_end` and `on_run_end` for an int seed; for a seed list it
     calls only `on_seeds_start`, `on_seed_progress`, `on_seed_end` and
-    `on_seeds_end`, also with ``workers > 1``. An error raised in a hook reaches the caller.
+    `on_seeds_end`, also with ``workers > 1``. An error raised in a hook
+    reaches the caller.
 
     Examples
     --------
@@ -151,9 +152,9 @@ class ProgressBar(Callback):
     episode's steps and starts again at each episode. For a seed list, a
     ``seeds`` line counts finished seeds, and each running seed has a line
     of that kind below it; a finished seed's line is cleared and reused by
-    the next seed, so there are at most ``workers`` such lines. In a notebook it shows tqdm's
-    notebook widgets. One instance can watch any number of runs; each gets
-    its own bars.
+    the next seed, so there are at most ``workers`` such lines. In a
+    notebook it shows tqdm's notebook widgets. One instance can watch any
+    number of runs; each gets its own bars.
 
     Examples
     --------
