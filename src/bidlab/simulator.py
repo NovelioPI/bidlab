@@ -555,15 +555,12 @@ class _Simulation:
 
 
 class _Inbox:
-    """One campaign's feedback that has not reached its bidder yet."""
-
     def __init__(self) -> None:
         # Each item adds a fixed delay to its auction time, so due times only rise.
         self.reports: deque[tuple[float, BidResult]] = deque()
         self.conversions: deque[tuple[float, Conversion]] = deque()
 
     def take_due(self, now: float) -> tuple[list[BidResult], list[Conversion]]:
-        """Remove and return the reports and conversions due by ``now``, in order."""
         return _pop_due(self.reports, now), _pop_due(self.conversions, now)
 
 
