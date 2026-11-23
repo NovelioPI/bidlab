@@ -1,11 +1,12 @@
 """Bandit bidders that learn a bid multiplier across episodes."""
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, override
 
 import numpy as np
 
 from bidlab.bidders.base import Bidder
-from bidlab.types import BidResult, EpisodeReport
+from bidlab.types import BidResult, Conversion, EpisodeReport
 
 if TYPE_CHECKING:
     from bidlab.config import Campaign
@@ -21,8 +22,9 @@ class UcbMultiplier(Bidder):
 
     Each arm is a fixed multiplier m, and the bidder outputs m × value for a
     whole episode. An arm's reward is the episode's surplus: the sum of
-    ``realized_value - price`` over its results, kept in ``arm_reward``.
-    Override `update` to reward something else. The exploration bonus is scaled by
+    ``realized_value - price`` over its results, plus the ``realized_value``
+    of late conversions, kept in ``arm_reward``. Override `update` and
+    `update_conversions` to reward something else. The exploration bonus is scaled by
     the spread of the arm means, so it works for any reward unit.
 
     Parameters
@@ -92,6 +94,11 @@ class UcbMultiplier(Bidder):
     @override
     def update(self, result: BidResult) -> None:
         self.arm_reward += result.realized_value - result.price
+
+    @override
+    def update_conversions(self, conversions: Sequence[Conversion]) -> None:
+        for conversion in conversions:
+            self.arm_reward += conversion.realized_value
 
     @override
     def on_episode_end(self, report: EpisodeReport) -> None:

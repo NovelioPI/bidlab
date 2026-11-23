@@ -448,3 +448,48 @@ def test_conversion_hook_alone_makes_a_learner(monkeypatch):
     assert isinstance(keeper, ConversionsOnly)
     assert [step_of(c.time) for c in keeper.conversions] == converted_steps(log, 0)
     assert not [name for name, _ in calls if name == "Silent"]
+
+
+class KeptUcb(bl.UcbMultiplier):
+    """A UcbMultiplier that lists the copies each run binds."""
+
+    instances: ClassVar[list["KeptUcb"]] = []
+
+    def bind(self, rng):
+        super().bind(rng)
+        KeptUcb.instances.append(self)
+
+
+def ucb_run(feedback):
+    KeptUcb.instances.clear()
+    config = bl.SimConfig(
+        campaigns=[
+            bl.Campaign(
+                "ucb", bl.Stack(bl.OracleValue(), KeptUcb()), budget=3.0, base_value=5
+            ),
+            bl.Campaign(
+                "rival",
+                bl.Stack(bl.OracleValue(), bl.Linear()),
+                budget=3.0,
+                base_value=5,
+            ),
+        ],
+        market=CLICKY,
+        episodes=20,
+        steps=STEPS,
+        horizon_hours=1,
+        feedback=feedback,
+    )
+    log = bl.run(config)
+    (ucb,) = KeptUcb.instances
+    return log.logged["bidders.1.multiplier"]["ucb"], ucb.reward_sums
+
+
+def test_ucb_counts_late_conversions():
+    plain_arms, plain_sums = ucb_run(bl.Feedback())
+    late_arms, late_sums = ucb_run(
+        bl.Feedback(conversion_delay=900, report_delay=100, interval=360)
+    )
+    assert plain_arms.tobytes() == late_arms.tobytes()
+    np.testing.assert_allclose(late_sums, plain_sums, rtol=0, atol=1e-9)
+    assert (plain_sums > 0).any()
