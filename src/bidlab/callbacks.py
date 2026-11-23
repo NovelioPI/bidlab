@@ -17,10 +17,10 @@ class Callback:
     """Base class for code that watches a run: override the hooks you need.
 
     Hooks run in the main process, in the order the callbacks are given, and
-    cannot change the run. `run` calls `on_run_start`, `on_episode_end` and
-    `on_run_end`; `run_many` calls only `on_run_many_start`, `on_seed_end`
-    and `on_run_many_end`, also with ``workers > 1``. An error raised in a
-    hook reaches the caller.
+    cannot change the run. `run` calls `on_run_start`, `on_step_end`,
+    `on_episode_end` and `on_run_end`; `run_many` calls only
+    `on_run_many_start`, `on_seed_end` and `on_run_many_end`, also with
+    ``workers > 1``. An error raised in a hook reaches the caller.
 
     Examples
     --------
@@ -44,6 +44,19 @@ class Callback:
         ----------
         config : SimConfig
             The run's config.
+        """
+
+    def on_step_end(self, episode: int, step: int) -> None:
+        """Run after each step's auction and any feedback delivered at that step.
+
+        It runs once per auction, so keep it fast.
+
+        Parameters
+        ----------
+        episode : int
+            The episode index, from 0.
+        step : int
+            The step index within the episode, from 0.
         """
 
     def on_episode_end(
@@ -101,10 +114,12 @@ class Callback:
 
 
 class ProgressBar(Callback):
-    """Show a tqdm progress bar on stderr: episodes in `run`, seeds in `run_many`.
+    """Show a tqdm progress bar on stderr: steps in `run`, seeds in `run_many`.
 
-    In a notebook it shows tqdm's notebook widget. One instance can watch any
-    number of runs; each gets its own bar.
+    In `run`, one line counts the current episode's steps under an
+    ``episode 2/5`` label and starts again at each episode. In a notebook it
+    shows tqdm's notebook widget. One instance can watch any number of runs;
+    each gets its own bar.
 
     Examples
     --------
@@ -119,20 +134,28 @@ class ProgressBar(Callback):
 
     def __init__(self) -> None:
         self._bar: tqdm[NoReturn] | None = None
+        self._episodes = 0
 
     def on_run_start(self, config: SimConfig) -> None:
-        """Open a bar with one tick per episode."""
-        self._bar = tqdm(total=config.episodes, desc="run", unit="episode")
+        """Open a bar with one tick per step of the first episode."""
+        self._episodes = config.episodes
+        self._bar = tqdm(total=config.steps, desc=self._label(0), unit="step")
+
+    def on_step_end(self, episode: int, step: int) -> None:
+        """Tick the step bar."""
+        if self._bar is not None:
+            self._bar.update()
 
     def on_episode_end(
         self, episode: int, reports: Mapping[str, EpisodeReport]
     ) -> None:
-        """Tick the episode bar."""
-        if self._bar is not None:
-            self._bar.update()
+        """Start the bar again for the next episode, on the same line."""
+        if self._bar is not None and episode + 1 < self._episodes:
+            self._bar.set_description(self._label(episode + 1), refresh=False)
+            self._bar.reset()
 
     def on_run_end(self, log: "RunLog") -> None:
-        """Close the episode bar."""
+        """Close the step bar."""
         self._close()
 
     def on_run_many_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
@@ -147,6 +170,9 @@ class ProgressBar(Callback):
     def on_run_many_end(self, results: Results) -> None:
         """Close the seed bar."""
         self._close()
+
+    def _label(self, episode: int) -> str:
+        return f"episode {episode + 1}/{self._episodes}"
 
     def _close(self) -> None:
         if self._bar is not None:

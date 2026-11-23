@@ -260,17 +260,52 @@ def test_run_many_hook_order(workers: int):
     assert callback.calls[-1][2] is results
 
 
-def test_progress_bar_counts_episodes(capsys: pytest.CaptureFixture[str]):
+def test_progress_bar_counts_steps(capsys: pytest.CaptureFixture[str]):
     plain = run(config(*two()))
     # Keep the bar referenced, so garbage collection cannot close it for the run.
     bar = ProgressBar()
     watched = run(config(*two()), callbacks=[bar])
     out, err = capsys.readouterr()
     assert out == ""
+    assert "episode 1/3: " in err and "episode 2/3: " in err
     assert re.search(
-        r"\brun: 100%\|.*\| 3/3 \[.*(\bs/episode|[\d.]episode/s)\]\n$", err
+        r"(^|\r)episode 3/3: 100%\|.*\| 50/50 \[.*(\bs/step|[\d.]step/s)\]\n$", err
     )
+    assert "episode/s" not in err and "/episode" not in err
     assert (plain.bids == watched.bids).all()
+
+
+class Steps(Record):
+    """Also records every step end."""
+
+    @override
+    def on_step_end(self, episode: int, step: int) -> None:
+        self.calls.append((self.name, "step_end", (episode, step)))
+
+
+def test_step_end_order():
+    callback = Steps()
+    run(config(*two(), episodes=2, steps=3), callbacks=[callback])
+    calls = [
+        (hook, args if hook != "episode_end" else args[0])
+        for _, hook, args in callback.calls[1:-1]
+    ]
+    assert calls == [
+        ("step_end", (0, 0)),
+        ("step_end", (0, 1)),
+        ("step_end", (0, 2)),
+        ("episode_end", 0),
+        ("step_end", (1, 0)),
+        ("step_end", (1, 1)),
+        ("step_end", (1, 2)),
+        ("episode_end", 1),
+    ]
+
+
+def test_run_many_skips_step_end():
+    callback = Steps()
+    run_many(config(*two()), seeds=range(2), workers=1, callbacks=[callback])
+    assert "step_end" not in {hook for _, hook, _ in callback.calls}
 
 
 def test_progress_bar_counts_seeds(capsys: pytest.CaptureFixture[str]):
