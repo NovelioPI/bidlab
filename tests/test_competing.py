@@ -228,7 +228,7 @@ def test_workers_match_under_competing_false():
 def test_platform_metrics_are_nan():
     config = compared(mixed_campaigns(), episodes=2, steps=100)
     rows = bl.platform_metrics(bl.run(config, progress_bar=False))
-    assert len(rows) == 2
+    assert [row.episode for row in rows] == [0, 1]
     assert all(np.isnan(row.revenue) and np.isnan(row.welfare) for row in rows)
     results = bl.run_many(config, seeds=range(2), progress_bar=False)
     assert all(
