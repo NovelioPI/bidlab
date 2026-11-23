@@ -24,6 +24,7 @@ class Probe(bl.Bidder):
         # Per episode: (delivery step, hook, item) for every item, in arrival order.
         self.episodes: list[list[tuple[int, str, Any]]] = []
         self.budgets_seen: list[list[float]] = []
+        self.forward_times: list[list[float]] = []
 
     def bind(self, rng):
         super().bind(rng)
@@ -35,10 +36,12 @@ class Probe(bl.Bidder):
         self.forwards = 0
         self.episodes.append([])
         self.budgets_seen.append([])
+        self.forward_times.append([])
 
-    def forward(self, budget_left):
+    def forward(self, budget_left, time):
         self.forwards += 1
         self.budgets_seen[-1].append(budget_left)
+        self.forward_times[-1].append(time)
         return self.bid
 
     def update_batch(self, bid_results):
@@ -493,3 +496,23 @@ def test_ucb_counts_late_conversions():
     assert plain_arms.tobytes() == late_arms.tobytes()
     np.testing.assert_allclose(late_sums, plain_sums, rtol=0, atol=1e-9)
     assert (plain_sums > 0).any()
+
+
+def test_reports_reach_a_campaign_outside_its_segment():
+    segmented = bl.markets.Segmented(
+        [bl.markets.Segment("a", 0.3), bl.markets.Segment("b", 0.7)], base=CLICKY
+    )
+    _, probe = probe_run(
+        bl.Feedback(report_delay=100), market=segmented, segments=["a"]
+    )
+    for records, times in zip(probe.episodes, probe.forward_times, strict=True):
+        arrived = [index for index, hook, _ in records if hook == "report"]
+        mine = [step_of(t) for t in times]
+        for j, step in enumerate(mine[1:], start=1):
+            before = sum(index < j for index in arrived)
+            # Due by the previous step's auction, whichever segment that step had.
+            due = sum(
+                s * SECONDS_PER_STEP + 100 <= (step - 1) * SECONDS_PER_STEP
+                for s in mine[:j]
+            )
+            assert before == due
