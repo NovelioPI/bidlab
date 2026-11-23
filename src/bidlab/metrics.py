@@ -74,8 +74,8 @@ class CampaignEpisodeMetrics:
         ``conversions`` / ``clicks``; NaN with no click.
     cost_per_expected_event : float
         ``spend`` / the expected count of the campaign's event over its wins
-        (`RunLog.true_values` summed over wins / ``base_value``); NaN with no
-        win.
+        (`RunLog.true_values` summed over wins / ``base_value``); NaN when that
+        count is 0, as with no win.
     lost_budget, lost_floor, lost_market, lost_rival : int
         Requests lost, each counted in the first kind that applies: budget
         when the budget left is below the price to win (the highest of the
@@ -281,7 +281,7 @@ def _campaign_row(log: RunLog, episode: int, i: int) -> CampaignEpisodeMetrics:
         budget_out=losses.budget_out,
         cvr=conversions / clicks if clicks else np.nan,
         cost_per_expected_event=(
-            spend / (expected_value / campaign.base_value) if wins else np.nan
+            spend / (expected_value / campaign.base_value) if expected_value else np.nan
         ),
         lost_budget=losses.budget,
         lost_floor=losses.floor,

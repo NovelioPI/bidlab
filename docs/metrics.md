@@ -46,7 +46,7 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | expected_surplus | Σ vᵢₜ over Wᵢ − spend | Surplus without the luck of the event draws |
 | budget_out | See [Lost requests](#lost-requests) | NaN when no request was lost to the budget |
 | cvr | conversions / clicks | NaN when clicks = 0 |
-| cost_per_expected_event | spend / (Σ vᵢₜ over Wᵢ / wᵢ) | A CPA without draw luck, for any event. NaN when wins = 0 |
+| cost_per_expected_event | spend / (Σ vᵢₜ over Wᵢ / wᵢ) | A CPA without draw luck, for any event. NaN when the expected count is 0, as with no win |
 | lost_budget | Requests lost to the budget | See [Lost requests](#lost-requests) |
 | lost_floor | Requests lost to the floor | See [Lost requests](#lost-requests) |
 | lost_market | Requests lost to the market price | See [Lost requests](#lost-requests) |
