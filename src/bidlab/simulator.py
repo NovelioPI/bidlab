@@ -16,6 +16,7 @@ from bidlab.callbacks import Callback, checked_callbacks, with_progress_bar
 from bidlab.config import Campaign, SimConfig
 from bidlab.logs import LogBook, Logs
 from bidlab.markets import MarketDraw
+from bidlab.profiling import Profile, Recorder, check_profiler
 from bidlab.types import (
     HOURS_PER_DAY,
     SECONDS_PER_HOUR,
@@ -87,6 +88,9 @@ class RunLog:
         Values bidders saved with `Bidder.log`: stored name, then campaign name,
         to an (episodes, steps) array, or (episodes,) for values logged in an
         episode hook. NaN where nothing was logged.
+    profile : Profile or None
+        Time per bidder hook and memory, from ``run(..., profiler=True)``;
+        None otherwise. It differs every run, so ``==`` ignores it.
 
     Examples
     --------
@@ -101,6 +105,8 @@ class RunLog:
     False
     >>> log.budgets.tolist()
     [10.0]
+    >>> log.profile is None
+    True
     """
 
     config: SimConfig
@@ -115,6 +121,7 @@ class RunLog:
     floor: npt.NDArray[np.float64]
     budgets: npt.NDArray[np.float64]
     logged: Logs = field(default_factory=lambda: MappingProxyType({}))
+    profile: Profile | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -158,7 +165,10 @@ class _MarketLog:
 
 
 def run(
-    config: SimConfig, callbacks: Sequence[Callback] = (), progress_bar: bool = True
+    config: SimConfig,
+    callbacks: Sequence[Callback] = (),
+    progress_bar: bool = True,
+    profiler: bool = False,
 ) -> RunLog:
     """Simulate every episode of ``config`` and return the full log.
 
@@ -174,12 +184,15 @@ def run(
         episode end and at run end, in this order.
     progress_bar : bool, optional
         Show a `ProgressBar` on stderr, after the other callbacks.
+    profiler : bool, optional
+        Time every bidder hook and sample memory into `RunLog.profile`. The
+        log's arrays stay the same bit for bit.
 
     Raises
     ------
     TypeError
-        If a bidder cannot be copied for a fresh run, or a callback is not a
-        `Callback` instance.
+        If a bidder cannot be copied for a fresh run, a callback is not a
+        `Callback` instance, or ``profiler`` is not a bool.
     ValueError
         If the market yields a draw with the wrong shape, a probability
         outside [0, 1], a market price or floor that is negative, NaN or
@@ -204,12 +217,16 @@ def run(
     ((2, 50, 1), (2, 50, 1))
     >>> bool((bl.run(config).bids == log.bids).all())
     True
+    >>> profiled = bl.run(config, profiler=True)
+    >>> bool((profiled.bids == log.bids).all()), profiled.profile.steps
+    (True, 100)
     """
+    check_profiler(profiler)
     checked = checked_callbacks(callbacks)
     if progress_bar:
         checked = with_progress_bar(checked)
 
-    simulation = _Simulation(config, checked)
+    simulation = _Simulation(config, checked, Recorder() if profiler else None)
     for callback in checked:
         callback.on_run_start(config)
 
@@ -221,7 +238,12 @@ def run(
 
 
 class _Simulation:
-    def __init__(self, config: SimConfig, callbacks: tuple[Callback, ...]):
+    def __init__(
+        self,
+        config: SimConfig,
+        callbacks: tuple[Callback, ...],
+        recorder: Recorder | None,
+    ):
         count = len(config.campaigns)
         # One stream per role, so adding a bidder keeps the market's draws equal.
         market_seed, tie_seed, conversion_seed, *bidder_seeds = np.random.SeedSequence(
@@ -229,6 +251,7 @@ class _Simulation:
         ).spawn(3 + count)
         self.config = config
         self.callbacks = callbacks
+        self.recorder = recorder
         self.base_values = np.array(
             [campaign.base_value for campaign in config.campaigns]
         )
@@ -360,6 +383,10 @@ class _Simulation:
         for path, node in nodes:
             attach_logger(node, self.book.logger(campaign.name, path))
 
+        # Only the running copy is wrapped, so the user's bidder never changes.
+        if self.recorder is not None:
+            self.recorder.wrap(campaign.name, nodes)
+
         return _Participant(
             # Bidders get the resolved budget, already scaled, so none scales it twice.
             campaign=replace(
@@ -370,8 +397,13 @@ class _Simulation:
         )
 
     def run_all(self) -> None:
+        if self.recorder is not None:
+            self.recorder.start()
+
         for episode in range(self.config.episodes):
             self._run_episode(episode)
+            if self.recorder is not None:
+                self.recorder.sample_memory()
 
         self.book.close()
         self.log = replace(self.log, logged=self.book.result())
@@ -397,6 +429,12 @@ class _Simulation:
             self.log.budgets,
         ):
             array.flags.writeable = False
+
+        if self.recorder is not None:
+            steps = self.config.episodes * self.config.steps
+            self.log = replace(
+                self.log, profile=self.recorder.profile(self.config.seed, steps)
+            )
 
     def _run_episode(self, episode: int) -> None:
         budget_left = self.budgets.copy()
