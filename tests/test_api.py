@@ -39,6 +39,25 @@ RUN_LOG_HASHES = {
 # Main results table CSV for seeds 0 and 1, recorded with the run-log hashes above.
 # Re-recorded with the ctr and cpc columns (feature 010); without them the CSV equals main's.
 RESULTS_HASH = "f328e6d91cc5b5089072a703d58221a8499097c9d3c4fa84dcd4d3b28250dd45"
+RESULTS_HASH_COLUMNS = (
+    "seed",
+    "campaign",
+    "spend",
+    "wins",
+    "clicks",
+    "conversions",
+    "realized_value",
+    "surplus",
+    "budget_used",
+    "ctr",
+    "cpc",
+    "cpa",
+    "cpa_violation",
+    "cpa_score",
+    "regret",
+    "revenue",
+    "welfare",
+)
 
 
 class ConversionBandit(UcbMultiplier):
@@ -105,15 +124,15 @@ def test_run_log_fingerprint(kind):
 def test_results_fingerprint(tmp_path):
     path = tmp_path / "results.csv"
     results = run_many(fingerprint_config("second"), seeds=[0, 1])
-    # The budget column came after this hash (feature 016); every other value keeps it.
-    without_budget = Results(
-        columns=tuple(column for column in results.columns if column != "budget"),
+    # Later columns (features 016, 017) came after this hash; the old ones keep it.
+    recorded = Results(
+        columns=RESULTS_HASH_COLUMNS,
         rows=tuple(
-            {key: value for key, value in row.items() if key != "budget"}
+            {column: row[column] for column in RESULTS_HASH_COLUMNS}
             for row in results.rows
         ),
     )
-    without_budget.save_csv(path)
+    recorded.save_csv(path)
     assert hashlib.sha256(path.read_bytes()).hexdigest() == RESULTS_HASH
     budgets = {c.name: c.budget for c in fingerprint_config("second").campaigns}
     assert [row["budget"] for row in results.rows] == [
@@ -172,10 +191,12 @@ MAIN_HASHES_WITHOUT_CLICKS = {
 def market_without_clicks(kind):
     if kind == "logistic":
         return LogisticMarket()
+
     if kind == "segmented":
         return Segmented(
             (Segment("mobile", 0.6, cvr_lift=0.5), Segment("desktop", 0.4))
         )
+
     return IndependentValues(stats.uniform(0, 0.1))
 
 
@@ -223,6 +244,7 @@ def market_with_clicks(kind):
     base = LogisticMarket(ctr_bias_mean=-3.0)
     if kind == "logistic":
         return base
+
     return Segmented(
         (Segment("mobile", 0.6, cvr_lift=0.5), Segment("desktop", 0.4)), base=base
     )
@@ -362,12 +384,14 @@ def test_bidder_families_are_same_objects():
 def test_removed_interfaces():
     for module in ("bidlab.cli", "bidlab.plugins"):
         assert importlib.util.find_spec(module) is None
+
     import bidlab.config
 
     assert not hasattr(bidlab.config, "load_config")
     assert importlib.util.find_spec("bidlab.world") is None
     with pytest.raises(AttributeError):
         _ = importlib.import_module("bidlab").WorldConfig
+
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     dependencies = " ".join(pyproject["project"]["dependencies"]).lower()
     assert "yaml" not in dependencies

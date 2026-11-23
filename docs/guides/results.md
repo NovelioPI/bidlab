@@ -17,6 +17,8 @@ This guide shows what `run` and `run_many` return, and how to read and compare t
 | `results.logged` | Values bidders logged, per seed; see [Logging](logging.md) |
 | `results.segment_rows` | The per-segment table, also a `Results` |
 
+Some columns score a campaign without draw luck: `expected_surplus` and `cost_per_expected_event` use the true chance of the event. The `lost_budget`, `lost_floor`, `lost_market` and `lost_rival` columns show why a campaign lost. `budget_out` shows when its budget ran out. [Metrics](../metrics.md) defines each one.
+
 Compare with `equals`, not `==`. Some metrics are NaN by definition, and NaN never equals NaN. `equals` on the main table does not compare `results.segment_rows`.
 
 ```python

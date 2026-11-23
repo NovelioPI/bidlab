@@ -12,12 +12,20 @@ bidlab follows [semantic versioning](https://semver.org/). Before 1.0, a minor v
 - `Campaign.budget` defaults to None, which sizes the budget from the market. Set `budget` to keep a fixed budget.
 - A `RunLog` built by hand needs `budgets`.
 - `run_many` results and their CSV files have a new `budget` column.
+- `run_many` results have nine new columns after `regret`, so `revenue` and `welfare` move right in a CSV. Code that reads columns by name is not affected.
 
 ### Campaigns
 
 - `Campaign(budget=None)` sizes each budget from the market: the mean cost per episode of every request worth its cost to the campaign, which is what a truthful bidder spends with no limit. The run replays its own market draws once to find it, so no random draw changes.
 - `Campaign(budget_fraction=f)` scales the budget, set or sized, for budget sweeps.
 - `RunLog.budgets`, `EpisodeReport.budget` and the `budget` metric hold the budget each campaign got; `budget_used` and `regret` use it.
+
+### Metrics
+
+- New campaign metrics in `campaign_metrics` and `run_many` results: `win_rate`, `expected_surplus`, `budget_out`, `cvr` and `cost_per_expected_event`.
+- `lost_budget`, `lost_floor`, `lost_market` and `lost_rival` count why each request was lost. `docs/metrics.md` gives the order of the rules.
+- `budget_out` is the share of the episode before the budget first blocked a win. `run_many` averages it over the episodes that ran out.
+- `segment_metrics` and `results.segment_rows` have `expected_surplus`.
 
 ## 0.4.0 (2026-11-23)
 

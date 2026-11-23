@@ -1,6 +1,7 @@
 """Run one simulation per seed and collect the metrics in a table."""
 
 import dataclasses
+import math
 from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from itertools import repeat
@@ -15,6 +16,7 @@ from bidlab.config import SimConfig
 from bidlab.logs import Logs
 from bidlab.metrics import (
     CampaignEpisodeMetrics,
+    CampaignSegmentMetrics,
     campaign_metrics,
     platform_metrics,
     segment_metrics,
@@ -28,7 +30,11 @@ BIDDER_COLUMNS = tuple(
     if f.name not in ("episode", "campaign")
 )
 COLUMNS = ("seed", "campaign", *BIDDER_COLUMNS, "revenue", "welfare")
-SEGMENT_METRIC_COLUMNS = ("spend", "wins", "clicks", "conversions", "surplus")
+SEGMENT_METRIC_COLUMNS = tuple(
+    f.name
+    for f in dataclasses.fields(CampaignSegmentMetrics)
+    if f.name not in ("episode", "campaign", "segment")
+)
 SEGMENT_COLUMNS = ("seed", "campaign", "segment", *SEGMENT_METRIC_COLUMNS)
 
 RowBuilder = dict[str, str | int | float]
@@ -52,8 +58,9 @@ def run_many(
     """Run each seed; rows are ordered by seed, then bidder.
 
     Each row holds one bidder's metrics for one seed, averaged over the
-    episodes. ``workers > 1`` runs seeds in parallel processes and gives the
-    same results as ``workers=1``.
+    episodes. ``budget_out`` is averaged only over the episodes where the
+    budget ran out, and is NaN when it never did. ``workers > 1`` runs seeds
+    in parallel processes and gives the same results as ``workers=1``.
 
     Parameters
     ----------
@@ -215,6 +222,9 @@ def _seed_rows(config: SimConfig, seed: int) -> _SeedRows:
 
         # The budget is the same every episode, and a mean of equal floats can move it.
         row["budget"] = float(log.budgets[index])
+        # An episode whose budget never ran out would hide the others in a mean.
+        ran_out = [m.budget_out for m in own if not math.isnan(m.budget_out)]
+        row["budget_out"] = float(np.mean(ran_out)) if ran_out else math.nan
 
         row["revenue"] = revenue
         row["welfare"] = welfare
