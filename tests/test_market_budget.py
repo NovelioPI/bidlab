@@ -36,3 +36,9 @@ def test_pid_pacing_rejects_an_unresolved_budget():
     campaign = Campaign("a", truthful(), budget=None, base_value=5)
     with pytest.raises(ValueError, match="PidPacing needs a number budget"):
         PidPacing().on_episode_start(campaign)
+
+
+def test_budget_defaults_to_none_and_fields_are_keyword_only():
+    assert Campaign("a", truthful(), base_value=5).budget is None
+    with pytest.raises(TypeError, match="positional"):
+        Campaign("a", truthful(), 3, 5)  # pyright: ignore[reportCallIssue]  Reason: the test checks the runtime error for positional fields.

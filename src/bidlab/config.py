@@ -3,7 +3,7 @@
 import copy
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 
 import numpy as np
 
@@ -17,6 +17,8 @@ from bidlab.types import HOURS_PER_DAY, Event, EventName
 class Campaign:
     """One advertiser's campaign: its bidder, budget and goals.
 
+    Every parameter after ``bidder`` is keyword-only.
+
     Parameters
     ----------
     name : str
@@ -29,12 +31,14 @@ class Campaign:
         What one event is worth to the advertiser; the event is ``event``. A
         bidder may use it as is or change it. Must be > 0. `OracleValue`
         multiplies it by the true chance of the event.
-    budget : float or None
-        Budget per episode, before ``budget_fraction``. Must be > 0. None
-        sizes it from the market: the mean cost per episode to win every
-        request in the campaign's segments, where a request costs the highest
-        of its market price, the auction's reserve and its floor. The run
-        replays its own market draws once before the first episode to find it.
+    budget : float or None, optional
+        Budget per episode, before ``budget_fraction``. Must be > 0. None, the
+        default, sizes it from the market: the mean cost per episode to win
+        every request in the campaign's segments, where a request costs the
+        highest of its market price, the auction's reserve and its floor. The
+        run replays its own market draws once before the first episode to find
+        it, and raises if that cost is 0, as in a market with no market price
+        and no reserve.
     budget_fraction : float, optional
         Scales the budget, set or sized from the market; 1 by default. Must
         be finite and > 0. Bidders get the scaled budget as
@@ -74,12 +78,13 @@ class Campaign:
 
     name: str
     bidder: Bidder
-    budget: float | None
+    _: KW_ONLY
     base_value: float
+    budget: float | None = None
+    budget_fraction: float = 1.0
     event: EventName = Event.CONVERSION
     cpa_target: float | None = None
     segments: Sequence[str] | None = None
-    budget_fraction: float = 1.0
 
     def __post_init__(self) -> None:
         # Callers can pass any object at run time; the type hint does not check it.
