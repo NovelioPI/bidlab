@@ -324,7 +324,7 @@ def run(
         config, int(seed), checked, Recorder() if profiler else None
     )
     for callback in checked:
-        callback.on_run_start(config)
+        callback.on_run_start(config, simulation.log.seed)
 
     simulation.run_all()
     for callback in checked:

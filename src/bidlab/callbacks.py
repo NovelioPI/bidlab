@@ -17,7 +17,7 @@ SEEDS_FORMAT = (
     "{desc}   {n_fmt}/{total_fmt} {percentage:3.0f}%|{bar}| [{elapsed}<{remaining}]"
 )
 # n and total stay unscaled; unit_scale shortens only the rate, as in 1.60k step/s.
-SEED_FORMAT = (
+STEPS_FORMAT = (
     "{desc} {percentage:3.0f}%|{bar}| {n}/{total} [{elapsed}<{remaining}, {rate_fmt}]"
 )
 
@@ -46,13 +46,15 @@ class Callback:
     1 True
     """
 
-    def on_run_start(self, config: SimConfig) -> None:
+    def on_run_start(self, config: SimConfig, seed: int) -> None:
         """Run once, after the bidders are built and before the first episode.
 
         Parameters
         ----------
         config : SimConfig
             The run's config.
+        seed : int
+            The run's seed, as `RunLog.seed` will record it.
         """
 
     def on_step_end(self, episode: int, step: int) -> None:
@@ -145,12 +147,11 @@ class ProgressBar(Callback):
 
     `run` adds one by default; pass ``progress_bar=False`` to hide it.
     Passing an instance in ``callbacks`` adds no second bar. For an int
-    seed, one line counts the current episode's steps under an ``episode
-    2/5`` label and starts again at each episode. For a seed list, a
-    ``seeds`` line counts finished seeds, and each running seed has its own
-    line below, labeled ``seed 4  episode 2/5``, that counts that episode's
-    steps; a finished seed's line is cleared and reused by the next seed, so
-    there are at most ``workers`` such lines. In a notebook it shows tqdm's
+    seed, one line labeled ``seed 42 episode 2/5`` counts the current
+    episode's steps and starts again at each episode. For a seed list, a
+    ``seeds`` line counts finished seeds, and each running seed has a line
+    of that kind below it; a finished seed's line is cleared and reused by
+    the next seed, so there are at most ``workers`` such lines. In a notebook it shows tqdm's
     notebook widgets. One instance can watch any number of runs; each gets
     its own bars.
 
@@ -168,13 +169,16 @@ class ProgressBar(Callback):
     def __init__(self) -> None:
         self._bar: tqdm[NoReturn] | None = None
         self._episodes = 0
+        self._seed = 0
         self._steps = 0
         self._seed_bars: dict[int, _SeedBar] = {}
 
-    def on_run_start(self, config: SimConfig) -> None:
+    def on_run_start(self, config: SimConfig, seed: int) -> None:
         """Open a bar with one tick per step of the first episode."""
         self._episodes = config.episodes
-        self._bar = tqdm(total=config.steps, desc=self._label(0), unit="step")
+        self._steps = config.steps
+        self._seed = seed
+        self._bar = self._steps_bar(seed, 0, line=None)
 
     def on_step_end(self, episode: int, step: int) -> None:
         """Tick the step bar."""
@@ -186,7 +190,9 @@ class ProgressBar(Callback):
     ) -> None:
         """Start the bar again for the next episode, on the same line."""
         if self._bar is not None and episode + 1 < self._episodes:
-            self._bar.set_description(self._label(episode + 1), refresh=False)
+            self._bar.set_description_str(
+                self._label(self._seed, episode + 1), refresh=False
+            )
             self._bar.reset()
 
     def on_run_end(self, log: "RunLog") -> None:
@@ -208,9 +214,7 @@ class ProgressBar(Callback):
 
         shown = self._seed_bars[seed]
         if episode != shown.episode:
-            shown.bar.set_description_str(
-                self._seed_label(seed, episode), refresh=False
-            )
+            shown.bar.set_description_str(self._label(seed, episode), refresh=False)
             shown.bar.reset()
             shown.episode = episode
 
@@ -236,22 +240,24 @@ class ProgressBar(Callback):
         # A finished seed's line is free again, so the lowest free one is reused.
         taken = {shown.line for shown in self._seed_bars.values()}
         line = next(line for line in range(1, len(taken) + 2) if line not in taken)
-        bar = tqdm(
+        return _SeedBar(
+            bar=self._steps_bar(seed, episode, line), episode=episode, line=line
+        )
+
+    def _steps_bar(self, seed: int, episode: int, line: int | None) -> "tqdm[NoReturn]":
+        # A line under the seeds bar is cleared at the end; a run's own bar stays.
+        return tqdm(
             total=self._steps,
-            desc=self._seed_label(seed, episode),
+            desc=self._label(seed, episode),
             position=line,
-            leave=False,
+            leave=line is None,
             unit=" step",
             unit_scale=True,
-            bar_format=SEED_FORMAT,
+            bar_format=STEPS_FORMAT,
         )
-        return _SeedBar(bar=bar, episode=episode, line=line)
 
-    def _label(self, episode: int) -> str:
-        return f"episode {episode + 1}/{self._episodes}"
-
-    def _seed_label(self, seed: int, episode: int) -> str:
-        return f"seed {seed}  {self._label(episode)}"
+    def _label(self, seed: int, episode: int) -> str:
+        return f"seed {seed} episode {episode + 1}/{self._episodes}"
 
     def _close(self) -> None:
         if self._bar is not None:
