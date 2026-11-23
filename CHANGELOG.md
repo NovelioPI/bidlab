@@ -4,6 +4,19 @@ This file lists the changes in each bidlab release, newest first.
 
 bidlab follows [semantic versioning](https://semver.org/). Before 1.0, a minor version may break the API; each break is listed under **Breaking**.
 
+## Unreleased
+
+### Simulation
+
+- `SimConfig(feedback=bl.Feedback(interval=, report_delay=, conversion_delay=))` delays what a bidder learns, in seconds. The defaults are 0, so runs without it keep every number.
+- Under a `report_delay`, the `budget_left` input counts only the spend in delivered results; the bid cap still uses the true budget.
+- Feedback still pending after an episode's last auction is delivered before `on_episode_end`.
+
+### Bidders
+
+- `Bidder.update_conversions(conversions)` receives late conversions as `bl.Conversion(time, realized_value)` under a `conversion_delay`; `BidResult.converted` is then False.
+- `UcbMultiplier` adds late conversion value to its arm reward.
+
 ## 0.1.0 (2026-11-22)
 
 The first release on PyPI.
