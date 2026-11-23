@@ -4,6 +4,21 @@ This file lists the changes in each bidlab release, newest first.
 
 bidlab follows [semantic versioning](https://semver.org/). Before 1.0, a minor version may break the API; each break is listed under **Breaking**.
 
+## Unreleased
+
+### Breaking
+
+- Every `Campaign` setting after `bidder` is keyword-only: `Campaign(name, bidder, budget=..., base_value=...)`. A positional budget would now swap with the value, so it raises `TypeError`.
+- `Campaign.budget` defaults to None, which sizes the budget from the market. Set `budget` to keep a fixed budget.
+- A `RunLog` built by hand needs `budgets`.
+- `run_many` results and their CSV files have a new `budget` column.
+
+### Campaigns
+
+- `Campaign(budget=None)` sizes each budget from the market: the mean cost per episode of every request worth its cost to the campaign, which is what a truthful bidder spends with no limit. The run replays its own market draws once to find it, so no random draw changes.
+- `Campaign(budget_fraction=f)` scales the budget, set or sized, for budget sweeps.
+- `RunLog.budgets`, `EpisodeReport.budget` and the `budget` metric hold the budget each campaign got; `budget_used` and `regret` use it.
+
 ## 0.4.0 (2026-11-23)
 
 ### Breaking

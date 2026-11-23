@@ -33,12 +33,13 @@ class Campaign:
         multiplies it by the true chance of the event.
     budget : float or None, optional
         Budget per episode, before ``budget_fraction``. Must be > 0. None, the
-        default, sizes it from the market: the mean cost per episode to win
-        every request in the campaign's segments, where a request costs the
-        highest of its market price, the auction's reserve and its floor. The
-        run replays its own market draws once before the first episode to find
-        it, and raises if that cost is 0, as in a market with no market price
-        and no reserve.
+        default, sizes it from the market: the mean cost per episode of every
+        request in the campaign's segments that is worth its cost, which is
+        what a truthful bidder spends with no budget limit. A request costs
+        the highest of its market price, the auction's reserve and its floor,
+        and is worth its `RunLog.true_values` entry. The run replays its own
+        market draws once before the first episode to find it, and raises if
+        that cost is 0, as in a market with no market price and no reserve.
     budget_fraction : float, optional
         Scales the budget, set or sized from the market; 1 by default. Must
         be finite and > 0. Bidders get the scaled budget as
@@ -74,6 +75,9 @@ class Campaign:
     ... )
     >>> campaign.budget
     15.0
+    >>> sized = bl.Campaign("sized", bl.Stack(bl.OracleValue(), bl.PidPacing()), base_value=5)
+    >>> sized.budget is None, sized.budget_fraction
+    (True, 1.0)
     """
 
     name: str

@@ -99,6 +99,8 @@ class RunLog:
     True
     >>> log.bids.flags.writeable
     False
+    >>> log.budgets.tolist()
+    [10.0]
     """
 
     config: SimConfig
@@ -182,9 +184,11 @@ def run(
         If the market yields a draw with the wrong shape, a probability
         outside [0, 1], a market price or floor that is negative, NaN or
         infinite, a feature named like a built-in input, or an unknown
-        segment.
+        segment; or if a campaign with ``budget=None`` has a market cost of 0.
     RuntimeError
-        If the market stops yielding draws before the run ends.
+        If the market stops yielding draws before the run ends, or its draws
+        differ from the replay that sized a ``budget=None`` campaign, because
+        `Market.draws` used more than its ``rng``.
 
     Examples
     --------
