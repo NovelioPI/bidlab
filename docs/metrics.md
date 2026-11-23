@@ -2,7 +2,7 @@
 
 This file defines every metric the simulator reports, so results from different methods mean the same thing.
 
-The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, then averaged over episodes per seed.
+The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, then averaged over episodes per seed. `budget_out` is the one exception: see [Lost requests](#lost-requests).
 
 ## Symbols
 
@@ -16,6 +16,8 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | cᵢₜ | True click probability (pCTR) of campaign i at step t; 1 when the market has no click stage | probability |
 | pᵢₜ | True conversion probability after a click (pCVR) of campaign i at step t, not the bidder's estimate | probability |
 | Wᵢ | Steps that campaign i won | set of steps |
+| Rᵢ | Requests of campaign i: steps in its `segments`, or every step without them | set of steps |
+| bᵢₜ | Logged bid of campaign i at step t, after the budget cap | money |
 | priceₜ | Price paid at step t; 0 when no campaign won | money |
 | mₜ | Market price at step t: the highest bid from outside the config; −∞ without one | money |
 | rₜ | Effective floor at step t: max(reserve, market floor) | money |
@@ -40,6 +42,37 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | cpa_violation | max(0, cpa / targetᵢ − 1) | 0 when spend = 0. +inf when spend > 0 and conversions = 0. NaN with no target |
 | cpa_score | realized_value × min((targetᵢ / cpa)³, 1) | AuctionNet score. Equals realized_value when spend = 0. 0 when spend > 0 and conversions = 0. NaN with no target |
 | regret | See below | Uses expected value, not realized |
+| win_rate | wins / \|Rᵢ\| | NaN when \|Rᵢ\| = 0. A bid of 0 still counts as a request |
+| expected_surplus | Σ vᵢₜ over Wᵢ − spend | Surplus without the luck of the event draws |
+| budget_out | See [Lost requests](#lost-requests) | NaN when no request was lost to the budget |
+| cvr | conversions / clicks | NaN when clicks = 0 |
+| cost_per_expected_event | spend / (Σ vᵢₜ over Wᵢ / wᵢ) | A CPA without draw luck, for any event. NaN when wins = 0 |
+| lost_budget | Requests lost to the budget | See [Lost requests](#lost-requests) |
+| lost_floor | Requests lost to the floor | See [Lost requests](#lost-requests) |
+| lost_market | Requests lost to the market price | See [Lost requests](#lost-requests) |
+| lost_rival | Requests lost to another campaign | See [Lost requests](#lost-requests). Always 0 with `competing=False` |
+
+## Lost requests
+
+A lost request is a step in Rᵢ that campaign i did not win. The metrics read only the `RunLog`.
+
+| Term | Plain meaning |
+|---|---|
+| Budget left | Bᵢ minus the prices campaign i paid at earlier steps of the episode |
+| Price to win | max(rₜ, mₜ, highest other bid). mₜ counts as 0 without a market price. The highest other bid counts only with `competing=True`, else 0 |
+
+Each lost request counts in exactly one kind. The first rule that applies wins:
+
+1. `lost_budget` when the budget left is below the price to win.
+2. `lost_floor` when bᵢₜ < rₜ.
+3. `lost_market` when the step has a market price and bᵢₜ ≤ mₜ.
+4. `lost_rival` otherwise.
+
+So lost_budget + lost_floor + lost_market + lost_rival = \|Rᵢ\| − wins. A budget left equal to the price to win is affordable. A bid that ties another campaign's top bid can lose the random tie break; that loss counts as `lost_rival`.
+
+`budget_out` = k / S, where k is the step of the first request lost to the budget and S is the episode's steps. It is NaN when no request was lost to the budget. So "never ran out" stays apart from "ran out at the last step".
+
+In `run_many`, `budget_out` is the mean over the episodes where it is not NaN. It is NaN when the budget never ran out in any episode. A plain mean would let one easy episode hide the others.
 
 ## Platform metrics
 
@@ -62,6 +95,7 @@ Both are NaN with `SimConfig(competing=False)`. Each campaign then buys the impr
 | clicks | Realized clicks over Wᵢ in the segment | |
 | conversions | Realized conversions over Wᵢ in the segment | |
 | surplus | nᵢ × wᵢ − spend, with nᵢ counted in the segment | |
+| expected_surplus | Σ vᵢₜ over Wᵢ in the segment − spend | |
 
 For one seed and campaign, each metric summed over segments equals the main table's value.
 
