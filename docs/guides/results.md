@@ -9,6 +9,7 @@ This guide shows what `run` and `run_many` return, and how to read and compare t
 | Method | Gives |
 |---|---|
 | `results.summary()` | A text table of means and 95% Student-t intervals |
+| `print(results)`, or `results` in a notebook | The row count and seed count, then the summary table |
 | `results.save_csv(path)` | A CSV file with one row per seed and campaign |
 | `results.to_pandas()` | A DataFrame; needs `uv sync --extra pandas` |
 | `results.rows`, `results.columns` | The raw rows as dicts |

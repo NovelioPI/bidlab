@@ -93,11 +93,20 @@ class Results:
             for column in self.columns
         )
 
+    def __repr__(self) -> str:
+        keys, metrics = _summary_columns(self.columns)
+        if not {"seed", *keys, *metrics} <= set(self.columns):
+            return f"Results(columns={self.columns!r}, {len(self.rows)} rows)"
+
+        seeds = len({row["seed"] for row in self.rows})
+        return (
+            f"Results: {len(self.rows)} rows, mean ± {CONFIDENCE:.0%} interval "
+            f"over {seeds} seeds\n{self.summary()}"
+        )
+
     def summary(self) -> str:
         """Mean ± 95% Student-t half-width across seeds, per campaign (and segment)."""
-        keys, metrics = ("campaign",), SUMMARY_METRICS
-        if "segment" in self.columns:
-            keys, metrics = ("campaign", "segment"), SEGMENT_SUMMARY_METRICS
+        keys, metrics = _summary_columns(self.columns)
         groups = list(
             dict.fromkeys(tuple(str(row[k]) for k in keys) for row in self.rows)
         )
@@ -142,6 +151,15 @@ class Results:
 
         records = [dict(row) for row in self.rows]
         return pandas.DataFrame(records, columns=list(self.columns))
+
+
+def _summary_columns(
+    columns: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if "segment" in columns:
+        return ("campaign", "segment"), SEGMENT_SUMMARY_METRICS
+
+    return ("campaign",), SUMMARY_METRICS
 
 
 def _summary_line(

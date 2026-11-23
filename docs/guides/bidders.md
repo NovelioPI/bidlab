@@ -30,7 +30,7 @@ Subclass `bl.Bidder` and implement `forward`. Every other hook is optional.
 | `update_conversions(conversions)` | Under a `Feedback.conversion_delay`, with the `Conversion` list that just arrived |
 | `on_episode_end(report)` | At the end of each episode, with its `EpisodeReport` |
 
-A bidder keeps what it learns on `self`. Take settings as constructor arguments. Each bidder gets its own random stream as `self.rng`.
+A bidder keeps what it learns on `self`. Take settings as constructor arguments, and keep each under its own name, as in `self.kp = kp`. Then `repr(bidder)` shows the call, such as `PidPacing(kp=5.0)`. Each bidder gets its own random stream as `self.rng`.
 
 The simulator deep-copies the bidder for each run. Every seed starts from the bidder as you built it, and a pretrained model passes in as is. The `campaign.bidder` passed to `on_episode_start` is that running copy, not your object.
 
