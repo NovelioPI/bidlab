@@ -7,7 +7,7 @@ import pytest
 from bidlab.auctions import NO_WINNER, FirstPrice, SecondPrice
 from bidlab.bidders import Linear, OracleValue, Stack
 from bidlab.config import Campaign, SimConfig
-from bidlab.markets import Segment, Segmented
+from bidlab.markets import LogisticMarket, Segment, Segmented
 from bidlab.metrics import campaign_metrics, platform_metrics, regret, segment_metrics
 from bidlab.simulator import RunLog, run
 
@@ -329,3 +329,314 @@ def test_segment_rows_carry_their_episode():
         )
     )
     assert [row.episode for row in segment_metrics(log)] == [0, 1, 2]
+
+
+def targeted_hand_log(segment):
+    """`hand_log` with campaign a bidding only in segment x of a two-segment market."""
+    log = hand_log()
+    a, b = log.config.campaigns
+    return dataclasses.replace(
+        log,
+        config=dataclasses.replace(
+            log.config,
+            market=Segmented((Segment("x", 0.5), Segment("y", 0.5))),
+            campaigns=(dataclasses.replace(a, segments=("x",)), b),
+        ),
+        segment=np.array([segment]),
+    )
+
+
+def test_win_rate_counts_requests_in_segments():
+    # a wins steps 0 and 2 of 3 requests; b wins step 1.
+    a, b = campaign_metrics(hand_log())
+    assert a.win_rate == pytest.approx(2 / 3)
+    assert b.win_rate == pytest.approx(1 / 3)
+    # Step 1 is in segment y, outside a's segments, so a has 2 requests.
+    a, b = campaign_metrics(targeted_hand_log([0, 1, 0]))
+    assert a.win_rate == 1.0
+    assert b.win_rate == pytest.approx(1 / 3)
+
+
+def test_win_rate_is_nan_without_requests():
+    log = targeted_hand_log([1, 1, 1])
+    a_never_wins = np.array([[[False, False], [False, True], [False, False]]])
+    log = dataclasses.replace(
+        log,
+        won=a_never_wins,
+        price=np.where(a_never_wins, log.price, 0.0),
+        clicked=a_never_wins,
+        converted=np.zeros_like(a_never_wins),
+    )
+    a, _ = campaign_metrics(log)
+    assert np.isnan(a.win_rate)
+
+
+def test_cvr_divides_conversions_by_clicks():
+    # a: 1 conversion of 2 clicks; b: 0 of 1.
+    a, b = campaign_metrics(hand_log())
+    assert a.cvr == 0.5
+    assert b.cvr == 0.0
+    log = hand_log()
+    no_clicks = dataclasses.replace(
+        log,
+        clicked=np.zeros_like(log.clicked),
+        converted=np.zeros_like(log.converted),
+    )
+    a, b = campaign_metrics(no_clicks)
+    assert np.isnan(a.cvr) and np.isnan(b.cvr)
+
+
+def test_expected_surplus_on_hand_built_log():
+    # a wins values 1.0 and 0.8 for 0.5 + 0.3; b wins 0.6 for 0.2.
+    a, b = campaign_metrics(hand_log())
+    assert a.expected_surplus == pytest.approx(1.8 - 0.8)
+    assert b.expected_surplus == pytest.approx(0.6 - 0.2)
+
+
+def test_cost_per_expected_event_on_hand_built_log():
+    # a: 1.8 expected value / base value 4 = 0.45 expected events, for spend 0.8.
+    # b: 0.6 / 2 = 0.3 expected events, for spend 0.2.
+    a, b = campaign_metrics(hand_log())
+    assert a.cost_per_expected_event == pytest.approx(0.8 / 0.45)
+    assert b.cost_per_expected_event == pytest.approx(0.2 / 0.3)
+    log = hand_log()
+    nobody_wins = dataclasses.replace(
+        log,
+        won=np.zeros_like(log.won),
+        price=np.zeros_like(log.price),
+        clicked=np.zeros_like(log.clicked),
+        converted=np.zeros_like(log.converted),
+    )
+    a, b = campaign_metrics(nobody_wins)
+    assert np.isnan(a.cost_per_expected_event) and np.isnan(b.cost_per_expected_event)
+
+
+def test_cost_per_expected_event_is_nan_when_wins_expect_no_event():
+    # Wins worth 0, as a pCTR of 0 gives, expect no event to divide by.
+    log = hand_log()
+    worthless = dataclasses.replace(log, true_values=np.zeros_like(log.true_values))
+    a, b = campaign_metrics(worthless)
+    assert np.isnan(a.cost_per_expected_event) and np.isnan(b.cost_per_expected_event)
+
+
+@dataclass(frozen=True)
+class Step:
+    """One step of a two-campaign log: a in segment x only, b in every segment."""
+
+    segment: int
+    bids: tuple[float, float]
+    winner: int
+    price: float = 0.0
+    floor: float = 0.0
+    market_price: float = np.nan
+
+
+def two_campaign_log(steps, budget=1.0, auction=None):
+    won = np.array([s.winner for s in steps])[:, None] == np.arange(2)
+    campaigns = (
+        Campaign(
+            "a",
+            Stack(OracleValue(), Linear()),
+            budget=budget,
+            base_value=4.0,
+            segments=("x",),
+        ),
+        Campaign("b", Stack(OracleValue(), Linear()), budget=10.0, base_value=2.0),
+    )
+    config = SimConfig(
+        campaigns=campaigns,
+        episodes=1,
+        steps=len(steps),
+        auction=auction or FirstPrice(),
+        market=Segmented((Segment("x", 0.5), Segment("y", 0.5))),
+    )
+    bids = np.array([[s.bids for s in steps]])
+    return RunLog(
+        config=config,
+        bids=bids,
+        true_values=bids.copy(),
+        won=won[None],
+        price=np.where(won, np.array([s.price for s in steps])[:, None], 0.0)[None],
+        clicked=won[None],
+        converted=np.zeros((1, len(steps), 2), dtype=bool),
+        segment=np.array([[s.segment for s in steps]]),
+        market_price=np.array([[s.market_price for s in steps]]),
+        floor=np.array([[s.floor for s in steps]]),
+        budgets=np.array([budget, 10.0]),
+    )
+
+
+LOSS_KINDS = ("lost_budget", "lost_floor", "lost_market", "lost_rival")
+
+
+def losses(row):
+    return tuple(getattr(row, kind) for kind in LOSS_KINDS)
+
+
+def test_each_loss_kind_on_hand_built_log():
+    log = two_campaign_log(
+        [
+            # Floor: a bids 0.2 below the floor 0.3.
+            Step(0, (0.2, 0.1), NO_WINNER, floor=0.3),
+            # Market: a bids 0.4, not above the market price 0.5.
+            Step(0, (0.4, 0.1), NO_WINNER, market_price=0.5),
+            # Rival: b bids 0.35 over a's 0.3.
+            Step(0, (0.3, 0.35), 1, price=0.35),
+            # Segment y: a is not asked to bid, so this counts in no kind.
+            Step(1, (0.0, 0.2), 1, price=0.2),
+            # a wins for 0.9 of its budget 1.0, leaving 0.1.
+            Step(0, (0.9, 0.1), 0, price=0.9),
+            # Budget: the price to win is b's 0.2, above a's 0.1 left.
+            Step(0, (0.1, 0.2), 1, price=0.2),
+        ]
+    )
+    a, b = campaign_metrics(log)
+    assert losses(a) == (1, 1, 1, 1)
+    # b has every request: it loses step 4 to a (rival), steps 0 and 1 by the floor
+    # and the market, and wins steps 2, 3 and 5.
+    assert losses(b) == (0, 1, 1, 1)
+
+
+def test_loss_rules_in_order():
+    log = two_campaign_log(
+        [
+            # Below the floor and the market price, a loses to the floor first.
+            Step(0, (0.2, 0.0), NO_WINNER, floor=0.3, market_price=0.5),
+            # Above the market price but below the rival, a loses to the rival.
+            Step(0, (0.6, 0.7), 1, price=0.7, market_price=0.5),
+            # A tie with the market price is a loss to the market.
+            Step(0, (0.5, 0.0), NO_WINNER, market_price=0.5),
+            # Budget left 1.0 equal to the price to win is affordable: a rival loss.
+            Step(0, (1.0, 1.0), 1, price=1.0),
+            # Budget left 1.0 below a floor of 1.5 is a budget loss, not a floor loss.
+            Step(0, (1.0, 0.0), NO_WINNER, floor=1.5),
+        ],
+        budget=1.0,
+    )
+    a, _ = campaign_metrics(log)
+    assert losses(a) == (1, 1, 1, 2)
+
+
+def test_budget_left_counts_only_earlier_prices():
+    # Budget 1.0: a pays 0.6 at step 0, so 0.4 is left at step 1 and the rival's
+    # 0.6 is out of reach. Without the earlier price, a would lose to the rival.
+    log = two_campaign_log(
+        [
+            Step(0, (0.7, 0.6), 0, price=0.6),
+            Step(0, (0.5, 0.6), 1, price=0.6),
+        ],
+        auction=SecondPrice(),
+    )
+    a, _ = campaign_metrics(log)
+    assert losses(a) == (1, 0, 0, 0)
+
+
+def test_budget_out_is_the_first_budget_loss():
+    log = two_campaign_log(
+        [
+            Step(0, (0.3, 0.35), 1, price=0.35),
+            Step(0, (0.9, 0.1), 0, price=0.9),
+            Step(0, (0.1, 0.2), 1, price=0.2),
+            Step(0, (0.1, 0.2), 1, price=0.2),
+        ]
+    )
+    a, b = campaign_metrics(log)
+    assert a.lost_budget == 2
+    assert a.budget_out == 2 / 4
+    assert np.isnan(b.budget_out)
+
+
+def priced_config(competing, auction, budget):
+    base = LogisticMarket(price_median=0.05, floor_share=(2, 5))
+    market = Segmented((Segment("x", 0.6), Segment("y", 0.4)), base=base)
+    campaigns = (
+        Campaign("t", Stack(OracleValue(), Linear()), budget=budget, base_value=5.0),
+        Campaign(
+            "m",
+            Stack(OracleValue(), Linear(multiplier=0.7)),
+            budget=budget,
+            base_value=4.0,
+        ),
+        Campaign(
+            "n",
+            Stack(OracleValue(), Linear(multiplier=1.3)),
+            budget=budget,
+            base_value=6.0,
+            segments=("x",),
+        ),
+    )
+    return SimConfig(
+        campaigns=campaigns,
+        episodes=2,
+        steps=300,
+        seed=5,
+        auction=auction(0.02),
+        market=market,
+        competing=competing,
+    )
+
+
+@pytest.mark.parametrize("competing", [True, False])
+@pytest.mark.parametrize("auction", [FirstPrice, SecondPrice])
+@pytest.mark.parametrize("budget", [20.0, None])
+def test_losses_sum_to_lost_requests(competing, auction, budget):
+    log = run(priced_config(competing, auction, budget))
+    names = log.config.market.segment_names
+    for row in campaign_metrics(log):
+        campaign = next(c for c in log.config.campaigns if c.name == row.campaign)
+        allowed = [names.index(name) for name in campaign.segments or names]
+        requests = int(np.isin(log.segment[row.episode], allowed).sum())
+        assert min(losses(row)) >= 0
+        assert sum(losses(row)) == requests - row.wins
+
+
+def test_losses_cover_every_kind():
+    rows = campaign_metrics(run(priced_config(True, SecondPrice, 20.0)))
+    for kind in LOSS_KINDS:
+        assert sum(getattr(row, kind) for row in rows) > 0, kind
+
+
+def test_no_rival_loss_without_competition():
+    rows = campaign_metrics(run(priced_config(False, SecondPrice, 20.0)))
+    assert all(row.lost_rival == 0 for row in rows)
+    assert sum(row.lost_market + row.lost_budget for row in rows) > 0
+
+
+def test_no_budget_loss_with_a_huge_budget():
+    rows = campaign_metrics(run(priced_config(True, SecondPrice, 1e9)))
+    assert all(row.lost_budget == 0 for row in rows)
+    assert all(np.isnan(row.budget_out) for row in rows)
+    assert sum(row.lost_rival + row.lost_market for row in rows) > 0
+
+
+@pytest.mark.parametrize("competing", [True, False])
+def test_segment_expected_surplus_sums_to_campaign(competing):
+    log = run(priced_config(competing, FirstPrice, 20.0))
+    segments = segment_metrics(log)
+    for row in campaign_metrics(log):
+        total = sum(
+            s.expected_surplus
+            for s in segments
+            if (s.episode, s.campaign) == (row.episode, row.campaign)
+        )
+        assert row.wins > 0
+        assert total == pytest.approx(row.expected_surplus, rel=1e-12)
+
+
+def test_bid_at_the_floor_without_a_market_price_loses_to_the_rival():
+    # Bid 0.3 equals r, so it passes the floor. Without a market price the price to
+    # win is b's 0.4, within a's budget 0.5.
+    log = two_campaign_log([Step(0, (0.3, 0.4), 1, price=0.4, floor=0.3)], budget=0.5)
+    a, _ = campaign_metrics(log)
+    assert losses(a) == (0, 0, 0, 1)
+
+
+def test_win_rate_counts_each_episode_requests():
+    log = run(priced_config(True, SecondPrice, 20.0))
+    names = log.config.market.segment_names
+    targeted = [row for row in campaign_metrics(log) if row.campaign == "n"]
+    requests = [int((log.segment[e] == names.index("x")).sum()) for e in (0, 1)]
+    assert requests[0] != requests[1]
+    assert [row.win_rate for row in targeted] == [
+        row.wins / count for row, count in zip(targeted, requests, strict=True)
+    ]
