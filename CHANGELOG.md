@@ -10,6 +10,12 @@ bidlab follows [semantic versioning](https://semver.org/). Before 1.0, a minor v
 
 - `bl.Market` is the market base class; `bl.markets.Market` still works.
 
+### Callbacks
+
+- `bl.ProgressBar()` shows a tqdm progress bar: the current episode's steps in `run`, seeds in `run_many`. bidlab now depends on `tqdm`.
+- `Callback.on_step_end(episode, step)` runs in `run` after each step's auction.
+- `Callback.on_run_many_start(config, seeds)` and `Callback.on_run_many_end(results)` run before the first seed and after the last in `run_many`.
+
 ## 0.2.0 (2026-11-23)
 
 ### Simulation

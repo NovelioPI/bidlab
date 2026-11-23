@@ -145,8 +145,8 @@ def run(config: SimConfig, callbacks: Sequence[Callback] = ()) -> RunLog:
     config : SimConfig
         The simulation.
     callbacks : Sequence[Callback], optional
-        Read-only hooks called at run start, at each episode end and at run
-        end, in this order.
+        Read-only hooks called at run start, at each step end, at each
+        episode end and at run end, in this order.
 
     Raises
     ------
@@ -286,6 +286,8 @@ class _Simulation:
 
         for step in range(self.config.steps):
             self._run_step(episode, step, budget_left, reported_left)
+            for callback in self.callbacks:
+                callback.on_step_end(episode, step)
 
         # Pending feedback arrives before the episode report, so the two agree.
         self._deliver_due(math.inf, reported_left)

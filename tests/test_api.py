@@ -245,6 +245,7 @@ PUBLIC_NAMES = {
     "MarketTruth",
     "OracleValue",
     "PidPacing",
+    "ProgressBar",
     "UcbMultiplier",
     "BidResult",
     "EpisodeReport",
