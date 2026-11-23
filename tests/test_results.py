@@ -53,19 +53,20 @@ def test_rows_follow_the_given_seed_order():
     assert [row["seed"] for row in results.rows] == [2, 2, 0, 0]
 
 
+# Factories, since a generator would be used up after one run of the test.
 @pytest.mark.parametrize(
-    "seeds",
+    "make_seeds",
     [
-        [3, 1],
-        (3, 1),
-        np.array([3, 1]),
-        (seed for seed in [3, 1]),
-        iter([np.int32(3), 1]),
+        lambda: [3, 1],
+        lambda: (3, 1),
+        lambda: np.array([3, 1]),
+        lambda: (seed for seed in [3, 1]),
+        lambda: iter([np.int32(3), 1]),
     ],
     ids=["list", "tuple", "array", "generator", "numpy-ints"],
 )
-def test_any_iterable_of_ints_is_a_seed_list(seeds):
-    results = run(config(), seed=seeds)
+def test_any_iterable_of_ints_is_a_seed_list(make_seeds):
+    results = run(config(), seed=make_seeds())
     assert isinstance(results, Results)
     assert results.equals(run(config(), seed=[3, 1]))
     assert all(type(row["seed"]) is int for row in results.rows)
@@ -93,10 +94,11 @@ def test_run_return_type_follows_seed():
 @pytest.mark.parametrize(
     ("seed", "match"),
     [
-        (1.5, "got float"),
-        ("12", "got str"),
-        (True, "got bool"),
-        (None, "got NoneType"),
+        (1.5, "an int or an iterable of ints, got float"),
+        ("12", "an int or an iterable of ints, got str"),
+        (b"12", "an int or an iterable of ints, got bytes"),
+        (True, "an int or an iterable of ints, got bool"),
+        (None, "an int or an iterable of ints, got NoneType"),
         ([0, 1.0], "only ints, got float"),
         ([0, True], "only ints, got bool"),
         (["0"], "only ints, got str"),
@@ -108,10 +110,10 @@ def test_seed_that_is_no_int_or_int_list_rejected(seed, match):
         run(config(), seed=seed)
 
 
-@pytest.mark.parametrize("seed", [[], range(0), iter([])])
-def test_empty_seed_list_rejected(seed):
+@pytest.mark.parametrize("make_seeds", [list, lambda: range(0), lambda: iter([])])
+def test_empty_seed_list_rejected(make_seeds):
     with pytest.raises(ValueError, match="empty"):
-        run(config(), seed=seed)
+        run(config(), seed=make_seeds())
 
 
 @pytest.mark.parametrize("seed", [0, np.int64(0)])

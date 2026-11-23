@@ -97,8 +97,8 @@ def run_seeds(
 
 
 def _seed_list(seeds: object) -> list[int]:
-    # A str is iterable, but its characters are no seeds.
-    if isinstance(seeds, bool | str | bytes) or not isinstance(seeds, Iterable):
+    # A str or bytes is iterable, but its characters are no seeds.
+    if isinstance(seeds, str | bytes) or not isinstance(seeds, Iterable):
         raise TypeError(
             f"seed must be an int or an iterable of ints, got {type(seeds).__name__}"
         )
@@ -159,7 +159,6 @@ def _run_parallel(
         ]
         per_seed: list[_SeedRows] = []
         for seed, future in zip(seeds, futures, strict=True):
-            # Callbacks run only here, on the main thread, never in a worker.
             while queue is not None and not future.done():
                 _drain(queue, callbacks, PROGRESS_POLL_SECONDS)
 
@@ -177,7 +176,7 @@ def _run_parallel(
 def _drain(
     queue: Queue[Progress], callbacks: tuple[Callback, ...], wait: float
 ) -> None:
-    # Waits up to `wait` for the first item only, so a busy queue never stalls.
+    # Only the first get waits, so a drain returns once the queue is empty.
     block = wait > 0
     while True:
         try:
