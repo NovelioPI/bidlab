@@ -286,6 +286,9 @@ class _Simulation:
         for step in range(self.config.steps):
             self._run_step(episode, step, budget_left, reported_left)
 
+        # Pending feedback arrives before the episode report, so the two agree.
+        self._deliver_due(math.inf, reported_left)
+
         self._end_episode(episode)
 
     def _run_step(
@@ -347,6 +350,7 @@ class _Simulation:
         if winner != NO_WINNER:
             budget_left[winner] -= price
 
+        feedback = self.config.feedback
         for i in active:
             participant = self.participants[i]
             won = i == winner
@@ -362,10 +366,10 @@ class _Simulation:
                 and event_happened(participant.campaign.event, won, clicked, converted)
                 else 0.0,
             )
-            self.inboxes[i].reports.append((time, result))
+            self.inboxes[i].reports.append((time + feedback.report_delay, result))
 
-        for i, inbox in enumerate(self.inboxes):
-            self._deliver(i, inbox.take_due(time), reported_left)
+        if self._delivers_at(step):
+            self._deliver_due(time, reported_left)
 
         self.log.bids[episode, step] = bids
         self.log.true_values[episode, step] = values
@@ -375,6 +379,24 @@ class _Simulation:
         self.log.converted[episode, step] = converted
         self.log.segment[episode, step] = self.segment_index[draw.segment]
         self._log_market(episode, step, draw)
+
+    def _delivers_at(self, step: int) -> bool:
+        interval = self.config.feedback.interval
+        if interval == 0:
+            return True
+
+        if step == 0:
+            return False
+
+        # The first step at or after each multiple of the interval delivers.
+        time = step * self.seconds_per_step
+        before = (step - 1) * self.seconds_per_step
+        return math.floor(time / interval) > math.floor(before / interval)
+
+    def _deliver_due(self, time: float, reported_left: npt.NDArray[np.float64]) -> None:
+        # A campaign outside this step's segment can still have feedback due.
+        for i, inbox in enumerate(self.inboxes):
+            self._deliver(i, inbox.take_due(time), reported_left)
 
     def _deliver(
         self,
