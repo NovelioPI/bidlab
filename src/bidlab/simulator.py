@@ -20,6 +20,7 @@ from bidlab.types import (
     HOURS_PER_DAY,
     SECONDS_PER_HOUR,
     BidResult,
+    Conversion,
     EpisodeReport,
     Event,
     EventName,
@@ -350,23 +351,10 @@ class _Simulation:
         if winner != NO_WINNER:
             budget_left[winner] -= price
 
-        feedback = self.config.feedback
         for i in active:
-            participant = self.participants[i]
-            won = i == winner
-            result = BidResult(
-                time=time,
-                bid=float(bids[i]),
-                won=won,
-                price=price if won else 0.0,
-                clicked=clicked and won,
-                converted=converted and won,
-                realized_value=participant.campaign.base_value
-                if won
-                and event_happened(participant.campaign.event, won, clicked, converted)
-                else 0.0,
+            self._post_feedback(
+                i, time, float(bids[i]), winner, price, clicked, converted
             )
-            self.inboxes[i].reports.append((time + feedback.report_delay, result))
 
         if self._delivers_at(step):
             self._deliver_due(time, reported_left)
@@ -379,6 +367,40 @@ class _Simulation:
         self.log.converted[episode, step] = converted
         self.log.segment[episode, step] = self.segment_index[draw.segment]
         self._log_market(episode, step, draw)
+
+    def _post_feedback(
+        self,
+        index: int,
+        time: float,
+        bid: float,
+        winner: int,
+        price: float,
+        clicked: bool,
+        converted: bool,
+    ) -> None:
+        feedback = self.config.feedback
+        campaign = self.participants[index].campaign
+        inbox = self.inboxes[index]
+        won = index == winner
+        late_conversion = converted and won and feedback.conversion_delay > 0
+        reported_conversion = converted and not late_conversion
+        result = BidResult(
+            time=time,
+            bid=bid,
+            won=won,
+            price=price if won else 0.0,
+            clicked=clicked and won,
+            converted=reported_conversion and won,
+            realized_value=campaign.base_value
+            if won and event_happened(campaign.event, won, clicked, reported_conversion)
+            else 0.0,
+        )
+        inbox.reports.append((time + feedback.report_delay, result))
+        if late_conversion:
+            value = campaign.base_value if campaign.event == Event.CONVERSION else 0.0
+            # A conversion never arrives before its auction's report.
+            delay = max(feedback.conversion_delay, feedback.report_delay)
+            inbox.conversions.append((time + delay, Conversion(time, value)))
 
     def _delivers_at(self, step: int) -> bool:
         interval = self.config.feedback.interval
@@ -396,21 +418,27 @@ class _Simulation:
     def _deliver_due(self, time: float, reported_left: npt.NDArray[np.float64]) -> None:
         # A campaign outside this step's segment can still have feedback due.
         for i, inbox in enumerate(self.inboxes):
-            self._deliver(i, inbox.take_due(time), reported_left)
+            self._deliver(i, *inbox.take_due(time), reported_left)
 
     def _deliver(
         self,
         index: int,
         reports: list[BidResult],
+        conversions: list[Conversion],
         reported_left: npt.NDArray[np.float64],
     ) -> None:
         for report in reports:
             if report.won:
                 reported_left[index] -= report.price
 
+        learners = self.participants[index].learners
         if reports:
-            for node in self.participants[index].learners:
+            for node in learners:
                 node.update_batch(reports)
+
+        if conversions:
+            for node in learners:
+                node.update_conversions(conversions)
 
     def _log_market(self, episode: int, step: int, draw: MarketDraw) -> None:
         # The arrays start as "none", so most runs skip both writes.
@@ -532,10 +560,11 @@ class _Inbox:
     def __init__(self) -> None:
         # Each item adds a fixed delay to its auction time, so due times only rise.
         self.reports: deque[tuple[float, BidResult]] = deque()
+        self.conversions: deque[tuple[float, Conversion]] = deque()
 
-    def take_due(self, now: float) -> list[BidResult]:
-        """Remove and return the reports due at or before ``now``, in order."""
-        return _pop_due(self.reports, now)
+    def take_due(self, now: float) -> tuple[list[BidResult], list[Conversion]]:
+        """Remove and return the reports and conversions due by ``now``, in order."""
+        return _pop_due(self.reports, now), _pop_due(self.conversions, now)
 
 
 def _pop_due[Item](queue: deque[tuple[float, Item]], now: float) -> list[Item]:
@@ -573,4 +602,5 @@ def _learns(bidder: Bidder) -> bool:
     return (
         hooks.update_batch is not Bidder.update_batch
         or hooks.update is not Bidder.update
+        or hooks.update_conversions is not Bidder.update_conversions
     )

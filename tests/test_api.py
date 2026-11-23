@@ -233,6 +233,7 @@ PUBLIC_NAMES = {
     "Callback",
     "SimConfig",
     "Feedback",
+    "Conversion",
     "Stack",
     "Campaign",
     "markets",

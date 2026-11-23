@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import bidlab as bl
+from bidlab.types import EventName
 
 SETTINGS = ("interval", "report_delay", "conversion_delay")
 STEPS = 100
@@ -29,6 +30,8 @@ class Probe(bl.Bidder):
         Probe.instances.append(self)
 
     def on_episode_start(self, campaign):
+        # Its bidder is the running copy of the whole tree.
+        self.campaign = campaign
         self.forwards = 0
         self.episodes.append([])
         self.budgets_seen.append([])
@@ -67,10 +70,11 @@ def probe_run(
     episodes=2,
     probe=Probe,
     segments=None,
+    event: EventName = "conversion",
 ):
     Probe.instances.clear()
     campaign = bl.Campaign(
-        "p", probe(bid), budget=budget, base_value=5, segments=segments
+        "p", probe(bid), budget=budget, base_value=5, segments=segments, event=event
     )
     config = bl.SimConfig(
         campaigns=[campaign],
@@ -324,3 +328,123 @@ def test_feedback_results_repeat():
     first = bl.run_many(config, seeds=range(2))
     assert first.equals(bl.run_many(config, seeds=range(2)))
     assert first.equals(bl.run_many(config, seeds=range(2), workers=2))
+
+
+def converted_steps(log, episode):
+    return list(np.flatnonzero(log.converted[episode] & (log.winner[episode] == 0)))
+
+
+def test_conversion_arrives_after_delay():
+    log, probe = probe_run(bl.Feedback(conversion_delay=900))
+    for episode, records in enumerate(probe.episodes):
+        assert not any(r.converted for r in reports(records))
+        steps = delivery_steps(records, "conversion")
+        conversions = [item for _, hook, item in records if hook == "conversion"]
+        assert len(conversions) == len(steps)
+        assert sorted(steps) == converted_steps(log, episode)
+        assert steps == {s: min(s + 25, STEPS - 1) for s in steps}
+    assert log.converted.any()
+
+
+def test_conversion_after_its_report():
+    _, probe = probe_run(bl.Feedback(conversion_delay=20, report_delay=100))
+    for records in probe.episodes:
+        seen = set()
+        last_hook_at = {}
+        for index, (step, hook, item) in enumerate(records):
+            if hook == "report":
+                # The flush is a second delivery after the last auction, at its step.
+                if step < STEPS - 1:
+                    assert last_hook_at.get(step) != "conversion"
+                seen.add(step_of(item.time))
+            elif hook == "conversion":
+                assert step_of(item.time) in seen
+                (report_step,) = [
+                    s
+                    for s, h, r in records[:index]
+                    if h == "report" and r.time == item.time
+                ]
+                assert report_step == step
+            last_hook_at[step] = hook
+        assert "conversion" in last_hook_at.values()
+
+
+DELAYED = [
+    *FEEDBACKS,
+    bl.Feedback(conversion_delay=900),
+    bl.Feedback(interval=360, report_delay=100, conversion_delay=20),
+    bl.Feedback(conversion_delay=10 * 3600),
+]
+
+
+@pytest.mark.parametrize("feedback", DELAYED)
+@pytest.mark.parametrize("event", ["impression", "click", "conversion"])
+def test_delivered_value_matches_episode_report(feedback, event):
+    _, probe = probe_run(feedback, event=event)
+    for records in probe.episodes:
+        delivered = sum(
+            item.realized_value for _, hook, item in records if hook != "end"
+        )
+        assert delivered == records[-1][2].realized_value
+        assert delivered > 0
+
+
+@pytest.mark.parametrize("event", ["impression", "click", "conversion"])
+def test_conversion_value_by_event(event):
+    _, plain = probe_run(event=event)
+    _, late = probe_run(bl.Feedback(conversion_delay=900), event=event)
+    for plain_records, late_records in zip(plain.episodes, late.episodes, strict=True):
+        values = {c.realized_value for _, h, c in late_records if h == "conversion"}
+        assert values == {5.0 if event == "conversion" else 0.0}
+        if event != "conversion":
+            assert [r.realized_value for r in reports(late_records)] == [
+                r.realized_value for r in reports(plain_records)
+            ]
+
+
+class ConversionsOnly(bl.Bidder):
+    """Passes its value on and keeps every conversion it gets."""
+
+    def __init__(self):
+        self.conversions = []
+
+    def forward(self, value):
+        return value
+
+    def update_conversions(self, conversions):
+        self.conversions.extend(conversions)
+
+
+class Silent(bl.Bidder):
+    def forward(self, value):
+        return value
+
+
+def test_conversion_hook_alone_makes_a_learner(monkeypatch):
+    calls = []
+
+    def record(hook):
+        return lambda self, items: calls.append((type(self).__name__, hook))
+
+    monkeypatch.setattr(bl.Bidder, "update_batch", record("update_batch"))
+    monkeypatch.setattr(bl.Bidder, "update_conversions", record("update_conversions"))
+    Probe.instances.clear()
+    holder = bl.Stack(Probe(), ConversionsOnly(), Silent())
+    config = bl.SimConfig(
+        campaigns=[bl.Campaign("p", holder, budget=1000, base_value=5)],
+        auction=bl.FirstPrice(),
+        market=CLICKY,
+        episodes=1,
+        steps=STEPS,
+        horizon_hours=1,
+        feedback=bl.Feedback(conversion_delay=900),
+        seed=3,
+    )
+    log = bl.run(config)
+    (probe,) = Probe.instances
+    holder_copy = probe.campaign.bidder
+    assert isinstance(holder_copy, bl.Stack)
+    keeper = holder_copy.bidders[1]
+    assert isinstance(keeper, ConversionsOnly)
+    assert [step_of(c.time) for c in keeper.conversions] == converted_steps(log, 0)
+    assert not [name for name, _ in calls if name == "Silent"]
