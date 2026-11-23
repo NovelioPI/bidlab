@@ -1,11 +1,12 @@
 import os
-from collections.abc import Mapping
+import re
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar, override
 
 import pytest
 
 from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
-from bidlab.callbacks import Callback
+from bidlab.callbacks import Callback, ProgressBar
 from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
 from bidlab.runner import run_many
@@ -226,3 +227,92 @@ def test_callbacks_leave_run_unchanged():
     watched = run(config(*two()), callbacks=[Record(), OnlyEnd()])
     for name in ("bids", "price", "winner", "converted"):
         assert (getattr(plain, name) == getattr(watched, name)).all()
+
+
+class RecordMany(Record):
+    """Also records the run_many start and end hooks."""
+
+    @override
+    def on_run_many_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
+        self.calls.append((self.name, "run_many_start", (config, seeds)))
+
+    @override
+    def on_run_many_end(self, results: Results) -> None:
+        self.calls.append((self.name, "run_many_end", results))
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_run_many_hook_order(workers: int):
+    callback = RecordMany()
+    settings = config(*two())
+    results = run_many(
+        settings, seeds=iter([4, 1, 7]), workers=workers, callbacks=[callback]
+    )
+    hooks = [hook for _, hook, _ in callback.calls]
+    assert hooks == [
+        "run_many_start",
+        "seed_end",
+        "seed_end",
+        "seed_end",
+        "run_many_end",
+    ]
+    assert callback.calls[0][2] == (settings, (4, 1, 7))
+    assert callback.calls[-1][2] is results
+
+
+def test_progress_bar_counts_steps(capsys: pytest.CaptureFixture[str]):
+    plain = run(config(*two()))
+    # Keep the bar referenced, so garbage collection cannot close it for the run.
+    bar = ProgressBar()
+    watched = run(config(*two()), callbacks=[bar])
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "episode 1/3: " in err and "episode 2/3: " in err
+    assert re.search(
+        r"(^|\r)episode 3/3: 100%\|.*\| 50/50 \[.*(\bs/step|[\d.]step/s)\]\n$", err
+    )
+    assert "episode/s" not in err and "/episode" not in err
+    assert (plain.bids == watched.bids).all()
+
+
+class Steps(Record):
+    """Also records every step end."""
+
+    @override
+    def on_step_end(self, episode: int, step: int) -> None:
+        self.calls.append((self.name, "step_end", (episode, step)))
+
+
+def test_step_end_order():
+    callback = Steps()
+    run(config(*two(), episodes=2, steps=3), callbacks=[callback])
+    calls = [
+        (hook, args if hook != "episode_end" else args[0])
+        for _, hook, args in callback.calls[1:-1]
+    ]
+    assert calls == [
+        ("step_end", (0, 0)),
+        ("step_end", (0, 1)),
+        ("step_end", (0, 2)),
+        ("episode_end", 0),
+        ("step_end", (1, 0)),
+        ("step_end", (1, 1)),
+        ("step_end", (1, 2)),
+        ("episode_end", 1),
+    ]
+
+
+def test_run_many_skips_step_end():
+    callback = Steps()
+    run_many(config(*two()), seeds=range(2), workers=1, callbacks=[callback])
+    assert "step_end" not in {hook for _, hook, _ in callback.calls}
+
+
+def test_progress_bar_counts_seeds(capsys: pytest.CaptureFixture[str]):
+    bar = ProgressBar()
+    results = run_many(config(*two()), seeds=[4, 1], callbacks=[bar])
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert re.search(r"\brun_many: 100%\|.*\| 2/2 \[.*(\bs/seed|[\d.]seed/s)\]\n$", err)
+    assert "episode" not in err
+    assert results.equals(run_many(config(*two()), seeds=[4, 1]))
