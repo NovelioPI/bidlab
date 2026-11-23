@@ -12,6 +12,7 @@ import numpy.typing as npt
 from scipy import stats
 
 from bidlab.logs import Logs
+from bidlab.profiling import Profile, write_profile_csv
 
 if TYPE_CHECKING:
     import pandas
@@ -43,6 +44,9 @@ class Results:
         Values bidders saved with `Bidder.log`, as in `RunLog.logged` with a
         leading seeds axis, in row order. NaN for a seed that never logged
         the name. Read-only.
+    profile : tuple[Profile, ...] or None
+        One `Profile` per seed, in seed order, from
+        ``run_many(..., profiler=True)``; None otherwise. `equals` ignores it.
 
     Examples
     --------
@@ -64,6 +68,7 @@ class Results:
     rows: tuple[ResultRow, ...]
     segment_rows: "Results | None" = None
     logged: Logs = field(default_factory=lambda: MappingProxyType({}))
+    profile: tuple[Profile, ...] | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         read_only = tuple(MappingProxyType(dict(row)) for row in self.rows)
@@ -133,6 +138,30 @@ class Results:
             writer = csv.DictWriter(file, fieldnames=self.columns)
             writer.writeheader()
             writer.writerows(self.rows)
+
+    def save_profile_csv(self, path: str | Path) -> None:
+        """Write every seed's profile to one CSV file, in seed order.
+
+        The columns are those of `Profile.save_csv`; each line names its
+        seed.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The file to write.
+
+        Raises
+        ------
+        ValueError
+            If the results hold no profiles, since `run_many` ran without
+            ``profiler=True``.
+        """
+        if self.profile is None:
+            raise ValueError(
+                "these results hold no profiles; run run_many(..., profiler=True)"
+            )
+
+        write_profile_csv(path, self.profile)
 
     def to_pandas(self) -> "pandas.DataFrame":
         """Return the rows as a DataFrame; needs ``pip install bidlab[pandas]``.

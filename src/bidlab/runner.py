@@ -21,6 +21,7 @@ from bidlab.metrics import (
     platform_metrics,
     segment_metrics,
 )
+from bidlab.profiling import Profile, check_profiler
 from bidlab.results import ResultRow, Results
 from bidlab.simulator import run
 
@@ -46,6 +47,7 @@ class _SeedRows:
     segment_rows: list[ResultRow]
     # Plain dicts, since a worker cannot pickle the run log's read-only mappings.
     logged: dict[str, dict[str, npt.NDArray[np.float64]]]
+    profile: Profile | None
 
 
 def run_many(
@@ -54,6 +56,7 @@ def run_many(
     workers: int = 1,
     callbacks: Sequence[Callback] = (),
     progress_bar: bool = True,
+    profiler: bool = False,
 ) -> Results:
     """Run each seed; rows are ordered by seed, then bidder.
 
@@ -78,6 +81,9 @@ def run_many(
     progress_bar : bool, optional
         Show a `ProgressBar` that counts seeds on stderr, after the other
         callbacks. Each seed's own run shows no step bar.
+    profiler : bool, optional
+        Profile each seed's run, as in `run`, into `Results.profile`. A
+        worker profiles its own seeds, so memory is per worker process.
 
     Returns
     -------
@@ -89,8 +95,8 @@ def run_many(
     ValueError
         If ``workers`` is below 1.
     TypeError
-        If ``workers > 1`` and a bidder cannot be pickled with cloudpickle, or
-        a callback is not a `Callback` instance.
+        If ``workers > 1`` and a bidder cannot be pickled with cloudpickle, a
+        callback is not a `Callback` instance, or ``profiler`` is not a bool.
 
     Examples
     --------
@@ -116,30 +122,37 @@ def run_many(
     >>> results = bl.run_many(config, seeds=[0, 1])
     >>> [(row["seed"], row["campaign"]) for row in results.rows]
     [(0, 'a'), (0, 'b'), (1, 'a'), (1, 'b')]
+    >>> profiled = bl.run_many(config, seeds=[0, 1], profiler=True)
+    >>> len(profiled.profile), profiled.equals(results)
+    (2, True)
     """
     if workers < 1:
         raise ValueError(f"workers must be >= 1, got {workers}")
 
+    check_profiler(profiler)
     checked = checked_callbacks(callbacks)
     if progress_bar:
         checked = with_progress_bar(checked)
+
     seed_list = list(seeds)
     for callback in checked:
         callback.on_run_many_start(config, tuple(seed_list))
+
     if workers == 1:
-        computed = (_seed_rows(config, seed) for seed in seed_list)
+        computed = (_seed_rows(config, seed, profiler) for seed in seed_list)
         per_seed = _collect(seed_list, computed, checked)
     else:
         payload = _pickle_config(config)
         # spawn behaves the same on every OS and avoids forking PyTorch threads.
         context = get_context("spawn")
         with ProcessPoolExecutor(max_workers=workers, mp_context=context) as pool:
-            computed = pool.map(_run_seed, repeat(payload), seed_list)
+            computed = pool.map(_run_seed, repeat(payload), seed_list, repeat(profiler))
             per_seed = _collect(seed_list, computed, checked)
 
     results = _results(per_seed)
     for callback in checked:
         callback.on_run_many_end(results)
+
     return results
 
 
@@ -151,6 +164,7 @@ def _collect(
         per_seed.append(seed_rows)
         for callback in callbacks:
             callback.on_seed_end(seed, _results([seed_rows]))
+
     return per_seed
 
 
@@ -164,7 +178,16 @@ def _results(per_seed: list[_SeedRows]) -> Results:
         rows=rows,
         segment_rows=Results(columns=SEGMENT_COLUMNS, rows=segment_rows),
         logged=_stacked_logs([seed_rows.logged for seed_rows in per_seed]),
+        profile=_profiles(per_seed),
     )
+
+
+def _profiles(per_seed: list[_SeedRows]) -> tuple[Profile, ...] | None:
+    # Every seed runs with the same profiler setting, so all or none have one.
+    profiles = tuple(
+        seed_rows.profile for seed_rows in per_seed if seed_rows.profile is not None
+    )
+    return profiles or None
 
 
 def _stacked_logs(
@@ -203,12 +226,14 @@ def _pickle_config(config: SimConfig) -> bytes:
     return cloudpickle.dumps(config)
 
 
-def _run_seed(payload: bytes, seed: int) -> _SeedRows:
-    return _seed_rows(cloudpickle.loads(payload), seed)
+def _run_seed(payload: bytes, seed: int, profiler: bool) -> _SeedRows:
+    return _seed_rows(cloudpickle.loads(payload), seed, profiler)
 
 
-def _seed_rows(config: SimConfig, seed: int) -> _SeedRows:
-    log = run(dataclasses.replace(config, seed=seed), progress_bar=False)
+def _seed_rows(config: SimConfig, seed: int, profiler: bool) -> _SeedRows:
+    log = run(
+        dataclasses.replace(config, seed=seed), progress_bar=False, profiler=profiler
+    )
     platform = platform_metrics(log)
     revenue = float(np.mean([p.revenue for p in platform]))
     welfare = float(np.mean([p.welfare for p in platform]))
@@ -244,7 +269,10 @@ def _seed_rows(config: SimConfig, seed: int) -> _SeedRows:
             }
             for column in SEGMENT_METRIC_COLUMNS:
                 segment_row[column] = float(np.mean([getattr(m, column) for m in own]))
+
             segment_rows.append(segment_row)
 
     logs = {name: dict(arrays) for name, arrays in log.logged.items()}
-    return _SeedRows(rows=rows, segment_rows=segment_rows, logged=logs)
+    return _SeedRows(
+        rows=rows, segment_rows=segment_rows, logged=logs, profile=log.profile
+    )

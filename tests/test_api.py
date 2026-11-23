@@ -321,6 +321,7 @@ PUBLIC_NAMES = {
     "MarketTruth",
     "OracleValue",
     "PidPacing",
+    "Profile",
     "ProgressBar",
     "UcbMultiplier",
     "BidResult",

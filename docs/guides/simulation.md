@@ -96,6 +96,8 @@ if __name__ == "__main__":
 
 A bidder that holds a large object, such as a model, is copied to each worker and once per run.
 
+To see where a run spends its time, pass `profiler=True` to `run` or `run_many`. [Profiling](profiling.md) explains the table it gives.
+
 ## Reproducibility
 
 Each source of randomness has its own seeded stream: the market, tie-breaking, conversions, and each bidder. A `Stack` splits its bidder's stream, so each inner bidder gets its own.
