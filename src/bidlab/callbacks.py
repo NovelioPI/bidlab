@@ -240,9 +240,10 @@ class ProgressBar(Callback):
         # A finished seed's line is free again, so the lowest free one is reused.
         taken = {shown.line for shown in self._seed_bars.values()}
         line = next(line for line in range(1, len(taken) + 2) if line not in taken)
-        return _SeedBar(
-            bar=self._steps_bar(seed, episode, line), episode=episode, line=line
-        )
+        bar = self._steps_bar(seed, episode, line)
+        # Progress comes only about 20 times an episode, so each call gets a frame.
+        bar.mininterval = 0
+        return _SeedBar(bar=bar, episode=episode, line=line)
 
     def _steps_bar(self, seed: int, episode: int, line: int | None) -> "tqdm[NoReturn]":
         # A line under the seeds bar is cleared at the end; a run's own bar stays.

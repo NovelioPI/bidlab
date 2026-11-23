@@ -471,6 +471,26 @@ def test_seed_bars_reuse_freed_lines(capsys: pytest.CaptureFixture[str]):
     assert err.endswith("\n") and "seeds   3/3 100%" in err.rsplit("\r", 1)[-1]
 
 
+def test_seed_bar_shows_every_progress_call(capsys: pytest.CaptureFixture[str]):
+    bar = ProgressBar()
+    empty = Results(columns=(), rows=())
+    bar.on_seeds_start(config(*two(), steps=30), [1])
+    for episode, step in [(0, 4), (0, 9), (1, 4)]:
+        bar.on_seed_progress(1, episode, step)
+    bar.on_seed_end(1, empty)
+    bar.on_seeds_end(empty)
+    frames = re.findall(
+        r"\rseed 1 (episode \d/3) +\d+%\|[^|]*\| (\d+/\d+)", capsys.readouterr().err
+    )
+    assert frames == [
+        ("episode 1/3", "0/30"),
+        ("episode 1/3", "5/30"),
+        ("episode 1/3", "10/30"),
+        ("episode 2/3", "0/30"),
+        ("episode 2/3", "5/30"),
+    ]
+
+
 def test_seeds_end_clears_open_seed_bars(capsys: pytest.CaptureFixture[str]):
     err = bar_text(capsys, ("progress", 1, 0), ("progress", 2, 0))
     assert len(re.findall(CLEARED_LINE, err)) == 2
