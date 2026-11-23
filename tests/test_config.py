@@ -212,10 +212,7 @@ def test_default_auction_is_second_price_no_reserve():
 
 def test_first_price_config_runs():
     log = run(small_config(auction=FirstPrice(0.01)))
-    sold = log.winner >= 0
-    np.testing.assert_array_equal(
-        log.price[sold], log.bids[sold.nonzero() + (log.winner[sold],)]
-    )
+    np.testing.assert_array_equal(log.price[log.won], log.bids[log.won])
 
 
 def test_bidder_without_forward_fails_on_creation():

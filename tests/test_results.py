@@ -178,7 +178,7 @@ def test_results_rows_are_read_only():
 
 def test_run_log_arrays_are_read_only():
     log = run(config())
-    for array in (log.bids, log.true_values, log.winner, log.price, log.converted):
+    for array in (log.bids, log.true_values, log.won, log.price, log.converted):
         with pytest.raises(ValueError, match="read-only"):
             array[0, 0] = 0
 
@@ -369,7 +369,7 @@ def test_clicks_column():
     for row in results.rows:
         log = run(dataclasses.replace(clicking, seed=row["seed"]))
         index = [c.name for c in clicking.campaigns].index(str(row["campaign"]))
-        clicked_wins = (log.clicked & (log.winner == index)).sum(axis=1)
+        clicked_wins = log.clicked[:, :, index].sum(axis=1)
         assert row["clicks"] == pytest.approx(clicked_wins.mean())
     assert any(float(row["clicks"]) < float(row["wins"]) for row in results.rows)
 
@@ -415,14 +415,14 @@ def event_config(market=None):
 
 def episode_counts(log, index, steps=None):
     """Per-episode counts for one campaign, over all steps or the given ones."""
-    won = log.winner == index
+    won = log.won[:, :, index]
     if steps is not None:
         won = won & steps
     return {
         "wins": won.sum(axis=1),
-        "clicks": (log.clicked & won).sum(axis=1),
-        "conversions": (log.converted & won).sum(axis=1),
-        "spend": np.where(won, log.price, 0.0).sum(axis=1),
+        "clicks": (log.clicked[:, :, index] & won).sum(axis=1),
+        "conversions": (log.converted[:, :, index] & won).sum(axis=1),
+        "spend": np.where(won, log.price[:, :, index], 0.0).sum(axis=1),
     }
 
 

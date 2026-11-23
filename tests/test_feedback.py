@@ -158,7 +158,7 @@ def test_no_delay_delivers_after_each_auction():
         ] + [(STEPS - 1, "end")]
         assert [step_of(r.time) for r in reports(records)] == list(range(STEPS))
         converted = [r.converted for r in reports(records)]
-        assert converted == list(log.converted[episode] & (log.winner[episode] == 0))
+        assert converted == list(log.converted[episode, :, 0])
     assert log.converted.any()
 
 
@@ -258,12 +258,12 @@ def test_cap_stays_exact_with_report_delay():
     )
     log = bl.run(config)
     for index in range(2):
-        paid = np.where(log.winner == index, log.price, 0.0)
+        paid = log.price[:, :, index]
         earlier = np.cumsum(paid, axis=1) - paid
         # The simulator subtracts prices one by one, so a sum can round 1 ulp above.
         assert (paid.sum(axis=1) <= budget + 1e-9).all()
         assert (log.bids[:, :, index] <= budget - earlier + 1e-9).all()
-    assert (np.where(log.winner == 1, log.price, 0.0).sum(axis=1) > 0.9 * budget).all()
+    assert (log.price[:, :, 1].sum(axis=1) > 0.9 * budget).all()
 
 
 def test_feedback_draws_no_random_number():
@@ -292,7 +292,7 @@ def test_feedback_draws_no_random_number():
     for name in (
         "bids",
         "true_values",
-        "winner",
+        "won",
         "price",
         "clicked",
         "converted",
@@ -334,7 +334,7 @@ def test_feedback_results_repeat():
 
 
 def converted_steps(log, episode):
-    return list(np.flatnonzero(log.converted[episode] & (log.winner[episode] == 0)))
+    return list(np.flatnonzero(log.converted[episode, :, 0]))
 
 
 def test_conversion_arrives_after_delay():

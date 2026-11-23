@@ -225,7 +225,7 @@ def test_partial_callback():
 def test_callbacks_leave_run_unchanged():
     plain = run(config(*two()))
     watched = run(config(*two()), callbacks=[Record(), OnlyEnd()])
-    for name in ("bids", "price", "winner", "converted"):
+    for name in ("bids", "price", "won", "converted"):
         assert (getattr(plain, name) == getattr(watched, name)).all()
 
 

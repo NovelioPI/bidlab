@@ -34,7 +34,7 @@ def spend_curve(bidder, budget, seed=11):
     log = run(
         SimConfig(campaigns=(me, *competitors()), episodes=1, steps=STEPS, seed=seed)
     )
-    paid = np.where(log.winner[0] == 0, log.price[0], 0.0)
+    paid = log.price[0, :, 0]
     return np.cumsum(paid)
 
 
@@ -72,9 +72,9 @@ def multiplier_per_episode(log):
 
 def test_bandit_improves():
     log = bandit_log(UcbMultiplier())
-    won = log.winner == 0
-    paid = np.where(won, log.price, 0.0).sum(axis=1)
-    surplus = np.where(won & log.converted, 5.0, 0.0).sum(axis=1) - paid
+    won = log.won[:, :, 0]
+    paid = np.where(won, log.price[:, :, 0], 0.0).sum(axis=1)
+    surplus = np.where(won & log.converted[:, :, 0], 5.0, 0.0).sum(axis=1) - paid
     fifth = len(surplus) // 5
     assert surplus[-fifth:].mean() > surplus[:fifth].mean()
 

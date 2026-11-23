@@ -235,7 +235,7 @@ def test_single_stage_equals_stack():
     )
     nested = Stack(Stack(OracleValue(), PidPacing()))
     stacked = run(config(Campaign("p", nested, budget=3.0, base_value=5.0), other()))
-    for name in ("bids", "true_values", "winner", "price", "converted"):
+    for name in ("bids", "true_values", "won", "price", "converted"):
         np.testing.assert_array_equal(getattr(single, name), getattr(stacked, name))
 
 
