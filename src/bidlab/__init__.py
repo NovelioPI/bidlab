@@ -38,7 +38,7 @@ from bidlab.bidders import (
     UcbMultiplier,
 )
 from bidlab.callbacks import Callback
-from bidlab.config import Campaign, SimConfig
+from bidlab.config import Campaign, Feedback, SimConfig
 from bidlab.metrics import campaign_metrics, platform_metrics, regret, segment_metrics
 from bidlab.results import Results
 from bidlab.runner import run_many
@@ -52,6 +52,7 @@ __all__ = [
     "Campaign",
     "EpisodeReport",
     "Event",
+    "Feedback",
     "FirstPrice",
     "Linear",
     "MarketTruth",
