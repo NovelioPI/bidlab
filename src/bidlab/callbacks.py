@@ -1,6 +1,7 @@
 """`Callback`: read-only hooks that watch a run, or a set of seeds, as it goes."""
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, NoReturn
 
 from tqdm.auto import tqdm
@@ -11,6 +12,14 @@ from bidlab.types import EpisodeReport
 
 if TYPE_CHECKING:
     from bidlab.simulator import RunLog
+
+SEEDS_FORMAT = (
+    "{desc}   {n_fmt}/{total_fmt} {percentage:3.0f}%|{bar}| [{elapsed}<{remaining}]"
+)
+# n and total stay unscaled; unit_scale shortens only the rate, as in 1.60k step/s.
+SEED_FORMAT = (
+    "{desc} {percentage:3.0f}%|{bar}| {n}/{total} [{elapsed}<{remaining}, {rate_fmt}]"
+)
 
 
 class Callback:
@@ -132,14 +141,18 @@ class Callback:
 
 
 class ProgressBar(Callback):
-    """Show a tqdm progress bar on stderr: steps for one seed, seeds for a list.
+    """Show tqdm progress bars on stderr: steps for one seed, seeds for a list.
 
-    `run` adds one by default; pass ``progress_bar=False`` to
-    hide it. Passing an instance in ``callbacks`` adds no second bar. In
-    `run`, one line counts the current episode's steps under an ``episode
-    2/5`` label and starts again at each episode. In a notebook it shows
-    tqdm's notebook widget. One instance can watch any number of runs; each
-    gets its own bar.
+    `run` adds one by default; pass ``progress_bar=False`` to hide it.
+    Passing an instance in ``callbacks`` adds no second bar. For an int
+    seed, one line counts the current episode's steps under an ``episode
+    2/5`` label and starts again at each episode. For a seed list, a
+    ``seeds`` line counts finished seeds, and each running seed has its own
+    line below, labeled ``seed 4  episode 2/5``, that counts that episode's
+    steps; a finished seed's line is cleared and reused by the next seed, so
+    there are at most ``workers`` such lines. In a notebook it shows tqdm's
+    notebook widgets. One instance can watch any number of runs; each gets
+    its own bars.
 
     Examples
     --------
@@ -155,6 +168,8 @@ class ProgressBar(Callback):
     def __init__(self) -> None:
         self._bar: tqdm[NoReturn] | None = None
         self._episodes = 0
+        self._steps = 0
+        self._seed_bars: dict[int, _SeedBar] = {}
 
     def on_run_start(self, config: SimConfig) -> None:
         """Open a bar with one tick per step of the first episode."""
@@ -179,43 +194,77 @@ class ProgressBar(Callback):
         self._close()
 
     def on_seeds_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
-        """Open a bar with one tick per seed."""
-        self._bar = tqdm(total=len(seeds), desc="run_many", unit="seed")
+        """Open the ``seeds`` bar with one tick per seed."""
+        self._episodes = config.episodes
+        self._steps = config.steps
+        self._bar = tqdm(
+            total=len(seeds), desc="seeds", position=0, bar_format=SEEDS_FORMAT
+        )
 
     def on_seed_progress(self, seed: int, episode: int, step: int) -> None:
-        """Run for a seed list as a seed's run reaches ``step`` of ``episode``.
+        """Move the seed's own bar to ``step`` of ``episode``, opening it if new."""
+        if seed not in self._seed_bars:
+            self._seed_bars[seed] = self._open_seed_bar(seed, episode)
 
-        It runs about every ``max(1, steps // 20)`` steps and at each
-        episode's last step, in the main process. Each seed's calls come in
-        step order and before its `on_seed_end`; with ``workers > 1``, calls
-        for seeds that run at the same time interleave as they arrive.
+        shown = self._seed_bars[seed]
+        if episode != shown.episode:
+            shown.bar.set_description_str(
+                self._seed_label(seed, episode), refresh=False
+            )
+            shown.bar.reset()
+            shown.episode = episode
 
-        Parameters
-        ----------
-        seed : int
-            The seed whose run advanced.
-        episode : int
-            The episode index, from 0.
-        step : int
-            The step index within the episode, from 0, that just ended.
-        """
+        shown.bar.update(step + 1 - shown.bar.n)
 
     def on_seed_end(self, seed: int, results: Results) -> None:
-        """Tick the seed bar."""
+        """Clear the seed's own bar and tick the ``seeds`` bar."""
+        if seed in self._seed_bars:
+            self._seed_bars.pop(seed).bar.close()
+
         if self._bar is not None:
             self._bar.update()
 
     def on_seeds_end(self, results: Results) -> None:
-        """Close the seed bar."""
+        """Close every bar."""
+        for shown in self._seed_bars.values():
+            shown.bar.close()
+
+        self._seed_bars.clear()
         self._close()
+
+    def _open_seed_bar(self, seed: int, episode: int) -> "_SeedBar":
+        # A finished seed's line is free again, so the lowest free one is reused.
+        taken = {shown.line for shown in self._seed_bars.values()}
+        line = next(line for line in range(1, len(taken) + 2) if line not in taken)
+        bar = tqdm(
+            total=self._steps,
+            desc=self._seed_label(seed, episode),
+            position=line,
+            leave=False,
+            unit=" step",
+            unit_scale=True,
+            bar_format=SEED_FORMAT,
+        )
+        return _SeedBar(bar=bar, episode=episode, line=line)
 
     def _label(self, episode: int) -> str:
         return f"episode {episode + 1}/{self._episodes}"
+
+    def _seed_label(self, seed: int, episode: int) -> str:
+        return f"seed {seed}  {self._label(episode)}"
 
     def _close(self) -> None:
         if self._bar is not None:
             self._bar.close()
             self._bar = None
+
+
+@dataclass
+class _SeedBar:
+    bar: "tqdm[NoReturn]"
+    episode: int
+    # The terminal line below the seeds bar, from 1.
+    line: int
 
 
 def checked_callbacks(callbacks: Sequence[object]) -> tuple[Callback, ...]:

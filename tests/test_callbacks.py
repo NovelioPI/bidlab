@@ -415,14 +415,65 @@ def test_seed_list_skips_step_end():
     assert "step_end" not in {hook for _, hook, _ in callback.calls}
 
 
-def test_progress_bar_counts_seeds(capsys: pytest.CaptureFixture[str]):
+SEEDS_DONE = r"\rseeds   2/2 100%\|█+\| \[\d\d:\d\d<\d\d:\d\d\]\n$"
+# tqdm clears a closed bar's line with spaces, then moves back up.
+CLEARED_LINE = r"\r {20,}\x1b\[A"
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_progress_bar_counts_seeds(capsys: pytest.CaptureFixture[str], workers: int):
     bar = ProgressBar()
-    results = run(config(*two()), seed=[4, 1], callbacks=[bar])
+    results = run(config(*two()), seed=[4, 1], workers=workers, callbacks=[bar])
     out, err = capsys.readouterr()
     assert out == ""
-    assert re.search(r"\brun_many: 100%\|.*\| 2/2 \[.*(\bs/seed|[\d.]seed/s)\]\n$", err)
-    assert "episode" not in err
-    assert results.equals(run(config(*two()), seed=[4, 1]))
+    assert re.search(SEEDS_DONE, err)
+    for seed in (4, 1):
+        for episode in (1, 2, 3):
+            assert f"seed {seed}  episode {episode}/3 " in err
+    assert len(re.findall(CLEARED_LINE, err)) == 2
+    assert not re.search(r"\repisode \d", err)
+    assert results.equals(run(config(*two()), seed=[4, 1], progress_bar=False))
+
+
+def bar_text(capsys: pytest.CaptureFixture[str], *calls: tuple[str, int, int]) -> str:
+    """Drive a ProgressBar for seeds 1, 2 and 3 through ``calls``, return stderr."""
+    bar = ProgressBar()
+    empty = Results(columns=(), rows=())
+    bar.on_seeds_start(config(*two()), [1, 2, 3])
+    for hook, seed, episode in calls:
+        if hook == "progress":
+            bar.on_seed_progress(seed, episode, 4)
+        else:
+            bar.on_seed_end(seed, empty)
+    bar.on_seeds_end(empty)
+    return capsys.readouterr().err
+
+
+def test_seed_bars_reuse_freed_lines(capsys: pytest.CaptureFixture[str]):
+    err = bar_text(
+        capsys,
+        ("progress", 1, 0),
+        ("progress", 2, 0),
+        ("end", 1, 0),
+        ("progress", 3, 0),
+        ("progress", 3, 1),
+        ("end", 2, 0),
+        ("end", 3, 0),
+    )
+    # tqdm moves down one newline per line below the seeds bar.
+    assert re.search(r"(?<!\n)\n\rseed 1  episode 1/3 ", err)
+    assert "\n\n\rseed 2  episode 1/3 " in err
+    assert re.search(r"(?<!\n)\n\rseed 3  episode 1/3 ", err)
+    assert re.search(r"(?<!\n)\n\rseed 3  episode 2/3 ", err)
+    assert "episode 2/3:" not in err
+    assert len(re.findall(CLEARED_LINE, err)) == 3
+    assert err.endswith("\n") and "seeds   3/3 100%" in err.rsplit("\r", 1)[-1]
+
+
+def test_seeds_end_clears_open_seed_bars(capsys: pytest.CaptureFixture[str]):
+    err = bar_text(capsys, ("progress", 1, 0), ("progress", 2, 0))
+    assert len(re.findall(CLEARED_LINE, err)) == 2
+    assert "seeds   0/3" in err.rsplit("\r", 1)[-1]
 
 
 def test_run_shows_a_bar_by_default(capsys: pytest.CaptureFixture[str]):
@@ -442,10 +493,9 @@ def test_given_progress_bar_is_not_doubled(capsys: pytest.CaptureFixture[str]):
     assert capsys.readouterr().err.count("episode 1/3:   0%") == 1
 
 
-def test_seed_list_shows_only_the_seed_bar_by_default(
-    capsys: pytest.CaptureFixture[str],
-):
+def test_seed_list_shows_seed_bars_by_default(capsys: pytest.CaptureFixture[str]):
     run(config(*two()), seed=[4, 1])
     err = capsys.readouterr().err
-    assert re.search(r"\brun_many: 100%\|.*\| 2/2 ", err)
-    assert "episode" not in err
+    assert re.search(SEEDS_DONE, err)
+    assert "seed 4  episode 1/3 " in err and "seed 1  episode 3/3 " in err
+    assert not re.search(r"\repisode \d", err)
