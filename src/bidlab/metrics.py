@@ -4,6 +4,7 @@ The definitions match ``docs/metrics.md`` in the bidlab repository.
 """
 
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 import numpy.typing as npt
@@ -66,12 +67,22 @@ class CampaignEpisodeMetrics:
     expected_surplus : float
         `RunLog.true_values` summed over wins − ``spend``: surplus without
         the luck of the event draws.
+    budget_out : float
+        The step of the first request lost to the budget / the episode's
+        steps; NaN when no request was lost to the budget.
     cvr : float
         ``conversions`` / ``clicks``; NaN with no click.
     cost_per_expected_event : float
         ``spend`` / the expected count of the campaign's event over its wins
         (`RunLog.true_values` summed over wins / ``base_value``); NaN with no
         win.
+    lost_budget, lost_floor, lost_market, lost_rival : int
+        Requests lost, each counted in the first kind that applies: budget
+        when the budget left is below the price to win (the highest of the
+        floor r, the market price and, with ``competing=True``, the highest
+        other campaign bid); floor when the bid is below r; market when the
+        bid is not above the market price; else rival. They sum to requests
+        − ``wins``.
     """
 
     episode: int
@@ -92,8 +103,13 @@ class CampaignEpisodeMetrics:
     regret: float
     win_rate: float
     expected_surplus: float
+    budget_out: float
     cvr: float
     cost_per_expected_event: float
+    lost_budget: int
+    lost_floor: int
+    lost_market: int
+    lost_rival: int
 
 
 @dataclass(frozen=True)
@@ -236,6 +252,7 @@ def _campaign_row(log: RunLog, episode: int, i: int) -> CampaignEpisodeMetrics:
     value = int(events.sum()) * campaign.base_value
     expected_value = float(log.true_values[episode, :, i][won].sum())
     requests = int(_requests(log, episode, i).sum())
+    losses = _losses(log, episode, i)
     target = campaign.cpa_target
     return CampaignEpisodeMetrics(
         episode=episode,
@@ -258,9 +275,51 @@ def _campaign_row(log: RunLog, episode: int, i: int) -> CampaignEpisodeMetrics:
         regret=regret(log, episode, i),
         win_rate=wins / requests if requests else np.nan,
         expected_surplus=expected_value - spend,
+        budget_out=losses.budget_out,
         cvr=conversions / clicks if clicks else np.nan,
         cost_per_expected_event=(
             spend / (expected_value / campaign.base_value) if wins else np.nan
+        ),
+        lost_budget=losses.budget,
+        lost_floor=losses.floor,
+        lost_market=losses.market,
+        lost_rival=losses.rival,
+    )
+
+
+class _Losses(NamedTuple):
+    budget: int
+    floor: int
+    market: int
+    rival: int
+    budget_out: float
+
+
+def _losses(log: RunLog, episode: int, i: int) -> _Losses:
+    won = log.won[episode, :, i]
+    lost = _requests(log, episode, i) & ~won
+    paid = log.price[episode, :, i]
+    # Subtracting step by step rounds as the simulator's own budget does.
+    budget_left = np.subtract.accumulate(np.concatenate(([log.budgets[i]], paid[:-1])))
+    floors = np.maximum(log.config.auction.reserve, log.floor[episode])
+    market_price = log.market_price[episode]
+    price_to_win = np.maximum(
+        np.maximum(floors, np.nan_to_num(market_price, nan=0.0)),
+        _highest_other(log, episode, i),
+    )
+    bids = log.bids[episode, :, i]
+    by_budget = lost & (budget_left < price_to_win)
+    by_floor = lost & ~by_budget & (bids < floors)
+    # A NaN market price compares False, so a step without one loses no request here.
+    by_market = lost & ~by_budget & ~by_floor & (bids <= market_price)
+    by_rival = lost & ~by_budget & ~by_floor & ~by_market
+    return _Losses(
+        budget=int(by_budget.sum()),
+        floor=int(by_floor.sum()),
+        market=int(by_market.sum()),
+        rival=int(by_rival.sum()),
+        budget_out=(
+            int(np.argmax(by_budget)) / len(won) if by_budget.any() else np.nan
         ),
     )
 
@@ -309,6 +368,17 @@ def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
                 )
 
     return rows
+
+
+def _highest_other(
+    log: RunLog, episode: int, campaign_index: int
+) -> npt.NDArray[np.float64]:
+    others = np.delete(log.bids[episode], campaign_index, axis=1)
+    # Without competition, other campaigns are not in this campaign's auction.
+    if log.config.competing and others.shape[1]:
+        return others.max(axis=1)
+
+    return np.zeros(others.shape[0])
 
 
 def _requests(log: RunLog, episode: int, campaign_index: int) -> npt.NDArray[np.bool_]:
@@ -380,12 +450,7 @@ def regret(
     """
     auction = log.config.auction
     values = log.true_values[episode, :, campaign_index]
-    others = np.delete(log.bids[episode], campaign_index, axis=1)
-    # Without competition, other campaigns are not in this campaign's auction.
-    if log.config.competing and others.shape[1]:
-        highest_other = others.max(axis=1)
-    else:
-        highest_other = np.zeros(len(values))
+    highest_other = _highest_other(log, episode, campaign_index)
     # A targeted bidder cannot win outside its segments, so neither can its replay.
     takes_part = _requests(log, episode, campaign_index)
     floors = np.maximum(auction.reserve, log.floor[episode])
