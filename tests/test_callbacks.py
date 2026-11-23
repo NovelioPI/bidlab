@@ -1,8 +1,10 @@
 import os
 import re
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from multiprocessing.context import SpawnContext
+from queue import Queue
 from typing import Any, ClassVar, override
 
 import pytest
@@ -303,6 +305,64 @@ def test_seed_progress_reaches_each_episode_end(workers: int, steps: int):
     assert len(progress) == len(seeds) * len(expected)
 
 
+class SlowSteps(Bidder):
+    """Sleeps a fixed time each step, so a run lasts long enough to watch."""
+
+    def __init__(self, seconds: float = 0.0):
+        self.seconds = seconds
+
+    @override
+    def forward(self, value: float) -> float:
+        time.sleep(self.seconds)
+        return value
+
+
+class Timed(Callback):
+    """Records when each progress call and each seed end reaches the main process."""
+
+    def __init__(self):
+        self.progress: dict[int, list[float]] = {}
+        self.ends: dict[int, float] = {}
+
+    @override
+    def on_seed_progress(self, seed: int, episode: int, step: int) -> None:
+        self.progress.setdefault(seed, []).append(time.perf_counter())
+
+    @override
+    def on_seed_end(self, seed: int, results: Results) -> None:
+        self.ends[seed] = time.perf_counter()
+
+
+def test_parallel_progress_arrives_while_the_seed_runs():
+    campaign = Campaign(
+        "slow", Stack(OracleValue(), SlowSteps(0.01)), budget=1e6, base_value=5.0
+    )
+    timed = Timed()
+    run(
+        config(campaign, episodes=1, steps=100),
+        seed=[4, 1],
+        workers=2,
+        callbacks=[timed],
+        progress_bar=False,
+    )
+    # The seed runs about 1 s, so its first report must come well before its end.
+    for seed in (4, 1):
+        assert timed.ends[seed] - timed.progress[seed][0] > 0.5
+
+
+def test_drain_hands_over_every_queued_item_without_waiting_after():
+    queue: Queue[runner.Progress] = Queue()
+    for step in range(3):
+        queue.put((4, 0, step))
+    callback = Progress()
+    start = time.perf_counter()
+    runner._drain(queue, (callback,), 1.0)
+    assert time.perf_counter() - start < 0.5
+    assert [args[2] for _, _, args in callback.calls] == [0, 1, 2]
+    runner._drain(queue, (callback,), 0.0)
+    assert len(callback.calls) == 3
+
+
 def test_progress_steps_rule():
     assert progress_steps(45) == [*range(1, 44, 2), 44]
     assert progress_steps(2000) == list(range(99, 2000, 100))
@@ -468,6 +528,8 @@ def test_seed_bars_reuse_freed_lines(capsys: pytest.CaptureFixture[str]):
     assert re.search(r"(?<!\n)\n\rseed 3 episode 2/3 ", err)
     assert "episode 2/3:" not in err
     assert len(re.findall(CLEARED_LINE, err)) == 3
+    # The seeds bar is the first line, with no newline before it.
+    assert err.startswith("\rseeds   0/3 ")
     assert err.endswith("\n") and "seeds   3/3 100%" in err.rsplit("\r", 1)[-1]
 
 
@@ -475,7 +537,7 @@ def test_seed_bar_shows_every_progress_call(capsys: pytest.CaptureFixture[str]):
     bar = ProgressBar()
     empty = Results(columns=(), rows=())
     bar.on_seeds_start(config(*two(), steps=30), [1])
-    for episode, step in [(0, 4), (0, 9), (1, 4)]:
+    for episode, step in [(0, 4), (0, 9), (1, 4), (1, 9)]:
         bar.on_seed_progress(1, episode, step)
     bar.on_seed_end(1, empty)
     bar.on_seeds_end(empty)
@@ -488,6 +550,7 @@ def test_seed_bar_shows_every_progress_call(capsys: pytest.CaptureFixture[str]):
         ("episode 1/3", "10/30"),
         ("episode 2/3", "0/30"),
         ("episode 2/3", "5/30"),
+        ("episode 2/3", "10/30"),
     ]
 
 
