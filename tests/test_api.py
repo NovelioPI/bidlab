@@ -22,6 +22,7 @@ from bidlab.bidders import (
 )
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import IndependentValues, LogisticMarket, Segment, Segmented
+from bidlab.metrics import platform_metrics
 from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import BidResult
@@ -244,6 +245,28 @@ def test_click_stage_matches_main(kind):
         digest.update(array.tobytes())
 
     assert digest.hexdigest() == MAIN_HASHES_WITH_CLICKS[kind]
+
+
+# Recorded on main (56efc2f) with numpy 2.5.4. One sum over steps and campaigns
+# rounds differently from main's sum over steps.
+MAIN_REVENUE = [1342.7663534744668, 1400.015656838485]
+
+
+def test_revenue_matches_main():
+    campaigns = tuple(
+        Campaign(
+            f"c{i}",
+            Stack(OracleValue(), Linear(multiplier=0.5 + 0.1 * i)),
+            budget=1e6,
+            base_value=5.0,
+        )
+        for i in range(4)
+    )
+    config = SimConfig(
+        campaigns=campaigns, episodes=2, steps=3000, seed=0, auction=FirstPrice()
+    )
+    revenue = [row.revenue for row in platform_metrics(run(config))]
+    assert revenue == MAIN_REVENUE
 
 
 PUBLIC_NAMES = {
