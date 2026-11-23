@@ -97,7 +97,9 @@ def market_cost(log: RunLog, index: int) -> float:
     allowed = [
         i for i, name in enumerate(names) if name in (campaign.segments or names)
     ]
-    return float(costs[np.isin(log.segment, allowed)].sum()) / log.config.episodes
+    profitable = log.true_values[:, :, index] >= costs
+    total = costs[np.isin(log.segment, allowed) & profitable].sum()
+    return float(total) / log.config.episodes
 
 
 def twin(config: SimConfig, log: RunLog) -> SimConfig:
@@ -237,6 +239,8 @@ def test_market_cost_counts_only_own_segments():
             Campaign("news", truthful(), base_value=5, segments=["news"]),
             Campaign("all", truthful(), base_value=5),
             market=market,
+            # Shared rates give both campaigns one value per request, so only segments differ.
+            competing=False,
         ),
         progress_bar=False,
     )
@@ -248,13 +252,23 @@ def test_market_cost_counts_only_own_segments():
 def test_market_cost_without_price_is_the_reserve():
     log = run(
         config_of(
-            Campaign("a", truthful(), base_value=5),
+            Campaign("a", truthful(), base_value=1, event="impression"),
             market=LogisticMarket(),
             auction=SecondPrice(reserve=0.05),
         ),
         progress_bar=False,
     )
     assert log.budgets[0] == pytest.approx(0.05 * 200, rel=1e-12)
+
+
+def test_full_fraction_is_the_unlimited_truthful_spend():
+    sized = run(config_of(Campaign("t", truthful(), base_value=20)), progress_bar=False)
+    unlimited = run(
+        config_of(Campaign("t", truthful(), base_value=20, budget=1e9)),
+        progress_bar=False,
+    )
+    spend = unlimited.price.sum() / unlimited.config.episodes
+    assert sized.budgets[0] == pytest.approx(spend, rel=1e-9)
 
 
 class NewsOnly(Market):
@@ -274,13 +288,13 @@ class NewsOnly(Market):
 
 
 @pytest.mark.parametrize(
-    ("market", "segments"),
-    [(LogisticMarket(), None), (NewsOnly(), ["sports"])],
-    ids=["free market", "segment never drawn"],
+    ("market", "segments", "base_value"),
+    [(LogisticMarket(), None, 5), (NewsOnly(), ["sports"], 5), (PRICED, None, 1e-9)],
+    ids=["free market", "segment never drawn", "nothing worth its cost"],
 )
-def test_zero_market_cost_raises(probes, market, segments):
+def test_zero_market_cost_raises(probes, market, segments, base_value):
     campaign = Campaign(
-        "z", Stack(OracleValue(), Probe()), base_value=5, segments=segments
+        "z", Stack(OracleValue(), Probe()), base_value=base_value, segments=segments
     )
     with pytest.raises(ValueError, match="campaign 'z'.*market cost is 0"):
         run(config_of(campaign, market=market), progress_bar=False)
@@ -360,5 +374,6 @@ def test_results_budget_column():
         log = run(dataclasses.replace(config, seed=seed), progress_bar=False)
         rows = [row for row in results.rows if row["seed"] == seed]
         assert [row["budget"] for row in rows] == log.budgets.tolist()
+
     parallel = run_many(config, seeds=[0, 1], workers=2, progress_bar=False)
     assert parallel.equals(results)

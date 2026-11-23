@@ -144,12 +144,14 @@ class _MarketLog:
     market_price: npt.NDArray[np.float64]
     floor: npt.NDArray[np.float64]
     segment: npt.NDArray[np.int64]
+    true_values: npt.NDArray[np.float64]
 
     def matches(self, log: RunLog) -> bool:
         return (
             np.array_equal(self.market_price, log.market_price, equal_nan=True)
             and np.array_equal(self.floor, log.floor)
             and np.array_equal(self.segment, log.segment)
+            and np.array_equal(self.true_values, log.true_values)
         )
 
 
@@ -282,12 +284,12 @@ class _Simulation:
             if budget is None:
                 if self.replayed is None:
                     self.replayed = self._replay(market_seed)
-                budget = self._market_cost(campaign, self.replayed)
+                budget = self._market_cost(i, campaign, self.replayed)
                 if budget == 0:
                     raise ValueError(
                         f"campaign {campaign.name!r}: budget=None, but its market cost "
-                        "is 0: no request in its segments has a market price, a reserve "
-                        "or a floor; set budget, or use a market price (such as "
+                        "is 0: no request in its segments costs more than 0 and is worth "
+                        "its cost; set budget, or use a market price (such as "
                         "LogisticMarket(price_median=...)) or an auction reserve"
                     )
 
@@ -305,6 +307,7 @@ class _Simulation:
             market_price=np.full(shape, np.nan),
             floor=np.zeros(shape),
             segment=np.zeros(shape, dtype=np.int64),
+            true_values=np.zeros((*shape, len(self.config.campaigns))),
         )
         for episode in range(self.config.episodes):
             for step in range(self.config.steps):
@@ -313,9 +316,14 @@ class _Simulation:
                     replayed.market_price[episode, step] = draw.market_price
                 replayed.floor[episode, step] = draw.floor
                 replayed.segment[episode, step] = self.segment_index[draw.segment]
+                replayed.true_values[episode, step] = self._event_values(
+                    *self._rates(draw)
+                )
         return replayed
 
-    def _market_cost(self, campaign: Campaign, replayed: _MarketLog) -> float:
+    def _market_cost(
+        self, index: int, campaign: Campaign, replayed: _MarketLog
+    ) -> float:
         # The lowest price that wins each request alone.
         costs = np.maximum(
             np.maximum(
@@ -329,7 +337,9 @@ class _Simulation:
             for name, index in self.segment_index.items()
             if campaign.segments is None or name in campaign.segments
         ]
-        total = float(costs[np.isin(replayed.segment, allowed)].sum())
+        # A request worth less than its cost adds nothing a truthful bidder would buy.
+        profitable = replayed.true_values[:, :, index] >= costs
+        total = float(costs[np.isin(replayed.segment, allowed) & profitable].sum())
         return total / self.config.episodes
 
     def _participant(
@@ -409,12 +419,7 @@ class _Simulation:
     ) -> None:
         draw = self._next_draw(self.market_draws, episode, step)
         self.book.at_step(episode, step)
-        pctr = self.every_click if draw.pctr is None else draw.pctr
-        pcvr = draw.pcvr
-        if not self.config.competing:
-            pctr = np.full(len(self.participants), pctr[0])
-            pcvr = np.full(len(self.participants), pcvr[0])
-
+        pctr, pcvr = self._rates(draw)
         values = self._event_values(pctr, pcvr)
         time = step * self.seconds_per_step
         # Bidders outside their segments are not asked to bid, so they cannot learn from it.
@@ -624,6 +629,17 @@ class _Simulation:
         # One draw every step keeps the conversion stream aligned across runs.
         conversion_draw = self.conversion_rng.random()
         return clicked, [i for i in clicked if conversion_draw < pcvr[i]]
+
+    def _rates(
+        self, draw: MarketDraw
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        pctr = self.every_click if draw.pctr is None else draw.pctr
+        pcvr = draw.pcvr
+        if self.config.competing:
+            return pctr, pcvr
+
+        count = len(self.config.campaigns)
+        return np.full(count, pctr[0]), np.full(count, pcvr[0])
 
     def _event_values(
         self, pctr: npt.NDArray[np.float64], pcvr: npt.NDArray[np.float64]
