@@ -496,14 +496,16 @@ def test_progress_bar_counts_seeds(capsys: pytest.CaptureFixture[str], workers: 
     assert results.equals(run(config(*two()), seed=[4, 1], progress_bar=False))
 
 
-def bar_text(capsys: pytest.CaptureFixture[str], *calls: tuple[str, int, int]) -> str:
-    """Drive a ProgressBar for seeds 1, 2 and 3 through ``calls``, return stderr."""
+def bar_text(
+    capsys: pytest.CaptureFixture[str], *calls: tuple[str, int, int, int]
+) -> str:
+    """Drive a ProgressBar for seeds 1, 2 and 3 of 3 × 50 steps, return stderr."""
     bar = ProgressBar()
     empty = Results(columns=(), rows=())
     bar.on_seeds_start(config(*two()), [1, 2, 3])
-    for hook, seed, episode in calls:
+    for hook, seed, episode, step in calls:
         if hook == "progress":
-            bar.on_seed_progress(seed, episode, 4)
+            bar.on_seed_progress(seed, episode, step)
         else:
             bar.on_seed_end(seed, empty)
     bar.on_seeds_end(empty)
@@ -513,13 +515,15 @@ def bar_text(capsys: pytest.CaptureFixture[str], *calls: tuple[str, int, int]) -
 def test_seed_bars_reuse_freed_lines(capsys: pytest.CaptureFixture[str]):
     err = bar_text(
         capsys,
-        ("progress", 1, 0),
-        ("progress", 2, 0),
-        ("end", 1, 0),
-        ("progress", 3, 0),
-        ("progress", 3, 1),
-        ("end", 2, 0),
-        ("end", 3, 0),
+        ("progress", 1, 0, 4),
+        ("progress", 2, 0, 4),
+        # Seed 1 reaches its last step, so its line is free for seed 3.
+        ("progress", 1, 2, 49),
+        ("progress", 3, 0, 4),
+        ("progress", 3, 1, 4),
+        ("end", 1, 0, 0),
+        ("end", 2, 0, 0),
+        ("end", 3, 0, 0),
     )
     # tqdm moves down one newline per line below the seeds bar.
     assert re.search(r"(?<!\n)\n\rseed 1 episode 1/3 ", err)
@@ -575,8 +579,22 @@ def test_finished_seed_frees_its_line_before_its_seed_end(
     assert re.search(r"(?<!\n)\n\n\rseed 2 episode 1/3 ", err)
 
 
+@pytest.mark.parametrize("workers", [1, 2])
+def test_repeated_seeds_run_and_close_every_bar(
+    capsys: pytest.CaptureFixture[str], workers: int
+):
+    results = run(config(*two()), seed=[1, 1, 2], workers=workers)
+    err = capsys.readouterr().err
+    assert [row["seed"] for row in results.rows] == [1, 1, 1, 1, 2, 2]
+    assert re.search(r"\rseeds   3/3 100%\|█+\| \[\d\d:\d\d<\d\d:\d\d\]\n$", err)
+    # Two runs of seed 1 at once share its line, so count lines only at the end.
+    last_frame = max(frame.start() for frame in re.finditer(r"\rseed \d episode", err))
+    assert re.search(CLEARED_LINE, err[last_frame:])
+    assert len(re.findall(CLEARED_LINE, err)) >= 2
+
+
 def test_seeds_end_clears_open_seed_bars(capsys: pytest.CaptureFixture[str]):
-    err = bar_text(capsys, ("progress", 1, 0), ("progress", 2, 0))
+    err = bar_text(capsys, ("progress", 1, 0, 4), ("progress", 2, 0, 4))
     assert len(re.findall(CLEARED_LINE, err)) == 2
     assert "seeds   0/3" in err.rsplit("\r", 1)[-1]
 

@@ -209,7 +209,7 @@ class ProgressBar(Callback):
         )
 
     def on_seed_progress(self, seed: int, episode: int, step: int) -> None:
-        """Move the seed's own bar to ``step`` of ``episode``, opening it if new."""
+        """Move the seed's own bar to ``step`` of ``episode``; clear it at the end."""
         if seed not in self._seed_bars:
             self._seed_bars[seed] = self._open_seed_bar(seed, episode)
 
@@ -220,12 +220,12 @@ class ProgressBar(Callback):
             shown.episode = episode
 
         shown.bar.update(step + 1 - shown.bar.n)
-
-    def on_seed_end(self, seed: int, results: Results) -> None:
-        """Clear the seed's own bar and tick the ``seeds`` bar."""
-        if seed in self._seed_bars:
+        # Seeds finish out of order with workers, but on_seed_end comes in seed order.
+        if episode == self._episodes - 1 and step == self._steps - 1:
             self._seed_bars.pop(seed).bar.close()
 
+    def on_seed_end(self, seed: int, results: Results) -> None:
+        """Tick the ``seeds`` bar."""
         if self._bar is not None:
             self._bar.update()
 
