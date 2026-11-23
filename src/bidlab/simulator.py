@@ -55,6 +55,8 @@ class RunLog:
     ----------
     config : SimConfig
         The config that made this log.
+    seed : int
+        The seed passed to `run`; every random stream of the run comes from it.
     bids : numpy.ndarray
         Bids after cleaning and capping; 0 for a bidder outside its segments.
     true_values : numpy.ndarray
@@ -110,6 +112,7 @@ class RunLog:
     """
 
     config: SimConfig
+    seed: int
     bids: npt.NDArray[np.float64]
     true_values: npt.NDArray[np.float64]
     won: npt.NDArray[np.bool_]
@@ -166,6 +169,8 @@ class _MarketLog:
 
 def run(
     config: SimConfig,
+    seed: int | np.integer = 0,
+    *,
     callbacks: Sequence[Callback] = (),
     progress_bar: bool = True,
     profiler: bool = False,
@@ -179,6 +184,8 @@ def run(
     ----------
     config : SimConfig
         The simulation.
+    seed : int or numpy.integer, optional
+        Seed for every random stream, recorded in `RunLog.seed` as an int.
     callbacks : Sequence[Callback], optional
         Read-only hooks called at run start, at each step end, at each
         episode end and at run end, in this order.
@@ -191,8 +198,8 @@ def run(
     Raises
     ------
     TypeError
-        If a bidder cannot be copied for a fresh run, a callback is not a
-        `Callback` instance, or ``profiler`` is not a bool.
+        If ``seed`` is not an int, a bidder cannot be copied for a fresh run,
+        a callback is not a `Callback` instance, or ``profiler`` is not a bool.
     ValueError
         If the market yields a draw with the wrong shape, a probability
         outside [0, 1], a market price or floor that is negative, NaN or
@@ -217,16 +224,23 @@ def run(
     ((2, 50, 1), (2, 50, 1))
     >>> bool((bl.run(config).bids == log.bids).all())
     True
+    >>> bl.run(config, seed=42).seed
+    42
     >>> profiled = bl.run(config, profiler=True)
     >>> bool((profiled.bids == log.bids).all()), profiled.profile.steps
     (True, 100)
     """
+    if isinstance(seed, bool) or not isinstance(seed, int | np.integer):
+        raise TypeError(f"seed must be an int, got {type(seed).__name__}")
+
     check_profiler(profiler)
     checked = checked_callbacks(callbacks)
     if progress_bar:
         checked = with_progress_bar(checked)
 
-    simulation = _Simulation(config, checked, Recorder() if profiler else None)
+    simulation = _Simulation(
+        config, int(seed), checked, Recorder() if profiler else None
+    )
     for callback in checked:
         callback.on_run_start(config)
 
@@ -241,13 +255,14 @@ class _Simulation:
     def __init__(
         self,
         config: SimConfig,
+        seed: int,
         callbacks: tuple[Callback, ...],
         recorder: Recorder | None,
     ):
         count = len(config.campaigns)
         # One stream per role, so adding a bidder keeps the market's draws equal.
         market_seed, tie_seed, conversion_seed, *bidder_seeds = np.random.SeedSequence(
-            config.seed
+            seed
         ).spawn(3 + count)
         self.config = config
         self.callbacks = callbacks
@@ -292,6 +307,7 @@ class _Simulation:
         shape = (config.episodes, config.steps)
         self.log = RunLog(
             config=config,
+            seed=seed,
             bids=np.zeros((*shape, count)),
             true_values=np.zeros((*shape, count)),
             won=np.zeros((*shape, count), dtype=bool),
@@ -433,7 +449,7 @@ class _Simulation:
         if self.recorder is not None:
             steps = self.config.episodes * self.config.steps
             self.log = replace(
-                self.log, profile=self.recorder.profile(self.config.seed, steps)
+                self.log, profile=self.recorder.profile(self.log.seed, steps)
             )
 
     def _run_episode(self, episode: int) -> None:

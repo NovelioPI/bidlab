@@ -369,7 +369,7 @@ def test_clicks_column():
     clicking = dataclasses.replace(config(), market=LogisticMarket(ctr_bias_mean=-1.0))
     results = run_many(clicking, seeds=range(2))
     for row in results.rows:
-        log = run(dataclasses.replace(clicking, seed=row["seed"]))
+        log = run(clicking, seed=int(row["seed"]))
         index = [c.name for c in clicking.campaigns].index(str(row["campaign"]))
         clicked_wins = log.clicked[:, :, index].sum(axis=1)
         assert row["clicks"] == pytest.approx(clicked_wins.mean())
@@ -432,7 +432,7 @@ def rows_with_counts(cfg, seeds=range(2)):
     results = run_many(cfg, seeds=seeds)
     names = [campaign.name for campaign in cfg.campaigns]
     for row in results.rows:
-        log = run(dataclasses.replace(cfg, seed=int(row["seed"])))
+        log = run(cfg, seed=int(row["seed"]))
         name = str(row["campaign"])
         yield row, name, episode_counts(log, names.index(name))
 
@@ -454,7 +454,7 @@ def test_segment_surplus_follows_event():
     results = run_many(cfg, seeds=range(2))
     names = [campaign.name for campaign in cfg.campaigns]
     for row in segments_table(results).rows:
-        log = run(dataclasses.replace(cfg, seed=int(row["seed"])))
+        log = run(cfg, seed=int(row["seed"]))
         name = str(row["campaign"])
         here = log.segment == market.segment_names.index(str(row["segment"]))
         counts = episode_counts(log, names.index(name), here)
@@ -602,7 +602,7 @@ def test_new_columns_and_budget_out_mean():
     assert "expected_surplus" in segments_table(results).columns
     seen = set()
     for row in results.rows:
-        log = run(dataclasses.replace(cfg, seed=row["seed"]))
+        log = run(cfg, seed=int(row["seed"]))
         own = [m for m in campaign_metrics(log) if m.campaign == row["campaign"]]
         for column in NEW_COLUMNS:
             if column != "budget_out":

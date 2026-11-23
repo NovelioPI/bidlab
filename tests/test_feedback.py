@@ -87,9 +87,8 @@ def probe_run(
         steps=STEPS,
         horizon_hours=1,
         feedback=feedback or bl.Feedback(),
-        seed=3,
     )
-    log = bl.run(config)
+    log = bl.run(config, seed=3)
     (probe,) = Probe.instances
     return log, probe
 
@@ -441,9 +440,8 @@ def test_conversion_hook_alone_makes_a_learner(monkeypatch):
         steps=STEPS,
         horizon_hours=1,
         feedback=bl.Feedback(conversion_delay=900),
-        seed=3,
     )
-    log = bl.run(config)
+    log = bl.run(config, seed=3)
     (probe,) = Probe.instances
     holder_copy = probe.campaign.bidder
     assert isinstance(holder_copy, bl.Stack)

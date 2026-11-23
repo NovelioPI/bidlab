@@ -16,6 +16,8 @@ from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import EpisodeReport
 
+SEED = 4
+
 PRICED = LogisticMarket(price_median=0.2, floor_share=(2, 5))
 ARRAYS = (
     "bids",
@@ -81,7 +83,7 @@ def probes():
 
 
 def config_of(*campaigns, **settings):
-    defaults = {"market": PRICED, "episodes": 3, "steps": 200, "seed": 4}
+    defaults = {"market": PRICED, "episodes": 3, "steps": 200}
     return SimConfig(campaigns=campaigns, **(defaults | settings))
 
 
@@ -163,9 +165,12 @@ def test_fraction_scales_a_set_budget():
     scaled = run(
         config_of(Campaign("p", paced(), base_value=5, budget=5, budget_fraction=0.5)),
         progress_bar=False,
+        seed=SEED,
     )
     plain = run(
-        config_of(Campaign("p", paced(), base_value=5, budget=2.5)), progress_bar=False
+        config_of(Campaign("p", paced(), base_value=5, budget=2.5)),
+        progress_bar=False,
+        seed=SEED,
     )
     assert scaled.budgets.tolist() == [2.5]
     assert_same_log(scaled, plain)
@@ -180,6 +185,7 @@ def test_budgets_array_is_read_only(budget):
             Campaign("b", truthful(), base_value=5, budget=4),
         ),
         progress_bar=False,
+        seed=SEED,
     )
     assert log.budgets.shape == (2,)
     assert log.budgets.dtype == np.float64
@@ -195,7 +201,7 @@ def test_bidder_sees_the_effective_budget(probes, budget):
         budget=budget,
         budget_fraction=0.5,
     )
-    log = run(config_of(campaign), progress_bar=False)
+    log = run(config_of(campaign), progress_bar=False, seed=SEED)
     (probe,) = probes
     effective = log.budgets[0]
     if budget is not None:
@@ -216,6 +222,7 @@ def test_market_cost_matches_the_log(competing):
             auction=SecondPrice(reserve=0.01),
         ),
         progress_bar=False,
+        seed=SEED,
     )
     assert log.budgets[0] == pytest.approx(0.3 * market_cost(log, 0), rel=1e-12)
     assert log.budgets[1] == pytest.approx(market_cost(log, 1), rel=1e-12)
@@ -229,8 +236,8 @@ def test_market_budget_run_equals_its_twin(auction):
         Campaign("s", paced(), base_value=4, budget=3),
         auction=auction,
     )
-    log = run(config, progress_bar=False)
-    assert_same_log(log, run(twin(config, log), progress_bar=False))
+    log = run(config, progress_bar=False, seed=SEED)
+    assert_same_log(log, run(twin(config, log), progress_bar=False, seed=SEED))
 
 
 def test_market_cost_counts_only_own_segments():
@@ -244,6 +251,7 @@ def test_market_cost_counts_only_own_segments():
             competing=False,
         ),
         progress_bar=False,
+        seed=SEED,
     )
     assert market_cost(log, 0) < market_cost(log, 1)
     assert log.budgets[0] == pytest.approx(market_cost(log, 0), rel=1e-12)
@@ -258,15 +266,21 @@ def test_market_cost_without_price_is_the_reserve():
             auction=SecondPrice(reserve=0.05),
         ),
         progress_bar=False,
+        seed=SEED,
     )
     assert log.budgets[0] == pytest.approx(0.05 * 200, rel=1e-12)
 
 
 def test_full_fraction_is_the_unlimited_truthful_spend():
-    sized = run(config_of(Campaign("t", truthful(), base_value=20)), progress_bar=False)
+    sized = run(
+        config_of(Campaign("t", truthful(), base_value=20)),
+        progress_bar=False,
+        seed=SEED,
+    )
     unlimited = run(
         config_of(Campaign("t", truthful(), base_value=20, budget=1e9)),
         progress_bar=False,
+        seed=SEED,
     )
     spend = unlimited.price.sum() / unlimited.config.episodes
     assert sized.budgets[0] == pytest.approx(spend, rel=1e-9)
@@ -298,7 +312,7 @@ def test_zero_market_cost_raises(probes, market, segments, base_value):
         "z", Stack(OracleValue(), Probe()), base_value=base_value, segments=segments
     )
     with pytest.raises(ValueError, match="campaign 'z'.*market cost is 0"):
-        run(config_of(campaign, market=market), progress_bar=False)
+        run(config_of(campaign, market=market), progress_bar=False, seed=SEED)
 
     assert all(probe.forward_calls == 0 for probe in probes)
 
@@ -307,11 +321,13 @@ def test_reports_and_metrics_use_the_effective_budget(probes):
     config = config_of(
         Campaign("p", Stack(OracleValue(), Probe()), base_value=5, budget_fraction=0.5)
     )
-    log = run(config, progress_bar=False)
+    log = run(config, progress_bar=False, seed=SEED)
     (probe,) = probes
     effective = log.budgets[0]
     assert [report.budget for report in probe.reports] == [effective] * 3
-    twin_metrics = campaign_metrics(run(twin(config, log), progress_bar=False))
+    twin_metrics = campaign_metrics(
+        run(twin(config, log), progress_bar=False, seed=SEED)
+    )
     for row, twin_row in zip(campaign_metrics(log), twin_metrics, strict=True):
         assert row.budget_used == row.spend / effective
         assert row.regret == twin_row.regret
@@ -339,6 +355,7 @@ def test_replay_only_when_a_budget_is_none(budget, calls):
             market=market,
         ),
         progress_bar=False,
+        seed=SEED,
     )
     assert len(market.calls) == calls
 
@@ -368,6 +385,7 @@ def test_market_that_breaks_the_contract_raises(drifts):
                 Campaign("a", truthful(), base_value=5), market=DriftingMarket(drifts)
             ),
             progress_bar=False,
+            seed=SEED,
         )
 
 
@@ -398,6 +416,7 @@ def test_request_cost_and_worth(market, base_value, cost):
             market=market,
         ),
         progress_bar=False,
+        seed=SEED,
     )
     assert log.budgets[0] == pytest.approx(cost * 200, rel=1e-12)
 
@@ -409,7 +428,7 @@ def test_results_budget_column():
     )
     results = run_many(config, seeds=[0, 1], progress_bar=False)
     for seed in (0, 1):
-        log = run(dataclasses.replace(config, seed=seed), progress_bar=False)
+        log = run(config, seed, progress_bar=False)
         rows = [row for row in results.rows if row["seed"] == seed]
         assert [row["budget"] for row in rows] == log.budgets.tolist()
 

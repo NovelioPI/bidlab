@@ -68,7 +68,7 @@ def run_many(
     Parameters
     ----------
     config : SimConfig
-        The simulation; its ``seed`` is replaced by each seed in turn.
+        The simulation, run once per seed.
     seeds : Iterable[int]
         One run per seed.
     workers : int, optional
@@ -231,9 +231,7 @@ def _run_seed(payload: bytes, seed: int, profiler: bool) -> _SeedRows:
 
 
 def _seed_rows(config: SimConfig, seed: int, profiler: bool) -> _SeedRows:
-    log = run(
-        dataclasses.replace(config, seed=seed), progress_bar=False, profiler=profiler
-    )
+    log = run(config, seed, progress_bar=False, profiler=profiler)
     platform = platform_metrics(log)
     revenue = float(np.mean([p.revenue for p in platform]))
     welfare = float(np.mean([p.welfare for p in platform]))

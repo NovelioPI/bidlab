@@ -10,6 +10,8 @@ from bidlab.metrics import campaign_metrics
 from bidlab.simulator import run
 from bidlab.types import BidResult, EpisodeReport, Event, EventName
 
+SEED = 7
+
 EVENT_NAMES: tuple[EventName, ...] = ("impression", "click", "conversion")
 
 
@@ -71,9 +73,9 @@ def campaign(name, event: EventName = "conversion", base_value=5.0, **kwargs):
 
 
 def run_spies(*campaigns, **kwargs):
-    settings: dict[str, Any] = {"episodes": 2, "steps": 200, "seed": 7}
+    settings: dict[str, Any] = {"episodes": 2, "steps": 200}
     Spy.instances.clear()
-    log = run(SimConfig(campaigns=campaigns, **(settings | kwargs)))
+    log = run(SimConfig(campaigns=campaigns, **(settings | kwargs)), seed=SEED)
     return log, list(Spy.instances)
 
 

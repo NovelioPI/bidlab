@@ -5,7 +5,6 @@ import time
 import tomllib
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -522,9 +521,7 @@ def test_run_many_profiles_in_seed_order(workers: int):
     assert profiled.profile is not None
     expected = [
         _calls(
-            _profile(
-                run(replace(config, seed=seed), progress_bar=False, profiler=True)
-            ),
+            _profile(run(config, seed, progress_bar=False, profiler=True)),
             "news",
         )
         for seed in seeds
@@ -586,8 +583,7 @@ def _assert_lines_match(lines: list[dict[str, str]], profile: Profile) -> None:
 
 
 def test_profile_save_csv_round_trip(tmp_path: Path):
-    config = replace(_plain(), seed=11)
-    profile = _profile(run(config, progress_bar=False, profiler=True))
+    profile = _profile(run(_plain(), seed=11, progress_bar=False, profiler=True))
     assert profile.seed == 11
     path = tmp_path / "profile.csv"
     profile.save_csv(path)

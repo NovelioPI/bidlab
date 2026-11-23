@@ -248,7 +248,7 @@ class Feedback:
 
 @dataclass(frozen=True)
 class SimConfig:
-    """Everything one simulation needs; the same config and seed give the same run.
+    """Everything one simulation needs except the seed, which `run` takes.
 
     Parameters
     ----------
@@ -258,8 +258,6 @@ class SimConfig:
         Episodes per run. Budgets reset each episode; bidders keep learning.
     steps : int, optional
         Auctions per episode.
-    seed : int, optional
-        Seed for every random stream. `run_many` replaces it per seed.
     auction : FirstPrice or SecondPrice, optional
         The auction rule. Defaults to `SecondPrice` with no reserve.
     market : bidlab.Market, optional
@@ -317,7 +315,6 @@ class SimConfig:
     campaigns: Sequence[Campaign]
     episodes: int = 10
     steps: int = 1000
-    seed: int = 0
     auction: Auction = field(default_factory=SecondPrice)
     market: Market = field(default_factory=LogisticMarket)
     horizon_hours: float = 24.0

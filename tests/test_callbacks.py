@@ -13,6 +13,8 @@ from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import EpisodeReport
 
+SEED = 3
+
 
 class Record(Callback):
     """Records every hook call with its arguments and the process id."""
@@ -75,7 +77,7 @@ class Reports(Bidder):
 
 
 def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
-    defaults: dict[str, Any] = {"episodes": 3, "steps": 50, "seed": 3}
+    defaults: dict[str, Any] = {"episodes": 3, "steps": 50}
     return SimConfig(campaigns=campaigns, **(defaults | kwargs))
 
 
@@ -89,7 +91,7 @@ def two() -> tuple[Campaign, ...]:
 def test_run_hook_order():
     callback = Record()
     settings = config(*two())
-    log = run(settings, callbacks=[callback])
+    log = run(settings, callbacks=[callback], seed=SEED)
     hooks = [hook for _, hook, _ in callback.calls]
     assert hooks == [
         "run_start",
@@ -114,7 +116,7 @@ def test_episode_report_match_bidders():
         Campaign("s", Stack(OracleValue(), Reports()), budget=1e6, base_value=5.0),
         Campaign("t", Stack(OracleValue(), Linear()), budget=1e6, base_value=5.0),
     )
-    run(config(*campaigns), callbacks=[callback])
+    run(config(*campaigns), callbacks=[callback], seed=SEED)
     reports = [args[1] for _, hook, args in callback.calls if hook == "episode_end"]
     assert [set(episode) for episode in reports] == [{"s", "t"}] * 3
     assert [episode["s"] for episode in reports] == Reports.seen
@@ -124,7 +126,7 @@ def test_episode_report_match_bidders():
 
 def test_callbacks_in_list_order():
     Shared.order.clear()
-    run(config(*two(), episodes=1), callbacks=[Shared("a"), Shared("b")])
+    run(config(*two(), episodes=1), callbacks=[Shared("a"), Shared("b")], seed=SEED)
     assert Shared.order == [
         ("a", "run_start"),
         ("b", "run_start"),
@@ -185,7 +187,7 @@ class Fails(Callback):
 @pytest.mark.parametrize("hook", ["on_run_start", "on_episode_end", "on_run_end"])
 def test_callback_error_reaches_caller(hook: str):
     with pytest.raises(RuntimeError, match=f"stop in {hook}"):
-        run(config(*two()), callbacks=[Fails(hook)])
+        run(config(*two()), callbacks=[Fails(hook)], seed=SEED)
 
     with pytest.raises(RuntimeError, match="stop in on_seed_end"):
         run_many(config(*two()), seeds=[0], callbacks=[Fails("on_seed_end")])
@@ -198,7 +200,7 @@ def test_callback_type_checked(bad: object):
     instances = f"Callback instances, got {type(bad).__name__}"
     match = "pass an instance" if isinstance(bad, type) else instances
     with pytest.raises(TypeError, match=match):
-        run(config(*two()), callbacks=[bad])  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
+        run(config(*two()), callbacks=[bad], seed=SEED)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
 
     with pytest.raises(TypeError, match=match):
         run_many(config(*two()), seeds=[0], callbacks=[bad])  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
@@ -217,14 +219,14 @@ class OnlyEnd(Callback):
 
 def test_partial_callback():
     callback = OnlyEnd()
-    log = run(config(*two()), callbacks=[callback])
+    log = run(config(*two()), callbacks=[callback], seed=SEED)
     run_many(config(*two()), seeds=[0, 1], callbacks=[callback])
     assert len(callback.logged) == 1 and callback.logged[0] is log
 
 
 def test_callbacks_leave_run_unchanged():
-    plain = run(config(*two()))
-    watched = run(config(*two()), callbacks=[Record(), OnlyEnd()])
+    plain = run(config(*two()), seed=SEED)
+    watched = run(config(*two()), callbacks=[Record(), OnlyEnd()], seed=SEED)
     for name in ("bids", "price", "won", "converted"):
         assert (getattr(plain, name) == getattr(watched, name)).all()
 
@@ -261,10 +263,10 @@ def test_run_many_hook_order(workers: int):
 
 
 def test_progress_bar_counts_steps(capsys: pytest.CaptureFixture[str]):
-    plain = run(config(*two()), progress_bar=False)
+    plain = run(config(*two()), progress_bar=False, seed=SEED)
     # Keep the bar referenced, so garbage collection cannot close it for the run.
     bar = ProgressBar()
-    watched = run(config(*two()), callbacks=[bar])
+    watched = run(config(*two()), callbacks=[bar], seed=SEED)
     out, err = capsys.readouterr()
     assert out == ""
     assert "episode 1/3: " in err and "episode 2/3: " in err
@@ -285,7 +287,7 @@ class Steps(Record):
 
 def test_step_end_order():
     callback = Steps()
-    run(config(*two(), episodes=2, steps=3), callbacks=[callback])
+    run(config(*two(), episodes=2, steps=3), callbacks=[callback], seed=SEED)
     calls = [
         (hook, args if hook != "episode_end" else args[0])
         for _, hook, args in callback.calls[1:-1]
@@ -319,19 +321,19 @@ def test_progress_bar_counts_seeds(capsys: pytest.CaptureFixture[str]):
 
 
 def test_run_shows_a_bar_by_default(capsys: pytest.CaptureFixture[str]):
-    run(config(*two()))
+    run(config(*two()), seed=SEED)
     assert re.search(r"(^|\r)episode 3/3: 100%\|.*\| 50/50 ", capsys.readouterr().err)
 
 
 def test_run_without_progress_bar_prints_nothing(capsys: pytest.CaptureFixture[str]):
-    run(config(*two()), progress_bar=False)
+    run(config(*two()), progress_bar=False, seed=SEED)
     run_many(config(*two()), seeds=range(2), progress_bar=False)
     assert capsys.readouterr() == ("", "")
 
 
 def test_given_progress_bar_is_not_doubled(capsys: pytest.CaptureFixture[str]):
     bar = ProgressBar()
-    run(config(*two()), callbacks=[bar])
+    run(config(*two()), callbacks=[bar], seed=SEED)
     assert capsys.readouterr().err.count("episode 1/3:   0%") == 1
 
 

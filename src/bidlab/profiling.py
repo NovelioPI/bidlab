@@ -94,7 +94,7 @@ class Profile:
         The highest resident memory sampled at the run start, each episode
         end and the run end, in bytes.
     seed : int
-        The run's ``config.seed``.
+        The run's seed, as in `RunLog.seed`.
 
     Examples
     --------

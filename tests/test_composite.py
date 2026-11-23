@@ -11,6 +11,8 @@ from bidlab.runner import run_many
 from bidlab.simulator import run
 from bidlab.types import BidResult, EpisodeReport
 
+SEED = 3
+
 # A top bidder gets no value, so these pass-through test bidders default to one.
 FIRST_VALUE = 1.0
 
@@ -384,7 +386,7 @@ def other() -> Campaign:
 
 
 def config(*campaigns: Campaign, **kwargs: Any) -> SimConfig:
-    defaults: dict[str, Any] = {"episodes": 2, "steps": 50, "seed": 3}
+    defaults: dict[str, Any] = {"episodes": 2, "steps": 50}
     return SimConfig(campaigns=campaigns, **(defaults | kwargs))
 
 
@@ -406,7 +408,10 @@ def test_child_draws_leave_others_unchanged():
         tree = Fan([Draws("child", draw=draw), Fan([Draws("deep", draw=draw)])])
         stack = Stack(tree, OracleValue(noise=0.5), Watch())
         logs.append(
-            run(config(Campaign("d", stack, budget=1e6, base_value=5.0), other()))
+            run(
+                config(Campaign("d", stack, budget=1e6, base_value=5.0), other()),
+                seed=SEED,
+            )
         )
         seen.append(list(Watch.values))
         if draw:
@@ -453,7 +458,7 @@ class ResetsThroughCampaign(Bidder):
 
 def test_user_bidder_unchanged_through_campaign():
     bidder = ResetsThroughCampaign()
-    run(config(Campaign("r", bidder, budget=1e6, base_value=5.0)))
+    run(config(Campaign("r", bidder, budget=1e6, base_value=5.0)), seed=SEED)
     assert bidder.wins == 99
 
 
@@ -464,7 +469,8 @@ def test_tree_hook_order():
             Campaign("x", LogParent(), budget=1e6, base_value=5.0),
             episodes=1,
             steps=2,
-        )
+        ),
+        seed=SEED,
     )
     auction = [
         ("parent", "forward"),
@@ -494,7 +500,8 @@ def test_children_get_hooks_without_super():
             Campaign("x", QuietParent(), budget=1e6, base_value=5.0),
             episodes=1,
             steps=2,
-        )
+        ),
+        seed=SEED,
     )
     auction = [("a", "forward"), ("b", "forward"), ("a", "batch"), ("b", "batch")]
     assert [(name, hook) for name, hook, _ in Log.calls] == [
@@ -515,7 +522,8 @@ def test_child_result_has_final_bid():
                 "h", Stack(OracleValue(), HalfOfChild()), budget=1e6, base_value=5.0
             ),
             other(),
-        )
+        ),
+        seed=SEED,
     )
     assert Bids.bids == log.bids[:, :, 0].ravel().tolist()
     assert Bids.bids == (log.true_values[:, :, 0].ravel() / 2).tolist()
@@ -523,7 +531,7 @@ def test_child_result_has_final_bid():
 
 def test_unused_child_still_learns():
     Counts.counts.clear()
-    run(config(Campaign("u", Unused(), budget=1e6, base_value=5.0), other()))
+    run(config(Campaign("u", Unused(), budget=1e6, base_value=5.0), other()), seed=SEED)
     assert Counts.counts == {"parent": [100, 100], "child": [0, 100]}
 
 
@@ -535,7 +543,8 @@ def test_tree_skipped_outside_segments():
             Campaign("u", Unused(), budget=1e6, base_value=5.0, segments=["news"]),
             other(),
             market=market,
-        )
+        ),
+        seed=SEED,
     )
     news = int(np.sum(log.segment == market.segment_names.index("news")))
     assert 0 < news < 100
@@ -566,11 +575,13 @@ def test_bind_override_keeps_child_streams():
 def test_late_child_raises(hook: str):
     campaign = Campaign("grower", Grows(hook), budget=1e6, base_value=5.0)
     with pytest.raises(ValueError, match=r"'grower'.*'late'.*__init__"):
-        run(config(campaign, other(), episodes=1))
+        run(config(campaign, other(), episodes=1), seed=SEED)
 
 
 def test_plain_attribute_changes_allowed():
-    log = run(config(Campaign("t", Tally(), budget=1e6, base_value=5.0), other()))
+    log = run(
+        config(Campaign("t", Tally(), budget=1e6, base_value=5.0), other()), seed=SEED
+    )
     assert log.bids.shape == (2, 50, 2)
 
 
@@ -581,6 +592,7 @@ def test_parent_passes_forward_argument():
                 "h", Stack(OracleValue(), HalfShade()), budget=1e6, base_value=5.0
             ),
             other(),
-        )
+        ),
+        seed=SEED,
     )
     np.testing.assert_array_equal(log.bids[:, :, 0], log.true_values[:, :, 0] * 0.5)
