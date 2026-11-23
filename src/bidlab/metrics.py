@@ -218,7 +218,7 @@ def campaign_metrics(log: RunLog) -> list[CampaignEpisodeMetrics]:
                     conversions=conversions,
                     realized_value=value,
                     surplus=value - spend,
-                    budget_used=spend / campaign.budget,
+                    budget_used=spend / float(log.budgets[i]),
                     ctr=clicks / wins if wins else np.nan,
                     cpc=spend / clicks if clicks else np.nan,
                     cpa=spend / conversions if conversions else np.nan,
@@ -358,7 +358,7 @@ def regret(
     # A step without a market price has no outside bid to beat.
     outside = np.nan_to_num(log.market_price[episode], nan=-np.inf)
 
-    budget_left = np.full(multipliers.size, campaign.budget)
+    budget_left = np.full(multipliers.size, log.budgets[campaign_index])
     replay_surplus = np.zeros(multipliers.size)
     for step, value in enumerate(values):
         bids = np.minimum(multipliers * value, budget_left)

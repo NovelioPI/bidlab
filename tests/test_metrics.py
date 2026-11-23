@@ -43,6 +43,7 @@ def hand_log(kind="second", reserve=0.0, budget=10.0, cpa_target=None):
         segment=np.zeros((1, 3), dtype=np.int64),
         market_price=np.full((1, 3), np.nan),
         floor=np.zeros((1, 3)),
+        budgets=np.array([budget, 10.0]),
     )
 
 
@@ -168,6 +169,7 @@ def one_episode_log(episode, campaigns, auction):
         segment=np.zeros((1, steps), dtype=np.int64),
         market_price=np.full((1, steps), np.nan),
         floor=np.zeros((1, steps)),
+        budgets=np.array([campaign.budget for campaign in campaigns], dtype=float),
     )
 
 

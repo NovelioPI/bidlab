@@ -2,7 +2,7 @@
 
 import math
 from collections import deque
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
@@ -79,6 +79,10 @@ class RunLog:
     floor : numpy.ndarray
         The market's floor per step; 0 where it drew none. The auction's
         ``reserve`` is not included.
+    budgets : numpy.ndarray
+        Each campaign's budget per episode, shape (campaigns,): its
+        ``budget_fraction`` × its set budget, or × its market cost when its
+        budget is None.
     logged : Mapping[str, Mapping[str, numpy.ndarray]]
         Values bidders saved with `Bidder.log`: stored name, then campaign name,
         to an (episodes, steps) array, or (episodes,) for values logged in an
@@ -107,6 +111,7 @@ class RunLog:
     segment: npt.NDArray[np.int64]
     market_price: npt.NDArray[np.float64]
     floor: npt.NDArray[np.float64]
+    budgets: npt.NDArray[np.float64]
     logged: Logs = field(default_factory=lambda: MappingProxyType({}))
 
 
@@ -132,6 +137,20 @@ class _Participant:
                     "the run started; create child bidders in __init__ and reset "
                     "their state in on_episode_start"
                 )
+
+
+@dataclass(frozen=True)
+class _MarketLog:
+    market_price: npt.NDArray[np.float64]
+    floor: npt.NDArray[np.float64]
+    segment: npt.NDArray[np.int64]
+
+    def matches(self, log: RunLog) -> bool:
+        return (
+            np.array_equal(self.market_price, log.market_price, equal_nan=True)
+            and np.array_equal(self.floor, log.floor)
+            and np.array_equal(self.segment, log.segment)
+        )
 
 
 def run(
@@ -183,12 +202,15 @@ def run(
     checked = checked_callbacks(callbacks)
     if progress_bar:
         checked = with_progress_bar(checked)
+
     simulation = _Simulation(config, checked)
     for callback in checked:
         callback.on_run_start(config)
+
     simulation.run_all()
     for callback in checked:
         callback.on_run_end(simulation.log)
+
     return simulation.log
 
 
@@ -226,14 +248,18 @@ class _Simulation:
         # Filled at each campaign's first auction, where a bad forward signature raises.
         self.reads_market: list[bool | None] = [None] * count
         self.book = LogBook(config.episodes, config.steps)
-        self.participants = [
-            self._participant(campaign, seed)
-            for campaign, seed in zip(config.campaigns, bidder_seeds, strict=True)
-        ]
-        self.inboxes = [_Inbox() for _ in config.campaigns]
         self.segment_index = {
             name: index for index, name in enumerate(config.market.segment_names)
         }
+        self.replayed: _MarketLog | None = None
+        self.budgets = self._budgets(market_seed)
+        self.participants = [
+            self._participant(campaign, float(budget), seed)
+            for campaign, budget, seed in zip(
+                config.campaigns, self.budgets, bidder_seeds, strict=True
+            )
+        ]
+        self.inboxes = [_Inbox() for _ in config.campaigns]
         shape = (config.episodes, config.steps)
         self.log = RunLog(
             config=config,
@@ -246,10 +272,68 @@ class _Simulation:
             segment=np.zeros(shape, dtype=np.int64),
             market_price=np.full(shape, np.nan),
             floor=np.zeros(shape),
+            budgets=self.budgets,
         )
 
+    def _budgets(self, market_seed: np.random.SeedSequence) -> npt.NDArray[np.float64]:
+        budgets = np.zeros(len(self.config.campaigns))
+        for i, campaign in enumerate(self.config.campaigns):
+            budget = campaign.budget
+            if budget is None:
+                if self.replayed is None:
+                    self.replayed = self._replay(market_seed)
+                budget = self._market_cost(campaign, self.replayed)
+                if budget == 0:
+                    raise ValueError(
+                        f"campaign {campaign.name!r}: budget=None, but its market cost "
+                        "is 0: no request in its segments has a market price, a reserve "
+                        "or a floor; set budget, or use a market price (such as "
+                        "LogisticMarket(price_median=...)) or an auction reserve"
+                    )
+
+            budgets[i] = campaign.budget_fraction * budget
+        return budgets
+
+    def _replay(self, market_seed: np.random.SeedSequence) -> _MarketLog:
+        # Risk: if the run's SeedSequence were reused, then the market's spawns would shift.
+        seed = np.random.SeedSequence(
+            market_seed.entropy, spawn_key=market_seed.spawn_key
+        )
+        draws = self.config.market.draws(self.market_count, np.random.default_rng(seed))
+        shape = (self.config.episodes, self.config.steps)
+        replayed = _MarketLog(
+            market_price=np.full(shape, np.nan),
+            floor=np.zeros(shape),
+            segment=np.zeros(shape, dtype=np.int64),
+        )
+        for episode in range(self.config.episodes):
+            for step in range(self.config.steps):
+                draw = self._next_draw(draws, episode, step)
+                if draw.market_price is not None:
+                    replayed.market_price[episode, step] = draw.market_price
+                replayed.floor[episode, step] = draw.floor
+                replayed.segment[episode, step] = self.segment_index[draw.segment]
+        return replayed
+
+    def _market_cost(self, campaign: Campaign, replayed: _MarketLog) -> float:
+        # The lowest price that wins each request alone.
+        costs = np.maximum(
+            np.maximum(
+                np.nan_to_num(replayed.market_price, nan=0.0),
+                self.config.auction.reserve,
+            ),
+            replayed.floor,
+        )
+        allowed = [
+            index
+            for name, index in self.segment_index.items()
+            if campaign.segments is None or name in campaign.segments
+        ]
+        total = float(costs[np.isin(replayed.segment, allowed)].sum())
+        return total / self.config.episodes
+
     def _participant(
-        self, campaign: Campaign, seed: np.random.SeedSequence
+        self, campaign: Campaign, budget: float, seed: np.random.SeedSequence
     ) -> _Participant:
         # Child 0 fed the removed estimate noise; spawning it keeps child streams.
         seed.spawn(1)
@@ -257,8 +341,12 @@ class _Simulation:
         nodes = tuple(bidder.named_bidders())
         for path, node in nodes:
             attach_logger(node, self.book.logger(campaign.name, path))
+
         return _Participant(
-            campaign=replace(campaign, bidder=bidder),
+            # Bidders get the resolved budget, already scaled, so none scales it twice.
+            campaign=replace(
+                campaign, bidder=bidder, budget=budget, budget_fraction=1.0
+            ),
             nodes=tuple(node for _, node in nodes),
             learners=tuple(node for _, node in nodes if _learns(node)),
         )
@@ -266,8 +354,16 @@ class _Simulation:
     def run_all(self) -> None:
         for episode in range(self.config.episodes):
             self._run_episode(episode)
+
         self.book.close()
         self.log = replace(self.log, logged=self.book.result())
+        if self.replayed is not None and not self.replayed.matches(self.log):
+            market = type(self.config.market).__name__
+            raise RuntimeError(
+                f"{market}: the replayed draws that sized budget=None differ from "
+                "the run's draws; Market.draws must use only its rng argument"
+            )
+
         # Callers must not change the log, or later metrics silently disagree.
 
         for array in (
@@ -280,16 +376,18 @@ class _Simulation:
             self.log.segment,
             self.log.market_price,
             self.log.floor,
+            self.log.budgets,
         ):
             array.flags.writeable = False
 
     def _run_episode(self, episode: int) -> None:
-        budget_left = np.array([p.campaign.budget for p in self.participants])
+        budget_left = self.budgets.copy()
         reported_left = budget_left.copy()
         self.book.at_episode(episode)
         for participant in self.participants:
             for node in participant.nodes:
                 node.on_episode_start(participant.campaign)
+
             participant.check_tree()
 
         for step in range(self.config.steps):
@@ -309,13 +407,14 @@ class _Simulation:
         budget_left: npt.NDArray[np.float64],
         reported_left: npt.NDArray[np.float64],
     ) -> None:
-        draw = self._next_draw(episode, step)
+        draw = self._next_draw(self.market_draws, episode, step)
         self.book.at_step(episode, step)
         pctr = self.every_click if draw.pctr is None else draw.pctr
         pcvr = draw.pcvr
         if not self.config.competing:
             pctr = np.full(len(self.participants), pctr[0])
             pcvr = np.full(len(self.participants), pcvr[0])
+
         values = self._event_values(pctr, pcvr)
         time = step * self.seconds_per_step
         # Bidders outside their segments are not asked to bid, so they cannot learn from it.
@@ -345,6 +444,7 @@ class _Simulation:
             # Building the truth for bidders that never read it would slow every run.
             if self._reads_market(i):
                 inputs["market"] = MarketTruth(float(pctr[i]), float(pcvr[i]))
+
             bids[i] = call_forward(bidder, inputs)
         # Risk: if bids are not capped at the remaining budget, then spend can exceed it.
 
@@ -354,6 +454,7 @@ class _Simulation:
         paid = self._sell(draw, bids, active)
         for i, amount in paid.items():
             budget_left[i] -= amount
+
         clicked, converted = self._click_and_conversion(draw, paid, pctr, pcvr)
 
         for i in active:
@@ -376,10 +477,13 @@ class _Simulation:
         for i, amount in paid.items():
             self.log.won[episode, step, i] = True
             self.log.price[episode, step, i] = amount
+
         for i in clicked:
             self.log.clicked[episode, step, i] = True
+
         for i in converted:
             self.log.converted[episode, step, i] = True
+
         self.log.segment[episode, step] = self.segment_index[draw.segment]
         self._log_market(episode, step, draw)
 
@@ -410,6 +514,7 @@ class _Simulation:
             )
             if winner != NO_WINNER:
                 paid[i] = price
+
         return paid
 
     def _post_feedback(
@@ -487,6 +592,7 @@ class _Simulation:
         # The arrays start as "none", so most runs skip both writes.
         if draw.market_price is not None:
             self.log.market_price[episode, step] = draw.market_price
+
         if draw.floor:
             self.log.floor[episode, step] = draw.floor
 
@@ -533,11 +639,13 @@ class _Simulation:
             * np.where(self.values_conversion, pcvr, 1.0)
         )
 
-    def _next_draw(self, episode: int, step: int) -> MarketDraw:
+    def _next_draw(
+        self, draws: Iterator[MarketDraw], episode: int, step: int
+    ) -> MarketDraw:
         market = type(self.config.market).__name__
         where = f"{market} at episode {episode}, step {step}"
         try:
-            draw = next(self.market_draws)
+            draw = next(draws)
         except StopIteration:
             raise RuntimeError(f"{where}: the market stopped yielding draws") from None
 
@@ -564,6 +672,7 @@ class _Simulation:
                 "the market is each campaign's only rival; give the market one, "
                 "such as LogisticMarket(price_median=0.2)"
             )
+
         if draw.floor:
             _check_money(where, "floor", draw.floor)
 
@@ -591,7 +700,7 @@ class _Simulation:
             converted = self.log.converted[episode, :, i]
             events = event_happened(participant.campaign.event, won, clicked, converted)
             report = EpisodeReport(
-                budget=participant.campaign.budget,
+                budget=float(self.budgets[i]),
                 spend=float(np.sum(self.log.price[episode, :, i][won])),
                 wins=int(np.sum(won)),
                 clicks=int(np.sum(clicked)),
@@ -600,6 +709,7 @@ class _Simulation:
             )
             for node in participant.nodes:
                 node.on_episode_end(report)
+
             participant.check_tree()
             reports[participant.campaign.name] = report
 
