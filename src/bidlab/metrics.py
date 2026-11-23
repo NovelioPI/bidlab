@@ -135,6 +135,8 @@ class CampaignSegmentMetrics:
     surplus : float
         The count of the campaign's event in the segment × its base value −
         ``spend``.
+    expected_surplus : float
+        `RunLog.true_values` summed over wins in the segment − ``spend``.
     """
 
     episode: int
@@ -145,6 +147,7 @@ class CampaignSegmentMetrics:
     clicks: int
     conversions: int
     surplus: float
+    expected_surplus: float
 
 
 @dataclass(frozen=True)
@@ -349,6 +352,7 @@ def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
             won = log.won[episode, :, i]
             clicked = log.clicked[episode, :, i]
             converted = log.converted[episode, :, i]
+            values = log.true_values[episode, :, i]
             for index, name in enumerate(names):
                 won_here = won & (log.segment[episode] == index)
                 spend = float(log.price[episode, :, i][won_here].sum())
@@ -364,6 +368,7 @@ def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
                         clicks=int((clicked & won_here).sum()),
                         conversions=conversions,
                         surplus=int(events.sum()) * campaign.base_value - spend,
+                        expected_surplus=float(values[won_here].sum()) - spend,
                     )
                 )
 

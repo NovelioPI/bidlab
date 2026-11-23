@@ -599,3 +599,17 @@ def test_no_budget_loss_with_a_huge_budget():
     assert all(row.lost_budget == 0 for row in rows)
     assert all(np.isnan(row.budget_out) for row in rows)
     assert sum(row.lost_rival + row.lost_market for row in rows) > 0
+
+
+@pytest.mark.parametrize("competing", [True, False])
+def test_segment_expected_surplus_sums_to_campaign(competing):
+    log = run(priced_config(competing, FirstPrice, 20.0))
+    segments = segment_metrics(log)
+    for row in campaign_metrics(log):
+        total = sum(
+            s.expected_surplus
+            for s in segments
+            if (s.episode, s.campaign) == (row.episode, row.campaign)
+        )
+        assert row.wins > 0
+        assert total == pytest.approx(row.expected_surplus, rel=1e-12)
