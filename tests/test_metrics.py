@@ -329,3 +329,83 @@ def test_segment_rows_carry_their_episode():
         )
     )
     assert [row.episode for row in segment_metrics(log)] == [0, 1, 2]
+
+
+def targeted_hand_log(segment):
+    """`hand_log` with campaign a bidding only in segment x of a two-segment market."""
+    log = hand_log()
+    a, b = log.config.campaigns
+    return dataclasses.replace(
+        log,
+        config=dataclasses.replace(
+            log.config,
+            market=Segmented((Segment("x", 0.5), Segment("y", 0.5))),
+            campaigns=(dataclasses.replace(a, segments=("x",)), b),
+        ),
+        segment=np.array([segment]),
+    )
+
+
+def test_win_rate_counts_requests_in_segments():
+    # a wins steps 0 and 2 of 3 requests; b wins step 1.
+    a, b = campaign_metrics(hand_log())
+    assert a.win_rate == pytest.approx(2 / 3)
+    assert b.win_rate == pytest.approx(1 / 3)
+    # Step 1 is in segment y, outside a's segments, so a has 2 requests.
+    a, b = campaign_metrics(targeted_hand_log([0, 1, 0]))
+    assert a.win_rate == 1.0
+    assert b.win_rate == pytest.approx(1 / 3)
+
+
+def test_win_rate_is_nan_without_requests():
+    log = targeted_hand_log([1, 1, 1])
+    a_never_wins = np.array([[[False, False], [False, True], [False, False]]])
+    log = dataclasses.replace(
+        log,
+        won=a_never_wins,
+        price=np.where(a_never_wins, log.price, 0.0),
+        clicked=a_never_wins,
+        converted=np.zeros_like(a_never_wins),
+    )
+    a, _ = campaign_metrics(log)
+    assert np.isnan(a.win_rate)
+
+
+def test_cvr_divides_conversions_by_clicks():
+    # a: 1 conversion of 2 clicks; b: 0 of 1.
+    a, b = campaign_metrics(hand_log())
+    assert a.cvr == 0.5
+    assert b.cvr == 0.0
+    log = hand_log()
+    no_clicks = dataclasses.replace(
+        log,
+        clicked=np.zeros_like(log.clicked),
+        converted=np.zeros_like(log.converted),
+    )
+    a, b = campaign_metrics(no_clicks)
+    assert np.isnan(a.cvr) and np.isnan(b.cvr)
+
+
+def test_expected_surplus_on_hand_built_log():
+    # a wins values 1.0 and 0.8 for 0.5 + 0.3; b wins 0.6 for 0.2.
+    a, b = campaign_metrics(hand_log())
+    assert a.expected_surplus == pytest.approx(1.8 - 0.8)
+    assert b.expected_surplus == pytest.approx(0.6 - 0.2)
+
+
+def test_cost_per_expected_event_on_hand_built_log():
+    # a: 1.8 expected value / base value 4 = 0.45 expected events, for spend 0.8.
+    # b: 0.6 / 2 = 0.3 expected events, for spend 0.2.
+    a, b = campaign_metrics(hand_log())
+    assert a.cost_per_expected_event == pytest.approx(0.8 / 0.45)
+    assert b.cost_per_expected_event == pytest.approx(0.2 / 0.3)
+    log = hand_log()
+    nobody_wins = dataclasses.replace(
+        log,
+        won=np.zeros_like(log.won),
+        price=np.zeros_like(log.price),
+        clicked=np.zeros_like(log.clicked),
+        converted=np.zeros_like(log.converted),
+    )
+    a, b = campaign_metrics(nobody_wins)
+    assert np.isnan(a.cost_per_expected_event) and np.isnan(b.cost_per_expected_event)

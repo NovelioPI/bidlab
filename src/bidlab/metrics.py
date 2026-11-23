@@ -60,6 +60,18 @@ class CampaignEpisodeMetrics:
         with no target.
     regret : float
         See `regret`.
+    win_rate : float
+        ``wins`` / requests, where a request is a step in the campaign's
+        ``segments``; NaN with no request.
+    expected_surplus : float
+        `RunLog.true_values` summed over wins − ``spend``: surplus without
+        the luck of the event draws.
+    cvr : float
+        ``conversions`` / ``clicks``; NaN with no click.
+    cost_per_expected_event : float
+        ``spend`` / the expected count of the campaign's event over its wins
+        (`RunLog.true_values` summed over wins / ``base_value``); NaN with no
+        win.
     """
 
     episode: int
@@ -78,6 +90,10 @@ class CampaignEpisodeMetrics:
     cpa_violation: float
     cpa_score: float
     regret: float
+    win_rate: float
+    expected_surplus: float
+    cvr: float
+    cost_per_expected_event: float
 
 
 @dataclass(frozen=True)
@@ -201,43 +217,52 @@ def campaign_metrics(log: RunLog) -> list[CampaignEpisodeMetrics]:
     """
     rows = []
     for episode in range(log.won.shape[0]):
-        for i, campaign in enumerate(log.config.campaigns):
-            won = log.won[episode, :, i]
-            clicked = log.clicked[episode, :, i]
-            converted = log.converted[episode, :, i]
-            spend = float(log.price[episode, :, i][won].sum())
-            wins = int(won.sum())
-            clicks = int(clicked.sum())
-            conversions = int(converted.sum())
-            events = event_happened(campaign.event, won, clicked, converted)
-            value = int(events.sum()) * campaign.base_value
-            target = campaign.cpa_target
-            rows.append(
-                CampaignEpisodeMetrics(
-                    episode=episode,
-                    campaign=campaign.name,
-                    spend=spend,
-                    wins=wins,
-                    clicks=clicks,
-                    conversions=conversions,
-                    realized_value=value,
-                    surplus=value - spend,
-                    budget=float(log.budgets[i]),
-                    budget_used=spend / float(log.budgets[i]),
-                    ctr=clicks / wins if wins else np.nan,
-                    cpc=spend / clicks if clicks else np.nan,
-                    cpa=spend / conversions if conversions else np.nan,
-                    cpa_violation=_cpa_violation(spend, conversions, target),
-                    cpa_score=(
-                        np.nan
-                        if target is None
-                        else _cpa_score(value, spend, conversions, target)
-                    ),
-                    regret=regret(log, episode, i),
-                )
-            )
+        for i in range(len(log.config.campaigns)):
+            rows.append(_campaign_row(log, episode, i))
 
     return rows
+
+
+def _campaign_row(log: RunLog, episode: int, i: int) -> CampaignEpisodeMetrics:
+    campaign = log.config.campaigns[i]
+    won = log.won[episode, :, i]
+    clicked = log.clicked[episode, :, i]
+    converted = log.converted[episode, :, i]
+    spend = float(log.price[episode, :, i][won].sum())
+    wins = int(won.sum())
+    clicks = int(clicked.sum())
+    conversions = int(converted.sum())
+    events = event_happened(campaign.event, won, clicked, converted)
+    value = int(events.sum()) * campaign.base_value
+    expected_value = float(log.true_values[episode, :, i][won].sum())
+    requests = int(_requests(log, episode, i).sum())
+    target = campaign.cpa_target
+    return CampaignEpisodeMetrics(
+        episode=episode,
+        campaign=campaign.name,
+        spend=spend,
+        wins=wins,
+        clicks=clicks,
+        conversions=conversions,
+        realized_value=value,
+        surplus=value - spend,
+        budget=float(log.budgets[i]),
+        budget_used=spend / float(log.budgets[i]),
+        ctr=clicks / wins if wins else np.nan,
+        cpc=spend / clicks if clicks else np.nan,
+        cpa=spend / conversions if conversions else np.nan,
+        cpa_violation=_cpa_violation(spend, conversions, target),
+        cpa_score=(
+            np.nan if target is None else _cpa_score(value, spend, conversions, target)
+        ),
+        regret=regret(log, episode, i),
+        win_rate=wins / requests if requests else np.nan,
+        expected_surplus=expected_value - spend,
+        cvr=conversions / clicks if clicks else np.nan,
+        cost_per_expected_event=(
+            spend / (expected_value / campaign.base_value) if wins else np.nan
+        ),
+    )
 
 
 def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
@@ -284,6 +309,15 @@ def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
                 )
 
     return rows
+
+
+def _requests(log: RunLog, episode: int, campaign_index: int) -> npt.NDArray[np.bool_]:
+    campaign = log.config.campaigns[campaign_index]
+    names = log.config.market.segment_names
+    allowed = [
+        i for i, name in enumerate(names) if name in (campaign.segments or names)
+    ]
+    return np.isin(log.segment[episode], allowed)
 
 
 def _cpa_violation(spend: float, conversions: int, target: float | None) -> float:
@@ -344,7 +378,6 @@ def regret(
     >>> round(bl.regret(log, episode=0, campaign_index=0), 9)
     0.0
     """
-    campaign = log.config.campaigns[campaign_index]
     auction = log.config.auction
     values = log.true_values[episode, :, campaign_index]
     others = np.delete(log.bids[episode], campaign_index, axis=1)
@@ -354,11 +387,7 @@ def regret(
     else:
         highest_other = np.zeros(len(values))
     # A targeted bidder cannot win outside its segments, so neither can its replay.
-    names = log.config.market.segment_names
-    allowed = [
-        i for i, name in enumerate(names) if name in (campaign.segments or names)
-    ]
-    takes_part = np.isin(log.segment[episode], allowed)
+    takes_part = _requests(log, episode, campaign_index)
     floors = np.maximum(auction.reserve, log.floor[episode])
     # A step without a market price has no outside bid to beat.
     outside = np.nan_to_num(log.market_price[episode], nan=-np.inf)
