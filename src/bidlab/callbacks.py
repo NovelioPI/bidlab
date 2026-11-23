@@ -19,8 +19,8 @@ class Callback:
     Hooks run in the main process, in the order the callbacks are given, and
     cannot change the run. `run` calls `on_run_start`, `on_step_end`,
     `on_episode_end` and `on_run_end` for an int seed; for a seed list it
-    calls only `on_run_many_start`, `on_seed_end` and `on_run_many_end`, also
-    with ``workers > 1``. An error raised in a hook reaches the caller.
+    calls only `on_seeds_start`, `on_seed_progress`, `on_seed_end` and
+    `on_seeds_end`, also with ``workers > 1``. An error raised in a hook reaches the caller.
 
     Examples
     --------
@@ -81,6 +81,24 @@ class Callback:
             The run's log.
         """
 
+    def on_seed_progress(self, seed: int, episode: int, step: int) -> None:
+        """Run for a seed list as a seed's run reaches ``step`` of ``episode``.
+
+        It runs about every ``max(1, steps // 20)`` steps and at each
+        episode's last step, in the main process. Each seed's calls come in
+        step order and before its `on_seed_end`; with ``workers > 1``, calls
+        for seeds that run at the same time interleave as they arrive.
+
+        Parameters
+        ----------
+        seed : int
+            The seed whose run advanced.
+        episode : int
+            The episode index, from 0.
+        step : int
+            The step index within the episode, from 0, that just ended.
+        """
+
     def on_seed_end(self, seed: int, results: Results) -> None:
         """Run after each seed of a seed list, in the order the seeds were given.
 
@@ -92,7 +110,7 @@ class Callback:
             That seed's rows and logs, as `run` with ``seed=[seed]``.
         """
 
-    def on_run_many_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
+    def on_seeds_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
         """Run once for a seed list, before the first seed.
 
         Parameters
@@ -103,7 +121,7 @@ class Callback:
             Every seed, in the order they will run.
         """
 
-    def on_run_many_end(self, results: Results) -> None:
+    def on_seeds_end(self, results: Results) -> None:
         """Run once with the `Results` that `run` returns for a seed list.
 
         Parameters
@@ -160,16 +178,34 @@ class ProgressBar(Callback):
         """Close the step bar."""
         self._close()
 
-    def on_run_many_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
+    def on_seeds_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
         """Open a bar with one tick per seed."""
         self._bar = tqdm(total=len(seeds), desc="run_many", unit="seed")
+
+    def on_seed_progress(self, seed: int, episode: int, step: int) -> None:
+        """Run for a seed list as a seed's run reaches ``step`` of ``episode``.
+
+        It runs about every ``max(1, steps // 20)`` steps and at each
+        episode's last step, in the main process. Each seed's calls come in
+        step order and before its `on_seed_end`; with ``workers > 1``, calls
+        for seeds that run at the same time interleave as they arrive.
+
+        Parameters
+        ----------
+        seed : int
+            The seed whose run advanced.
+        episode : int
+            The episode index, from 0.
+        step : int
+            The step index within the episode, from 0, that just ended.
+        """
 
     def on_seed_end(self, seed: int, results: Results) -> None:
         """Tick the seed bar."""
         if self._bar is not None:
             self._bar.update()
 
-    def on_run_many_end(self, results: Results) -> None:
+    def on_seeds_end(self, results: Results) -> None:
         """Close the seed bar."""
         self._close()
 

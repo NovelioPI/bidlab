@@ -505,7 +505,7 @@ def per_auction() -> Campaign:
     )
 
 
-def test_run_many_stacks_seeds():
+def test_seed_list_stacks_seeds():
     results = run(config(per_auction(), episodes=2), seed=range(3))
     stacked = results.logged["lam"]["a"]
     assert stacked.shape == (3, 2, 50)
@@ -514,7 +514,7 @@ def test_run_many_stacks_seeds():
         np.testing.assert_array_equal(stacked[seed], single.logged["lam"]["a"])
 
 
-def test_run_many_episode_values():
+def test_seed_list_episode_values():
     campaign = Campaign(
         "ucb", Stack(OracleValue(), UcbMultiplier()), budget=1e6, base_value=5.0
     )
@@ -522,7 +522,7 @@ def test_run_many_episode_values():
     assert results.logged["bidders.1.multiplier"]["ucb"].shape == (3, 4)
 
 
-def test_run_many_missing_seed_nan():
+def test_seed_list_missing_seed_nan():
     campaign = Campaign("s", Sometimes(), budget=1e6, base_value=5.0)
     stacked = run(config(campaign, episodes=1), seed=range(8)).logged["x"]["s"]
     logged = [
@@ -533,7 +533,7 @@ def test_run_many_missing_seed_nan():
         assert np.isnan(stacked[seed]).all() != did_log
 
 
-def test_run_many_workers_logs_equal():
+def test_seed_list_workers_logs_equal():
     pid = Campaign("pid", Stack(OracleValue(), PidPacing()), budget=3.0, base_value=5.0)
     serial = run(config(pid, per_auction()), seed=range(3))
     parallel = run(config(pid, per_auction()), seed=range(3), workers=2)

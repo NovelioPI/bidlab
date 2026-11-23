@@ -1,10 +1,13 @@
 import os
 import re
+import threading
 from collections.abc import Mapping, Sequence
+from multiprocessing.context import SpawnContext
 from typing import Any, ClassVar, override
 
 import pytest
 
+from bidlab import runner
 from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
 from bidlab.callbacks import Callback, ProgressBar
 from bidlab.config import Campaign, SimConfig
@@ -148,7 +151,7 @@ def test_seed_end_in_seed_order(workers: int):
         assert results.equals(run(settings, seed=[seed]))
 
 
-def test_run_many_skips_run_hooks():
+def test_seed_list_skips_run_hooks():
     callback = Record()
     run(config(*two()), seed=range(2), callbacks=[callback])
     assert {hook for _, hook, _ in callback.calls} == {"seed_end"}
@@ -231,32 +234,137 @@ def test_callbacks_leave_run_unchanged():
 
 
 class RecordMany(Record):
-    """Also records the run_many start and end hooks."""
+    """Also records the seed list start and end hooks."""
 
     @override
-    def on_run_many_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
-        self.calls.append((self.name, "run_many_start", (config, seeds)))
+    def on_seeds_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
+        self.calls.append((self.name, "seeds_start", (config, seeds)))
 
     @override
-    def on_run_many_end(self, results: Results) -> None:
-        self.calls.append((self.name, "run_many_end", results))
+    def on_seeds_end(self, results: Results) -> None:
+        self.calls.append((self.name, "seeds_end", results))
 
 
 @pytest.mark.parametrize("workers", [1, 2])
-def test_run_many_hook_order(workers: int):
+def test_seed_list_hook_order(workers: int):
     callback = RecordMany()
     settings = config(*two())
     results = run(settings, seed=iter([4, 1, 7]), workers=workers, callbacks=[callback])
     hooks = [hook for _, hook, _ in callback.calls]
     assert hooks == [
-        "run_many_start",
+        "seeds_start",
         "seed_end",
         "seed_end",
         "seed_end",
-        "run_many_end",
+        "seeds_end",
     ]
     assert callback.calls[0][2] == (settings, (4, 1, 7))
     assert callback.calls[-1][2] is results
+
+
+class Progress(RecordMany):
+    """Also records every seed progress call and the thread it ran on."""
+
+    @override
+    def on_seed_progress(self, seed: int, episode: int, step: int) -> None:
+        main = threading.current_thread() is threading.main_thread()
+        self.calls.append((self.name, "progress", (seed, episode, step, main)))
+
+
+def progress_steps(steps: int) -> list[int]:
+    """The steps a seed reports per episode: every max(1, steps // 20), and the last."""
+    every = max(1, steps // 20)
+    return [
+        step for step in range(steps) if (step + 1) % every == 0 or step == steps - 1
+    ]
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+@pytest.mark.parametrize("steps", [45, 7])
+def test_seed_progress_reaches_each_episode_end(workers: int, steps: int):
+    callback = Progress()
+    seeds = [4, 1, 7]
+    run(
+        config(*two(), steps=steps),
+        seed=seeds,
+        workers=workers,
+        callbacks=[callback],
+        progress_bar=False,
+    )
+    progress = [args for _, hook, args in callback.calls if hook == "progress"]
+    expected = [
+        (episode, step) for episode in range(3) for step in progress_steps(steps)
+    ]
+    for seed in seeds:
+        assert [(e, s) for seed_, e, s, _ in progress if seed_ == seed] == expected
+
+    assert all(main for *_, main in progress)
+    assert len(progress) == len(seeds) * len(expected)
+
+
+def test_progress_steps_rule():
+    assert progress_steps(45) == [*range(1, 44, 2), 44]
+    assert progress_steps(2000) == list(range(99, 2000, 100))
+    assert progress_steps(7) == list(range(7))
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_seed_progress_comes_before_its_seed_end(workers: int):
+    callback = Progress()
+    run(
+        config(*two()),
+        seed=[4, 1, 7],
+        workers=workers,
+        callbacks=[callback],
+        progress_bar=False,
+    )
+    hooks = [(hook, args[0]) for _, hook, args in callback.calls[1:-1]]
+    ends = [seed for hook, seed in hooks if hook == "seed_end"]
+    assert ends == [4, 1, 7]
+    for seed in ends:
+        own = [i for i, (hook, s) in enumerate(hooks) if s == seed]
+        assert hooks[own[-1]] == ("seed_end", seed)
+        assert all(hooks[i][0] == "progress" for i in own[:-1])
+        assert len(own) > 1
+    assert callback.calls[0][1] == "seeds_start"
+    assert callback.calls[-1][1] == "seeds_end"
+
+
+@pytest.mark.parametrize("workers", [1, 2])
+def test_seed_callbacks_leave_results_unchanged(workers: int):
+    settings = config(*two())
+    plain = run(settings, seed=[4, 1], workers=workers, progress_bar=False)
+    watched = run(
+        settings, seed=[4, 1], workers=workers, callbacks=[Progress(), OnlyEnd()]
+    )
+    assert watched.equals(plain)
+    assert watched.equals(run(settings, seed=[4, 1], progress_bar=False))
+
+
+def test_no_progress_work_without_callbacks(monkeypatch: pytest.MonkeyPatch):
+    reports: list[tuple[int, int]] = []
+    original = runner._SeedProgress.on_step_end
+
+    def counted(self: runner._SeedProgress, episode: int, step: int) -> None:
+        reports.append((episode, step))
+        original(self, episode, step)
+
+    monkeypatch.setattr(runner._SeedProgress, "on_step_end", counted)
+    run(config(*two()), seed=[4], progress_bar=False)
+    assert reports == []
+    run(config(*two()), seed=[4], callbacks=[OnlyEnd()], progress_bar=False)
+    assert len(reports) == 3 * 50
+
+
+def test_no_progress_queue_without_callbacks(monkeypatch: pytest.MonkeyPatch):
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("a Manager started without callbacks")
+
+    monkeypatch.setattr(SpawnContext, "Manager", refuse)
+    results = run(config(*two()), seed=[4, 1], workers=2, progress_bar=False)
+    assert len(results) == 4
+    with pytest.raises(AssertionError, match="Manager started"):
+        run(config(*two()), seed=[4, 1], workers=2)
 
 
 def test_progress_bar_counts_steps(capsys: pytest.CaptureFixture[str]):
@@ -301,7 +409,7 @@ def test_step_end_order():
     ]
 
 
-def test_run_many_skips_step_end():
+def test_seed_list_skips_step_end():
     callback = Steps()
     run(config(*two()), seed=range(2), workers=1, callbacks=[callback])
     assert "step_end" not in {hook for _, hook, _ in callback.calls}
@@ -334,7 +442,7 @@ def test_given_progress_bar_is_not_doubled(capsys: pytest.CaptureFixture[str]):
     assert capsys.readouterr().err.count("episode 1/3:   0%") == 1
 
 
-def test_run_many_shows_only_the_seed_bar_by_default(
+def test_seed_list_shows_only_the_seed_bar_by_default(
     capsys: pytest.CaptureFixture[str],
 ):
     run(config(*two()), seed=[4, 1])

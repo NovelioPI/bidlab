@@ -156,12 +156,12 @@ class Events(Bidder):
 
 
 class Starts(Callback):
-    """Counts run_many starts."""
+    """Counts seed list starts."""
 
     def __init__(self) -> None:
         self.starts = 0
 
-    def on_run_many_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
+    def on_seeds_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
         self.starts += 1
 
 
@@ -220,7 +220,7 @@ def test_profiler_must_be_bool(bad: object):
     with pytest.raises(TypeError, match=message):
         run(_plain(), progress_bar=False, profiler=profiler)
 
-    # run_many checks before it starts, so no callback sees a run that cannot happen.
+    # A seed list is checked before it starts, so no callback sees a run that cannot happen.
     starts = Starts()
     with pytest.raises(TypeError, match=message):
         run(
@@ -494,7 +494,7 @@ def _calls(profile: Profile, campaign: str) -> dict[tuple[str, str], int]:
 
 
 @pytest.mark.parametrize("workers", [1, 2])
-def test_run_many_profiles_in_seed_order(workers: int):
+def test_seed_list_profiles_in_seed_order(workers: int):
     # Each seed draws its own segments, so each seed calls forward a different number of times.
     config = SimConfig(
         campaigns=[
