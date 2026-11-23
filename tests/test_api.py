@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from bidlab.auctions import FirstPrice, SecondPrice
+from bidlab.auctions import NO_WINNER, FirstPrice, SecondPrice
 from bidlab.bidders import (
     Bidder,
     Linear,
@@ -22,8 +22,9 @@ from bidlab.bidders import (
 )
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import IndependentValues, LogisticMarket, Segment, Segmented
+from bidlab.metrics import platform_metrics
 from bidlab.runner import run_many
-from bidlab.simulator import run
+from bidlab.simulator import RunLog, run
 from bidlab.types import BidResult
 
 ROOT = Path(__file__).parent.parent
@@ -74,6 +75,18 @@ def fingerprint_config(kind):
     )
 
 
+def old_arrays(log: RunLog, *names: str) -> list[np.ndarray]:
+    """Rebuild the (episodes, steps) arrays that the recorded hashes were made from."""
+    rebuilt = {
+        "winner": np.where(log.won.any(axis=2), log.won.argmax(axis=2), NO_WINNER),
+        # One winner's price plus zeros, so the sum is exact.
+        "price": log.price.sum(axis=2),
+        "clicked": log.clicked.any(axis=2),
+        "converted": log.converted.any(axis=2),
+    }
+    return [rebuilt[name] for name in names]
+
+
 @pytest.mark.parametrize("kind", ["first", "second"])
 def test_run_log_fingerprint(kind):
     log = run(fingerprint_config(kind))
@@ -81,9 +94,7 @@ def test_run_log_fingerprint(kind):
     for array in (
         log.bids,
         log.true_values,
-        log.winner,
-        log.price,
-        log.converted,
+        *old_arrays(log, "winner", "price", "converted"),
     ):
         digest.update(array.tobytes())
 
@@ -129,9 +140,7 @@ def test_run_log_without_pid_matches_main(kind):
     for array in (
         log.bids,
         log.true_values,
-        log.winner,
-        log.price,
-        log.converted,
+        *old_arrays(log, "winner", "price", "converted"),
     ):
         digest.update(array.tobytes())
 
@@ -179,7 +188,11 @@ def test_no_click_stage_matches_main(kind):
     )
     log = run(config)
     digest = hashlib.sha256()
-    for array in (log.bids, log.true_values, log.winner, log.price, log.converted):
+    for array in (
+        log.bids,
+        log.true_values,
+        *old_arrays(log, "winner", "price", "converted"),
+    ):
         digest.update(array.tobytes())
 
     assert digest.hexdigest() == MAIN_HASHES_WITHOUT_CLICKS[kind]
@@ -227,14 +240,33 @@ def test_click_stage_matches_main(kind):
     for array in (
         log.bids,
         log.true_values,
-        log.winner,
-        log.price,
-        log.clicked,
-        log.converted,
+        *old_arrays(log, "winner", "price", "clicked", "converted"),
     ):
         digest.update(array.tobytes())
 
     assert digest.hexdigest() == MAIN_HASHES_WITH_CLICKS[kind]
+
+
+# Recorded on main (56efc2f) with numpy 2.5.4. One sum over steps and campaigns
+# rounds differently from main's sum over steps.
+MAIN_REVENUE = [1342.7663534744668, 1400.015656838485]
+
+
+def test_revenue_matches_main():
+    campaigns = tuple(
+        Campaign(
+            f"c{i}",
+            Stack(OracleValue(), Linear(multiplier=0.5 + 0.1 * i)),
+            budget=1e6,
+            base_value=5.0,
+        )
+        for i in range(4)
+    )
+    config = SimConfig(
+        campaigns=campaigns, episodes=2, steps=3000, seed=0, auction=FirstPrice()
+    )
+    revenue = [row.revenue for row in platform_metrics(run(config))]
+    assert revenue == MAIN_REVENUE
 
 
 PUBLIC_NAMES = {

@@ -4,6 +4,16 @@ This file lists the changes in each bidlab release, newest first.
 
 bidlab follows [semantic versioning](https://semver.org/). Before 1.0, a minor version may break the API; each break is listed under **Breaking**.
 
+## Unreleased
+
+### Breaking
+
+- `RunLog.winner` is removed. `RunLog.won`, `price`, `clicked` and `converted` now have shape (episodes, steps, campaigns); `price` is 0 where a campaign lost. Replace `log.winner == i` with `log.won[..., i]`.
+
+### Simulation
+
+- `SimConfig(competing=False)` runs each campaign alone against the market price, on one shared market draw, to compare bidders on the same traffic. Every draw then needs a market price; platform `revenue` and `welfare` are NaN, and `regret` replays without other campaigns' bids.
+
 ## 0.3.1 (2026-11-23)
 
 ### Callbacks

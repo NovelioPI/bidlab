@@ -53,7 +53,7 @@ config = bl.SimConfig(
 def hour_out_of_budget(log, bidder, hours):
     """Hour each episode's spend first reaches 99% of the budget; NaN if never."""
     budget = log.config.campaigns[bidder].budget
-    spend = np.where(log.winner == bidder, log.price, 0.0).cumsum(axis=1)
+    spend = log.price[:, :, bidder].cumsum(axis=1)
     out = spend >= OUT_OF_BUDGET * budget
     first = out.argmax(axis=1)
     return np.where(out.any(axis=1), hours[np.arange(len(first)), first], np.nan)

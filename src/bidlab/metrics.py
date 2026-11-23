@@ -124,6 +124,9 @@ class PlatformEpisodeMetrics:
         market price, adds nothing: its price is unknown.
     welfare : float
         Sum of the winner's expected value, over auctions a campaign won.
+
+    Both are NaN with ``competing=False``: each campaign buys the impression
+    in its own auction, so no single sale exists.
     """
 
     episode: int
@@ -144,16 +147,21 @@ def platform_metrics(log: RunLog) -> list[PlatformEpisodeMetrics]:
     >>> [row.revenue for row in bl.platform_metrics(log)]
     [0.0, 0.0]
     """
+    if not log.config.competing:
+        return [
+            PlatformEpisodeMetrics(episode=episode, revenue=np.nan, welfare=np.nan)
+            for episode in range(log.won.shape[0])
+        ]
+
     rows = []
-    for episode in range(log.winner.shape[0]):
-        winner = log.winner[episode]
-        sold = winner >= 0
-        winner_values = log.true_values[episode, sold, winner[sold]]
+    for episode in range(log.won.shape[0]):
+        won = log.won[episode]
         rows.append(
             PlatformEpisodeMetrics(
                 episode=episode,
-                revenue=float(log.price[episode].sum()),
-                welfare=float(winner_values.sum()),
+                # Summing each step first keeps the old per-step sum order, bit for bit.
+                revenue=float(log.price[episode].sum(axis=1).sum()),
+                welfare=float(log.true_values[episode][won].sum()),
             )
         )
 
@@ -188,16 +196,16 @@ def campaign_metrics(log: RunLog) -> list[CampaignEpisodeMetrics]:
     [(0, 'a'), (0, 'b'), (1, 'a'), (1, 'b')]
     """
     rows = []
-    for episode in range(log.winner.shape[0]):
+    for episode in range(log.won.shape[0]):
         for i, campaign in enumerate(log.config.campaigns):
-            won = log.winner[episode] == i
-            spend = float(log.price[episode][won].sum())
+            won = log.won[episode, :, i]
+            clicked = log.clicked[episode, :, i]
+            converted = log.converted[episode, :, i]
+            spend = float(log.price[episode, :, i][won].sum())
             wins = int(won.sum())
-            clicks = int((log.clicked[episode] & won).sum())
-            conversions = int((log.converted[episode] & won).sum())
-            events = event_happened(
-                campaign.event, won, log.clicked[episode], log.converted[episode]
-            )
+            clicks = int(clicked.sum())
+            conversions = int(converted.sum())
+            events = event_happened(campaign.event, won, clicked, converted)
             value = int(events.sum()) * campaign.base_value
             target = campaign.cpa_target
             rows.append(
@@ -247,19 +255,16 @@ def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
     """
     rows = []
     names = log.config.market.segment_names
-    for episode in range(log.winner.shape[0]):
+    for episode in range(log.won.shape[0]):
         for i, campaign in enumerate(log.config.campaigns):
-            won = log.winner[episode] == i
+            won = log.won[episode, :, i]
+            clicked = log.clicked[episode, :, i]
+            converted = log.converted[episode, :, i]
             for index, name in enumerate(names):
                 won_here = won & (log.segment[episode] == index)
-                spend = float(log.price[episode][won_here].sum())
-                conversions = int((log.converted[episode] & won_here).sum())
-                events = event_happened(
-                    campaign.event,
-                    won_here,
-                    log.clicked[episode],
-                    log.converted[episode],
-                )
+                spend = float(log.price[episode, :, i][won_here].sum())
+                conversions = int((converted & won_here).sum())
+                events = event_happened(campaign.event, won_here, clicked, converted)
                 rows.append(
                     CampaignSegmentMetrics(
                         episode=episode,
@@ -267,7 +272,7 @@ def segment_metrics(log: RunLog) -> list[CampaignSegmentMetrics]:
                         segment=name,
                         spend=spend,
                         wins=int(won_here.sum()),
-                        clicks=int((log.clicked[episode] & won_here).sum()),
+                        clicks=int((clicked & won_here).sum()),
                         conversions=conversions,
                         surplus=int(events.sum()) * campaign.base_value - spend,
                     )
@@ -299,7 +304,9 @@ def regret(
 
     Other bidders' logged bids, the market price and the floor stay fixed
     while the episode is replayed with this bidder bidding m × value for each
-    multiplier m. See the Regret section of ``docs/metrics.md`` for every rule
+    multiplier m. With ``competing=False`` only the market price and the
+    floor stay fixed, since other campaigns are not in its auction. See the
+    Regret section of ``docs/metrics.md`` for every rule
     and its limits.
 
     Parameters
@@ -336,7 +343,11 @@ def regret(
     auction = log.config.auction
     values = log.true_values[episode, :, campaign_index]
     others = np.delete(log.bids[episode], campaign_index, axis=1)
-    highest_other = others.max(axis=1) if others.shape[1] else np.zeros(len(values))
+    # Without competition, other campaigns are not in this campaign's auction.
+    if log.config.competing and others.shape[1]:
+        highest_other = others.max(axis=1)
+    else:
+        highest_other = np.zeros(len(values))
     # A targeted bidder cannot win outside its segments, so neither can its replay.
     names = log.config.market.segment_names
     allowed = [
@@ -367,8 +378,10 @@ def regret(
         replay_surplus += np.where(wins, value - prices, 0.0)
         budget_left -= np.where(wins, prices, 0.0)
 
-    won = log.winner[episode] == campaign_index
-    own_surplus = float((values[won] - log.price[episode][won]).sum())
+    won = log.won[episode, :, campaign_index]
+    own_surplus = float(
+        (values[won] - log.price[episode, :, campaign_index][won]).sum()
+    )
     return float(replay_surplus.max() - own_surplus)
 
 

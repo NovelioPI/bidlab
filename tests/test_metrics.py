@@ -36,10 +36,10 @@ def hand_log(kind="second", reserve=0.0, budget=10.0, cpa_target=None):
         config=config,
         bids=bids,
         true_values=values,
-        winner=np.array([[0, 1, 0]]),
-        price=np.array([[0.5, 0.2, 0.3]]),
-        clicked=np.array([[True, True, True]]),
-        converted=np.array([[True, False, False]]),
+        won=np.array([[[True, False], [False, True], [True, False]]]),
+        price=np.array([[[0.5, 0.0], [0.0, 0.2], [0.3, 0.0]]]),
+        clicked=np.array([[[True, False], [False, True], [True, False]]]),
+        converted=np.array([[[True, False], [False, False], [False, False]]]),
         segment=np.zeros((1, 3), dtype=np.int64),
         market_price=np.full((1, 3), np.nan),
         floor=np.zeros((1, 3)),
@@ -76,7 +76,7 @@ def test_cpa_violation_cases(target, violation, score):
 def test_cpa_violation_infinite_when_spend_without_conversions():
     log = hand_log(cpa_target=1.0)
     no_conversions = RunLog(
-        **{**log.__dict__, "converted": np.zeros((1, 3), dtype=bool)}
+        **{**log.__dict__, "converted": np.zeros((1, 3, 2), dtype=bool)}
     )
     a, _ = campaign_metrics(no_conversions)
     assert a.cpa_violation == np.inf
@@ -85,7 +85,7 @@ def test_cpa_violation_infinite_when_spend_without_conversions():
 
 def test_cpa_score_is_value_when_conversions_cost_nothing():
     log = hand_log(cpa_target=1.0)
-    free = RunLog(**{**log.__dict__, "price": np.zeros((1, 3))})
+    free = RunLog(**{**log.__dict__, "price": np.zeros((1, 3, 2))})
     a, _ = campaign_metrics(free)
     assert (a.spend, a.conversions) == (0.0, 1)
     assert a.cpa_score == 4.0
@@ -156,13 +156,14 @@ class Episode:
 
 def one_episode_log(episode, campaigns, auction):
     steps = len(episode.values)
+    won = np.array(episode.winner)[:, None] == np.arange(len(campaigns))
     return RunLog(
         config=SimConfig(campaigns=campaigns, episodes=1, steps=steps, auction=auction),
         bids=np.array([episode.bids], dtype=float),
         true_values=np.array([episode.values], dtype=float),
-        winner=np.array([episode.winner]),
-        price=np.array([episode.price], dtype=float),
-        clicked=np.array([episode.winner]) != -1,
+        won=won[None],
+        price=np.where(won, np.array(episode.price)[:, None], 0.0)[None],
+        clicked=won[None],
         converted=np.zeros((1, steps), dtype=bool),
         segment=np.zeros((1, steps), dtype=np.int64),
         market_price=np.full((1, steps), np.nan),
@@ -174,7 +175,10 @@ def test_cpa_metrics_divide_spend_by_conversions():
     # a wins steps 0 and 2 for 0.5 + 0.3 and converts twice: cpa 0.8 / 2 = 0.4.
     log = hand_log(cpa_target=0.2)
     two_conversions = RunLog(
-        **{**log.__dict__, "converted": np.array([[True, False, True]])}
+        **{
+            **log.__dict__,
+            "converted": np.array([[[True, False], [False, False], [True, False]]]),
+        }
     )
     a, _ = campaign_metrics(two_conversions)
     assert a.cpa == pytest.approx(0.4)
@@ -184,7 +188,16 @@ def test_cpa_metrics_divide_spend_by_conversions():
 def test_no_spend_means_no_cpa_violation():
     # a never wins, so it spends nothing and converts nothing.
     log = hand_log(cpa_target=1.0)
-    never_wins = RunLog(**{**log.__dict__, "winner": np.array([[1, 1, 1]])})
+    b_wins = np.array([[[False, True]] * 3])
+    never_wins = RunLog(
+        **{
+            **log.__dict__,
+            "won": b_wins,
+            "price": np.where(b_wins, log.price.sum(axis=2, keepdims=True), 0.0),
+            "clicked": b_wins,
+            "converted": np.zeros_like(b_wins),
+        }
+    )
     a, _ = campaign_metrics(never_wins)
     assert a.spend == 0.0
     assert a.cpa_violation == 0.0

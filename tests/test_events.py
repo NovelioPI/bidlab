@@ -155,11 +155,11 @@ def test_event_changes_no_other_input():
 
 
 def event_mask(event, log, index):
-    won = log.winner == index
+    won = log.won[:, :, index]
     return {
         "impression": won,
-        "click": log.clicked & won,
-        "conversion": log.converted & won,
+        "click": log.clicked[:, :, index] & won,
+        "conversion": log.converted[:, :, index] & won,
     }[event]
 
 
@@ -187,9 +187,11 @@ def test_realized_value_per_event():
 def test_episode_report_counts_event():
     log, spies = three_events()
     for index, (event, spy) in enumerate(zip(EVENT_NAMES, spies, strict=True)):
-        won = log.winner == index
+        won = log.won[:, :, index]
         for episode, report in enumerate(spy.ends):
-            assert report.clicks == (log.clicked[episode] & won[episode]).sum()
+            assert (
+                report.clicks == (log.clicked[episode, :, index] & won[episode]).sum()
+            )
             events = event_mask(event, log, index)[episode].sum()
             assert report.realized_value == events * BASE_VALUES[event]
 

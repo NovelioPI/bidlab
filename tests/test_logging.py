@@ -389,7 +389,7 @@ def test_pid_logs_bid_multiplier():
     multiplier = log.logged["bidders.1.multiplier"]["pid"]
     assert multiplier.shape == (2, 50)
     assert len(np.unique(multiplier)) > 1
-    budget_left = 3.0 - np.cumsum(np.where(log.winner == 0, log.price, 0.0), axis=1)
+    budget_left = 3.0 - np.cumsum(log.price[:, :, 0], axis=1)
     before = np.concatenate([np.full((2, 1), 3.0), budget_left[:, :-1]], axis=1)
     # cumsum rounds differently from the simulator's running subtraction.
     uncapped = log.bids[:, :, 0] < before - 1e-9
@@ -466,7 +466,7 @@ def test_logging_leaves_run_unchanged():
         )
 
     on, off = (run(config(*campaigns(state), episodes=4)) for state in (True, False))
-    for name in ("bids", "price", "winner", "converted"):
+    for name in ("bids", "price", "won", "converted"):
         np.testing.assert_array_equal(getattr(on, name), getattr(off, name))
 
 
@@ -560,8 +560,10 @@ def test_reward_logged_in_update():
     campaign = Campaign("s", SurplusLogger(), budget=1e6, base_value=5.0)
     config = SimConfig(campaigns=[campaign], episodes=2, steps=20, auction=FirstPrice())
     log = run(config)
-    won = log.winner == 0
-    expected = np.where(won & log.converted, 5.0, 0.0) - np.where(won, log.price, 0.0)
+    won = log.won[:, :, 0]
+    expected = np.where(won & log.converted[:, :, 0], 5.0, 0.0) - np.where(
+        won, log.price[:, :, 0], 0.0
+    )
     np.testing.assert_array_equal(log.logged["reward"]["s"], expected)
     results = run_many(config, seeds=range(2))
     assert results.logged["reward"]["s"].shape == (2, 2, 20)

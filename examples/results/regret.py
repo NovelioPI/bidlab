@@ -42,9 +42,9 @@ if __name__ == "__main__":
     print(
         f"bids and true values per campaign: {log.bids.shape}, {log.true_values.shape}"
     )
-    print(f"winner, price, converted per step: {log.winner.shape}")
+    print(f"won, price, converted per step and campaign: {log.won.shape}")
     print(f"first segments: {log.segment[0, :3]}, logged: {dict(log.logged)}")
-    print(f"auctions with no winner: {(log.winner == -1).sum()}")
+    print(f"auctions with no winner: {(~log.won.any(axis=2)).sum()}")
     print(f"price paid: {log.price[log.converted].mean():.3f} on converted steps")
     row = bl.campaign_metrics(log)[0]
     print(
