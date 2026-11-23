@@ -86,6 +86,13 @@ class PidPacing(Bidder):
 
     @override
     def on_episode_start(self, campaign: "Campaign") -> None:
+        # The simulator passes the resolved budget; a hand call may not.
+        if campaign.budget is None:
+            raise ValueError(
+                f"campaign {campaign.name!r}: PidPacing needs a number budget; "
+                "the simulator resolves budget=None before on_episode_start"
+            )
+
         self.budget = campaign.budget
         self.updates = 0
         self.spent = 0.0

@@ -25,12 +25,20 @@ class Campaign:
         A bidder instance, such as ``bl.Stack(bl.OracleValue(), bl.PidPacing())``. The
         simulator deep-copies it once per run, so the object you pass never
         changes and every run starts from it.
-    budget : float
-        Budget per episode. Must be > 0.
     base_value : float
         What one event is worth to the advertiser; the event is ``event``. A
         bidder may use it as is or change it. Must be > 0. `OracleValue`
         multiplies it by the true chance of the event.
+    budget : float or None
+        Budget per episode, before ``budget_fraction``. Must be > 0. None
+        sizes it from the market: the mean cost per episode to win every
+        request in the campaign's segments, where a request costs the highest
+        of its market price, the auction's reserve and its floor. The run
+        replays its own market draws once before the first episode to find it.
+    budget_fraction : float, optional
+        Scales the budget, set or sized from the market; 1 by default. Must
+        be finite and > 0. Bidders get the scaled budget as
+        ``campaign.budget``, with ``budget_fraction`` 1.
     event : Event or {"impression", "click", "conversion"}, optional
         What the campaign pays for; ``"conversion"`` by default. Stored as an
         `Event`. Billing stays per impression for every event.
@@ -66,11 +74,12 @@ class Campaign:
 
     name: str
     bidder: Bidder
-    budget: float
+    budget: float | None
     base_value: float
     event: EventName = Event.CONVERSION
     cpa_target: float | None = None
     segments: Sequence[str] | None = None
+    budget_fraction: float = 1.0
 
     def __post_init__(self) -> None:
         # Callers can pass any object at run time; the type hint does not check it.
@@ -100,6 +109,13 @@ class Campaign:
 
             object.__setattr__(self, field_name, float(number))
 
+        if not (math.isfinite(self.budget_fraction) and self.budget_fraction > 0):
+            raise ValueError(
+                f"campaign {self.name!r}: budget_fraction must be finite and > 0, "
+                f"got {self.budget_fraction}"
+            )
+
+        object.__setattr__(self, "budget_fraction", float(self.budget_fraction))
         self._check_event()
         self._check_segments()
 
