@@ -46,7 +46,8 @@ print(results.columns[:4])  # ('seed', 'campaign', 'spend', 'wins')
 | Field | Shape | Holds |
 |---|---|---|
 | `bids`, `true_values` | (episodes, steps, campaigns) | Bids after capping, true values |
-| `winner`, `price`, `clicked`, `converted`, `segment` | (episodes, steps) | The winner's index or -1, the price paid, the click, the conversion, the segment index |
+| `won`, `price`, `clicked`, `converted` | (episodes, steps, campaigns) | Whether each campaign won, the price it paid (0 if it lost), its click and its conversion |
+| `segment`, `market_price`, `floor` | (episodes, steps) | The segment index, the market price (NaN if none), the market floor |
 | `logged` | per name and campaign | Values bidders logged, such as their own rewards |
 | `config` | | The `SimConfig` that made it |
 

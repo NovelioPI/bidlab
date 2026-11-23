@@ -47,6 +47,8 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | revenue | Σ priceₜ over all steps: only campaigns' payments, since an auction sold outside has price 0 |
 | welfare | Σ vᵢₜ of the winner, over steps a campaign won |
 
+Both are NaN with `SimConfig(competing=False)`. Each campaign then buys the impression in its own auction, so no single sale exists.
+
 ## Segment metrics
 
 `results.segment_rows` holds these columns, one row per seed, campaign, and market segment. Each value is a per-episode sum over the segment's steps, averaged over episodes.
@@ -66,7 +68,7 @@ For one seed and campaign, each metric summed over segments equals the main tabl
 
 Regret compares the bidder with the best fixed multiplier in hindsight.
 
-1. Hold every other bidder's logged bids, the market price and the floor fixed.
+1. Hold every other bidder's logged bids, the market price and the floor fixed. With `competing=False`, hold only the market price and the floor: other campaigns are not in bidder i's auction, so the highest other bid is 0.
 2. For each multiplier m in 0, 0.05, …, 3, replay the episode with bidder i bidding m × vᵢₜ.
 3. Cap each replayed bid at the replayed remaining budget.
 4. A replayed bid wins when it is at or above rₜ, and strictly above both the highest other bid and mₜ. A bidder with `segments` cannot win outside them in the replay either.

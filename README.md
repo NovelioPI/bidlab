@@ -46,7 +46,7 @@ print(results.summary())
 1. The market draws the impression's public features and each campaign's conversion probability pᵢ, and optionally a click probability qᵢ. The default market, `LogisticMarket`, uses pᵢ = σ(x · φᵢ + βᵢ) for a random feature vector x, with no click stage (qᵢ = 1).
 2. Each bidder's `forward` gets the inputs it names, such as `time`, `budget_left`, `floor`, `market` and each public feature. The simulator passes no value: each bidder estimates its own. `bl.OracleValue` reads the truth from `market`: the campaign's base value w times the chance of its event, which is 1 for an impression, qᵢ for a click, and qᵢ × pᵢ for a conversion, the default. A bid policy such as `bl.PidPacing` sits after it in a `bl.Stack`.
 3. Each bid is capped at the bidder's remaining budget. The bidder does not see that amount; it tracks its own spend.
-4. The auction picks a winner: `FirstPrice` or `SecondPrice`, with an optional reserve price. A market can add a floor and a hidden market price, the highest bid from outside; a campaign must beat it to win.
+4. The auction picks a winner: `FirstPrice` or `SecondPrice`, with an optional reserve price. A market can add a floor and a hidden market price, the highest bid from outside; a campaign must beat it to win. With `SimConfig(competing=False)`, each campaign bids alone against the market price on one shared draw, so bidders can be compared on the same traffic.
 5. The winner is clicked with probability q, then converts with probability p of the winner.
 6. Each bidder gets its own `BidResult`: the auction's `time`, its bid, and whether it won. It also holds the price it paid, whether it was clicked and converted, and its `realized_value`. A bidder computes its own reward from it. A loser never sees the winning price.
 
@@ -101,6 +101,7 @@ Each script runs on its own, prints its results, and ends with the answer to its
 |---|---|
 | [getting_started/basic.py](https://github.com/NovelioPI/bidlab/blob/main/examples/getting_started/basic.py) | When the budget is tight, does PID pacing earn more surplus than truthful bidding? |
 | [campaigns/events.py](https://github.com/NovelioPI/bidlab/blob/main/examples/campaigns/events.py) | With the same budget, does a click campaign pay less per click than a conversion campaign? |
+| [campaigns/benchmark.py](https://github.com/NovelioPI/bidlab/blob/main/examples/campaigns/benchmark.py) | On one shared market, does PID pacing earn more surplus than truthful bidding? |
 | [bidders/segment_rate.py](https://github.com/NovelioPI/bidlab/blob/main/examples/bidders/segment_rate.py) | Does a bidder that counts conversions per segment learn that sports converts better than news? |
 | [bidders/value_estimators.py](https://github.com/NovelioPI/bidlab/blob/main/examples/bidders/value_estimators.py) | Does a two-stage model on the public features estimate conversions better than counting? |
 | [bidders/oracle_noise.py](https://github.com/NovelioPI/bidlab/blob/main/examples/bidders/oracle_noise.py) | Does noise in the value estimate cost a truthful bidder surplus? |
