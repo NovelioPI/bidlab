@@ -554,6 +554,27 @@ def test_seed_bar_shows_every_progress_call(capsys: pytest.CaptureFixture[str]):
     ]
 
 
+def test_finished_seed_frees_its_line_before_its_seed_end(
+    capsys: pytest.CaptureFixture[str],
+):
+    # With 2 workers, seed 1 can finish and seed 2 start while seed 0 still runs.
+    bar = ProgressBar()
+    empty = Results(columns=(), rows=())
+    bar.on_seeds_start(config(*two(), steps=30), [0, 1, 2])
+    bar.on_seed_progress(0, 0, 4)
+    for episode in range(3):
+        bar.on_seed_progress(1, episode, 29)
+    bar.on_seed_progress(2, 0, 4)
+    err = capsys.readouterr().err
+    for seed in (0, 1, 2):
+        bar.on_seed_end(seed, empty)
+    bar.on_seeds_end(empty)
+    # tqdm moves down one newline per line below the seeds bar.
+    lines = [len(down) for down in re.findall(r"(\n+)\rseed \d episode", err)]
+    assert max(lines) == 2
+    assert re.search(r"(?<!\n)\n\n\rseed 2 episode 1/3 ", err)
+
+
 def test_seeds_end_clears_open_seed_bars(capsys: pytest.CaptureFixture[str]):
     err = bar_text(capsys, ("progress", 1, 0), ("progress", 2, 0))
     assert len(re.findall(CLEARED_LINE, err)) == 2
