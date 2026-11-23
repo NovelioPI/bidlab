@@ -11,7 +11,7 @@ STEPS_PER_DAY = 100
 DAY_STEPS = 60
 
 
-class DayAndNight(bl.markets.Market):
+class DayAndNight(bl.Market):
     """Conversion rates are higher by day; each bidder's rate varies per step."""
 
     @property

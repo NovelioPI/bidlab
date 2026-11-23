@@ -39,6 +39,7 @@ from bidlab.bidders import (
 )
 from bidlab.callbacks import Callback
 from bidlab.config import Campaign, Feedback, SimConfig
+from bidlab.markets import Market
 from bidlab.metrics import campaign_metrics, platform_metrics, regret, segment_metrics
 from bidlab.results import Results
 from bidlab.runner import run_many
@@ -56,6 +57,7 @@ __all__ = [
     "Feedback",
     "FirstPrice",
     "Linear",
+    "Market",
     "MarketTruth",
     "OracleValue",
     "PidPacing",

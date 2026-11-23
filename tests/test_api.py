@@ -237,6 +237,7 @@ PUBLIC_NAMES = {
     "Stack",
     "Campaign",
     "markets",
+    "Market",
     "FirstPrice",
     "SecondPrice",
     "Bidder",

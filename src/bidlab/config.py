@@ -237,7 +237,7 @@ class SimConfig:
         Seed for every random stream. `run_many` replaces it per seed.
     auction : FirstPrice or SecondPrice, optional
         The auction rule. Defaults to `SecondPrice` with no reserve.
-    market : bidlab.markets.Market, optional
+    market : bidlab.Market, optional
         Draws features, click and conversion probabilities. Defaults to
         `bidlab.markets.LogisticMarket`.
     horizon_hours : float, optional
@@ -323,7 +323,7 @@ class SimConfig:
         market: object = self.market
         if not isinstance(market, Market):
             raise TypeError(
-                f"market must be a bidlab.markets.Market, got {type(market).__name__}"
+                f"market must be a bidlab.Market, got {type(market).__name__}"
             )
 
         feedback: object = self.feedback
