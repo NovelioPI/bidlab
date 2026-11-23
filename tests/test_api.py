@@ -7,11 +7,19 @@ import tomllib
 from pathlib import Path
 from typing import override
 
+import numpy as np
 import pytest
 from scipy import stats
 
 from bidlab.auctions import FirstPrice, SecondPrice
-from bidlab.bidders import Linear, OracleValue, PidPacing, Stack, UcbMultiplier
+from bidlab.bidders import (
+    Bidder,
+    Linear,
+    OracleValue,
+    PidPacing,
+    Stack,
+    UcbMultiplier,
+)
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import IndependentValues, LogisticMarket, Segment, Segmented
 from bidlab.runner import run_many
@@ -346,3 +354,93 @@ def relative_links(markdown: str) -> list[str]:
 def test_readme_links_work_on_pypi():
     # PyPI shows the README without the repo, so a relative link breaks there.
     assert relative_links((ROOT / "README.md").read_text()) == []
+
+
+class Floor(Bidder):
+    def __init__(self, minimum: float):
+        self.minimum = minimum
+
+    @override
+    def forward(self, value: float) -> float:
+        return max(value, self.minimum)
+
+
+class Hidden(Bidder):
+    def __init__(self, minimum: float):
+        self.lowest = minimum
+
+    @override
+    def forward(self, value: float) -> float:
+        return max(value, self.lowest)
+
+
+@pytest.mark.parametrize(
+    ("bidder", "text"),
+    [
+        (Stack(OracleValue(), PidPacing()), "Stack(OracleValue(), PidPacing())"),
+        (
+            PidPacing(kp=5, multiplier_range=(0.0, 3.0)),
+            "PidPacing(kp=5.0, multiplier_range=(0.0, 3.0))",
+        ),
+        (UcbMultiplier(max_multiplier=3.0), "UcbMultiplier(max_multiplier=3.0)"),
+        (Linear(multiplier=0.5), "Linear(multiplier=0.5)"),
+        (OracleValue(noise=0.1), "OracleValue(noise=0.1)"),
+        (
+            Stack(OracleValue(), Stack(Linear(), Floor(0.3))),
+            "Stack(OracleValue(), Stack(Linear(), Floor(minimum=0.3)))",
+        ),
+    ],
+)
+def test_bidder_repr(bidder: Bidder, text: str):
+    assert repr(bidder) == text
+
+
+def test_bidder_repr_needs_stored_arguments():
+    hidden = Hidden(0.3)
+    assert repr(hidden) == object.__repr__(hidden)
+
+
+def test_config_repr_shows_bidders():
+    campaign = Campaign("t", Stack(OracleValue(), Linear()), budget=10, base_value=5)
+    assert "bidder=Stack(OracleValue(), Linear())," in repr(
+        SimConfig(campaigns=[campaign])
+    )
+
+
+class Weights(Bidder):
+    def __init__(self, weights: object = None):
+        self.weights = weights
+
+    @override
+    def forward(self, value: float) -> float:
+        return value
+
+
+class FirstOnly(Bidder):
+    def __init__(self, *bidders: Bidder):
+        self.bidders = bidders[0]
+
+    @override
+    def forward(self, value: float) -> float:
+        return value
+
+
+def test_bidder_repr_edge_arguments():
+    assert repr(Weights(np.array([1.0, 2.0]))) == "Weights(weights=array([1., 2.]))"
+    assert repr(Weights()) == "Weights()"
+    first = FirstOnly(Linear())
+    assert repr(first) == object.__repr__(first)
+
+
+class Options(Bidder):
+    def __init__(self, **options: float):
+        self.options = options
+
+    @override
+    def forward(self, value: float) -> float:
+        return value
+
+
+def test_bidder_repr_with_keyword_options():
+    options = Options(scale=2.0)
+    assert repr(options) == object.__repr__(options)
