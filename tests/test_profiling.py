@@ -17,7 +17,6 @@ from bidlab.callbacks import Callback
 from bidlab.config import Campaign, Feedback, SimConfig
 from bidlab.markets import LogisticMarket, Segment, Segmented
 from bidlab.profiling import HookTime, Profile
-from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import BidResult, Conversion, EpisodeReport
 
@@ -210,7 +209,7 @@ def test_psutil_is_a_runtime_dependency():
 
 def test_no_profile_by_default():
     assert run(_plain(), progress_bar=False).profile is None
-    assert run_many(_plain(), seeds=[0, 1], progress_bar=False).profile is None
+    assert run(_plain(), seed=[0, 1], progress_bar=False).profile is None
 
 
 @pytest.mark.parametrize("bad", [1, "yes", None])
@@ -224,9 +223,9 @@ def test_profiler_must_be_bool(bad: object):
     # run_many checks before it starts, so no callback sees a run that cannot happen.
     starts = Starts()
     with pytest.raises(TypeError, match=message):
-        run_many(
+        run(
             _plain(),
-            seeds=[0],
+            seed=[0],
             callbacks=[starts],
             progress_bar=False,
             profiler=profiler,
@@ -515,8 +514,8 @@ def test_run_many_profiles_in_seed_order(workers: int):
         steps=50,
     )
     seeds = [3, 0, 7]
-    profiled = run_many(
-        config, seeds=seeds, workers=workers, progress_bar=False, profiler=True
+    profiled = run(
+        config, seed=seeds, workers=workers, progress_bar=False, profiler=True
     )
     assert profiled.profile is not None
     expected = [
@@ -529,10 +528,10 @@ def test_run_many_profiles_in_seed_order(workers: int):
     assert [_calls(profile, "news") for profile in profiled.profile] == expected
     assert len({calls[("", "forward")] for calls in expected}) == len(seeds)
 
-    plain = run_many(config, seeds=seeds, workers=workers, progress_bar=False)
+    plain = run(config, seed=seeds, workers=workers, progress_bar=False)
     assert plain.profile is None
     assert profiled.equals(plain)
-    one_worker = run_many(config, seeds=seeds, progress_bar=False, profiler=True)
+    one_worker = run(config, seed=seeds, progress_bar=False, profiler=True)
     assert profiled.equals(one_worker)
 
 
@@ -595,7 +594,7 @@ def test_profile_save_csv_round_trip(tmp_path: Path):
 
 def test_results_save_profile_csv(tmp_path: Path):
     seeds = [3, 0]
-    results = run_many(_plain(), seeds=seeds, progress_bar=False, profiler=True)
+    results = run(_plain(), seed=seeds, progress_bar=False, profiler=True)
     assert results.profile is not None
     assert [profile.seed for profile in results.profile] == seeds
     path = tmp_path / "profiles.csv"
@@ -610,7 +609,7 @@ def test_results_save_profile_csv(tmp_path: Path):
         start += len(profile.rows)
     assert start == len(lines)
 
-    plain = run_many(_plain(), seeds=seeds, progress_bar=False)
+    plain = run(_plain(), seed=seeds, progress_bar=False)
     missing = tmp_path / "missing.csv"
     with pytest.raises(ValueError, match="profiler=True"):
         plain.save_profile_csv(missing)

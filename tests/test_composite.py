@@ -7,7 +7,6 @@ import pytest
 from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import Segment, Segmented
-from bidlab.runner import run_many
 from bidlab.simulator import run
 from bidlab.types import BidResult, EpisodeReport
 
@@ -425,16 +424,16 @@ def test_child_draws_leave_others_unchanged():
 
 def test_composite_parallel_equals_serial():
     campaign = Campaign("m", Stack(Mixer(), PidPacing()), budget=5.0, base_value=5.0)
-    serial = run_many(config(campaign, other()), seeds=range(3))
-    parallel = run_many(config(campaign, other()), seeds=range(3), workers=2)
+    serial = run(config(campaign, other()), seed=range(3))
+    parallel = run(config(campaign, other()), seed=range(3), workers=2)
     assert parallel.equals(serial)
 
 
 def test_user_tree_unchanged():
     mixer = Mixer()
-    run_many(
+    run(
         config(Campaign("m", Stack(mixer), budget=1e6, base_value=5.0), other()),
-        seeds=range(2),
+        seed=range(2),
     )
     assert mixer.forwards == 0
     assert not any(hasattr(node, "rng") for _, node in mixer.named_bidders())

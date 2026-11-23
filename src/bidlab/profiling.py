@@ -230,7 +230,7 @@ def write_profile_csv(path: str | Path, profiles: Iterable[Profile]) -> None:
 
 
 def check_profiler(profiler: object) -> None:
-    """Reject a ``profiler`` argument that is not a bool; `run` and `run_many` call this.
+    """Reject a ``profiler`` argument that is not a bool; `run` calls this.
 
     Parameters
     ----------

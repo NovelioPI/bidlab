@@ -24,7 +24,6 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.markets import IndependentValues, LogisticMarket, Segment, Segmented
 from bidlab.metrics import platform_metrics
 from bidlab.results import Results
-from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import BidResult
 
@@ -122,7 +121,7 @@ def test_run_log_fingerprint(kind):
 
 def test_results_fingerprint(tmp_path):
     path = tmp_path / "results.csv"
-    results = run_many(fingerprint_config("second"), seeds=[0, 1])
+    results = run(fingerprint_config("second"), seed=[0, 1])
     # Later columns (features 016, 017) came after this hash; the old ones keep it.
     recorded = Results(
         columns=RESULTS_HASH_COLUMNS,
@@ -326,7 +325,6 @@ PUBLIC_NAMES = {
     "Event",
     "RunLog",
     "run",
-    "run_many",
     "Results",
     "campaign_metrics",
     "platform_metrics",
@@ -397,7 +395,7 @@ def test_removed_interfaces():
     assert pyproject["project"]["name"] == "bidlab"
 
 
-@pytest.mark.parametrize("name", ["Brief", "BidRequest"])
+@pytest.mark.parametrize("name", ["Brief", "BidRequest", "run_many"])
 def test_removed_names(name):
     assert not hasattr(importlib.import_module("bidlab"), name)
     assert not hasattr(importlib.import_module("bidlab.types"), name)

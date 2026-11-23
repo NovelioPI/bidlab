@@ -5,6 +5,7 @@ from collections import deque
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
+from typing import overload
 
 import numpy as np
 import numpy.typing as npt
@@ -17,6 +18,7 @@ from bidlab.config import Campaign, SimConfig
 from bidlab.logs import LogBook, Logs
 from bidlab.markets import MarketDraw
 from bidlab.profiling import Profile, Recorder, check_profiler
+from bidlab.results import Results
 from bidlab.types import (
     HOURS_PER_DAY,
     SECONDS_PER_HOUR,
@@ -167,44 +169,95 @@ class _MarketLog:
         )
 
 
+@overload
 def run(
     config: SimConfig,
     seed: int | np.integer = 0,
     *,
+    workers: int = 1,
     callbacks: Sequence[Callback] = (),
     progress_bar: bool = True,
     profiler: bool = False,
-) -> RunLog:
-    """Simulate every episode of ``config`` and return the full log.
+) -> RunLog: ...
 
+
+@overload
+def run(
+    config: SimConfig,
+    seed: Iterable[int | np.integer],
+    *,
+    workers: int = 1,
+    callbacks: Sequence[Callback] = (),
+    progress_bar: bool = True,
+    profiler: bool = False,
+) -> Results: ...
+
+
+def run(
+    config: SimConfig,
+    seed: int | np.integer | Iterable[int | np.integer] = 0,
+    *,
+    workers: int = 1,
+    callbacks: Sequence[Callback] = (),
+    progress_bar: bool = True,
+    profiler: bool = False,
+) -> RunLog | Results:
+    """Simulate ``config`` once per seed: one seed gives a log, a list a table.
+
+    With an int seed, `run` simulates every episode and returns the full log.
     On one OS and CPU type, the same config and seed give a bit-identical
     log. Each bidder sees only its own inputs and results.
+
+    With a seed list, it runs each seed and returns `Results`: one row per
+    seed and campaign, ordered by seed in the order given, then campaign, each
+    averaged over the episodes. ``budget_out`` is averaged only over the
+    episodes where the budget ran out, and is NaN when it never did. A list of
+    one seed also returns `Results`.
 
     Parameters
     ----------
     config : SimConfig
         The simulation.
-    seed : int or numpy.integer, optional
-        Seed for every random stream, recorded in `RunLog.seed` as an int.
+    seed : int or Iterable[int], optional
+        An int (or ``numpy.integer``) seeds every random stream and is
+        recorded in `RunLog.seed` as an int. Any other iterable of ints, such
+        as a list, ``range`` or numpy array, runs once per seed.
+    workers : int, optional
+        Number of processes for a seed list. ``workers > 1`` gives the same
+        results as ``workers=1``.
     callbacks : Sequence[Callback], optional
-        Read-only hooks called at run start, at each step end, at each
-        episode end and at run end, in this order.
+        Read-only hooks, all called in the main process. An int seed calls
+        the run hooks: run start, each step end, each episode end and run
+        end, in this order. A seed list calls only the seed hooks: see
+        `Callback`.
     progress_bar : bool, optional
         Show a `ProgressBar` on stderr, after the other callbacks.
     profiler : bool, optional
-        Time every bidder hook and sample memory into `RunLog.profile`. The
-        log's arrays stay the same bit for bit.
+        Time every bidder hook and sample memory into `RunLog.profile`, or
+        into `Results.profile` with one `Profile` per seed. The log's arrays
+        stay the same bit for bit. A worker profiles its own seeds, so memory
+        is per worker process.
+
+    Returns
+    -------
+    RunLog or Results
+        A `RunLog` for an int seed; for a seed list, the campaign table, with
+        the per-segment table in ``.segment_rows``.
 
     Raises
     ------
     TypeError
-        If ``seed`` is not an int, a bidder cannot be copied for a fresh run,
-        a callback is not a `Callback` instance, or ``profiler`` is not a bool.
+        If ``seed`` is neither an int nor an iterable of ints (a bool is
+        neither), a bidder cannot be copied for a fresh run, or with
+        ``workers > 1`` cannot be pickled with cloudpickle, a callback is
+        not a `Callback` instance, or ``profiler`` is not a bool.
     ValueError
-        If the market yields a draw with the wrong shape, a probability
-        outside [0, 1], a market price or floor that is negative, NaN or
-        infinite, a feature named like a built-in input, or an unknown
-        segment; or if a campaign with ``budget=None`` has a market cost of 0.
+        If ``workers`` is below 1, or above 1 with an int seed; if the seed
+        list is empty; if the market yields a draw with the wrong shape, a
+        probability outside [0, 1], a market price or floor that is
+        negative, NaN or infinite, a feature named like a built-in input, or
+        an unknown segment; or if a campaign with ``budget=None`` has a
+        market cost of 0.
     RuntimeError
         If the market stops yielding draws before the run ends, or its draws
         differ from the replay that sized a ``budget=None`` campaign, because
@@ -213,15 +266,27 @@ def run(
     Examples
     --------
     >>> import bidlab as bl
-    >>> bidder = bl.Stack(bl.OracleValue(), bl.Linear())
     >>> config = bl.SimConfig(
-    ...     campaigns=[bl.Campaign("t", bidder, budget=10, base_value=5)],
+    ...     campaigns=[
+    ...         bl.Campaign(
+    ...             "a",
+    ...             bl.Stack(bl.OracleValue(), bl.Linear()),
+    ...             budget=10,
+    ...             base_value=5,
+    ...         ),
+    ...         bl.Campaign(
+    ...             "b",
+    ...             bl.Stack(bl.OracleValue(), bl.PidPacing()),
+    ...             budget=10,
+    ...             base_value=5,
+    ...         ),
+    ...     ],
     ...     episodes=2,
     ...     steps=50,
     ... )
     >>> log = bl.run(config)
     >>> log.bids.shape, log.won.shape
-    ((2, 50, 1), (2, 50, 1))
+    ((2, 50, 2), (2, 50, 2))
     >>> bool((bl.run(config).bids == log.bids).all())
     True
     >>> bl.run(config, seed=42).seed
@@ -229,9 +294,26 @@ def run(
     >>> profiled = bl.run(config, profiler=True)
     >>> bool((profiled.bids == log.bids).all()), profiled.profile.steps
     (True, 100)
+    >>> results = bl.run(config, seed=[0, 1])
+    >>> [(row["seed"], row["campaign"]) for row in results.rows]
+    [(0, 'a'), (0, 'b'), (1, 'a'), (1, 'b')]
+    >>> results.equals(bl.run(config, seed=[0, 1], workers=2))
+    True
     """
+    if workers < 1:
+        raise ValueError(f"workers must be >= 1, got {workers}")
+
     if isinstance(seed, bool) or not isinstance(seed, int | np.integer):
-        raise TypeError(f"seed must be an int, got {type(seed).__name__}")
+        # Imported here because runner runs each seed through this function.
+        from bidlab.runner import run_seeds
+
+        return run_seeds(config, seed, workers, callbacks, progress_bar, profiler)
+
+    if workers > 1:
+        raise ValueError(
+            f"workers={workers} needs a seed list, got the int seed {seed}; "
+            "pass seed=[...] to run seeds in parallel"
+        )
 
     check_profiler(profiler)
     checked = checked_callbacks(callbacks)

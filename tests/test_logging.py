@@ -9,7 +9,6 @@ from bidlab.auctions import FirstPrice
 from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack, UcbMultiplier
 from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
-from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import BidResult, EpisodeReport
 
@@ -507,7 +506,7 @@ def per_auction() -> Campaign:
 
 
 def test_run_many_stacks_seeds():
-    results = run_many(config(per_auction(), episodes=2), seeds=range(3))
+    results = run(config(per_auction(), episodes=2), seed=range(3))
     stacked = results.logged["lam"]["a"]
     assert stacked.shape == (3, 2, 50)
     for seed in range(3):
@@ -519,13 +518,13 @@ def test_run_many_episode_values():
     campaign = Campaign(
         "ucb", Stack(OracleValue(), UcbMultiplier()), budget=1e6, base_value=5.0
     )
-    results = run_many(config(campaign, episodes=4), seeds=range(3))
+    results = run(config(campaign, episodes=4), seed=range(3))
     assert results.logged["bidders.1.multiplier"]["ucb"].shape == (3, 4)
 
 
 def test_run_many_missing_seed_nan():
     campaign = Campaign("s", Sometimes(), budget=1e6, base_value=5.0)
-    stacked = run_many(config(campaign, episodes=1), seeds=range(8)).logged["x"]["s"]
+    stacked = run(config(campaign, episodes=1), seed=range(8)).logged["x"]["s"]
     logged = [
         "x" in run(config(campaign, episodes=1), seed=seed).logged for seed in range(8)
     ]
@@ -536,8 +535,8 @@ def test_run_many_missing_seed_nan():
 
 def test_run_many_workers_logs_equal():
     pid = Campaign("pid", Stack(OracleValue(), PidPacing()), budget=3.0, base_value=5.0)
-    serial = run_many(config(pid, per_auction()), seeds=range(3))
-    parallel = run_many(config(pid, per_auction()), seeds=range(3), workers=2)
+    serial = run(config(pid, per_auction()), seed=range(3))
+    parallel = run(config(pid, per_auction()), seed=range(3), workers=2)
     assert parallel.equals(serial)
     assert set(parallel.logged) == {"bidders.1.multiplier", "lam"}
     for name in parallel.logged:
@@ -548,7 +547,7 @@ def test_run_many_workers_logs_equal():
 
 
 def test_equals_compares_logs():
-    results = run_many(config(per_auction()), seeds=range(2))
+    results = run(config(per_auction()), seed=range(2))
     changed = {"lam": {"a": results.logged["lam"]["a"] + 1.0}}
     other = Results(columns=results.columns, rows=results.rows, logged=changed)
     same = Results(columns=results.columns, rows=results.rows, logged=results.logged)
@@ -578,5 +577,5 @@ def test_reward_logged_in_update():
         won, log.price[:, :, 0], 0.0
     )
     np.testing.assert_array_equal(log.logged["reward"]["s"], expected)
-    results = run_many(config, seeds=range(2))
+    results = run(config, seed=range(2))
     assert results.logged["reward"]["s"].shape == (2, 2, 20)

@@ -228,8 +228,8 @@ def test_segments_under_competing_false():
 
 def test_workers_match_under_competing_false():
     config = compared(mixed_campaigns(), episodes=2, steps=100)
-    serial = bl.run_many(config, seeds=range(2), progress_bar=False)
-    parallel = bl.run_many(config, seeds=range(2), workers=2, progress_bar=False)
+    serial = bl.run(config, seed=range(2), progress_bar=False)
+    parallel = bl.run(config, seed=range(2), workers=2, progress_bar=False)
     assert serial.equals(parallel)
 
 
@@ -238,8 +238,8 @@ def test_platform_metrics_are_nan():
     rows = bl.platform_metrics(bl.run(config, progress_bar=False, seed=SEED))
     assert [row.episode for row in rows] == [0, 1]
     assert all(np.isnan(row.revenue) and np.isnan(row.welfare) for row in rows)
-    results = bl.run_many(config, seeds=range(2), progress_bar=False)
+    results = bl.run(config, seed=range(2), progress_bar=False)
     assert all(
         np.isnan(row["revenue"]) and np.isnan(row["welfare"]) for row in results.rows
     )
-    assert results.equals(bl.run_many(config, seeds=range(2), progress_bar=False))
+    assert results.equals(bl.run(config, seed=range(2), progress_bar=False))

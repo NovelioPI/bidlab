@@ -22,7 +22,7 @@ Examples
 ...     episodes=2,
 ...     steps=100,
 ... )
->>> results = bl.run_many(config, seeds=range(2))
+>>> results = bl.run(config, seed=range(2))
 >>> len(results)
 4
 """
@@ -43,7 +43,6 @@ from bidlab.markets import Market
 from bidlab.metrics import campaign_metrics, platform_metrics, regret, segment_metrics
 from bidlab.profiling import Profile
 from bidlab.results import Results
-from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import BidResult, Conversion, EpisodeReport, Event, MarketTruth
 
@@ -76,6 +75,5 @@ __all__ = [
     "platform_metrics",
     "regret",
     "run",
-    "run_many",
     "segment_metrics",
 ]

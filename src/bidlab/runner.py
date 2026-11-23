@@ -1,4 +1,4 @@
-"""Run one simulation per seed and collect the metrics in a table."""
+"""Run one simulation per seed of a seed list and collect the metrics in a table."""
 
 import dataclasses
 import math
@@ -50,91 +50,29 @@ class _SeedRows:
     profile: Profile | None
 
 
-def run_many(
+def run_seeds(
     config: SimConfig,
-    seeds: Iterable[int],
-    workers: int = 1,
-    callbacks: Sequence[Callback] = (),
-    progress_bar: bool = True,
-    profiler: bool = False,
+    seeds: object,
+    workers: int,
+    callbacks: Sequence[Callback],
+    progress_bar: bool,
+    profiler: bool,
 ) -> Results:
-    """Run each seed; rows are ordered by seed, then bidder.
-
-    Each row holds one bidder's metrics for one seed, averaged over the
-    episodes. ``budget_out`` is averaged only over the episodes where the
-    budget ran out, and is NaN when it never did. ``workers > 1`` runs seeds
-    in parallel processes and gives the same results as ``workers=1``.
-
-    Parameters
-    ----------
-    config : SimConfig
-        The simulation, run once per seed.
-    seeds : Iterable[int]
-        One run per seed.
-    workers : int, optional
-        Number of processes.
-    callbacks : Sequence[Callback], optional
-        Read-only hooks, all called in the main process:
-        `Callback.on_run_many_start` before the first seed,
-        `Callback.on_seed_end` after each seed in seed order, and
-        `Callback.on_run_many_end` with the results.
-    progress_bar : bool, optional
-        Show a `ProgressBar` that counts seeds on stderr, after the other
-        callbacks. Each seed's own run shows no step bar.
-    profiler : bool, optional
-        Profile each seed's run, as in `run`, into `Results.profile`. A
-        worker profiles its own seeds, so memory is per worker process.
-
-    Returns
-    -------
-    Results
-        The bidder table, with the per-segment table in ``.segment_rows``.
+    """Run ``config`` once per seed for `run`, which documents every argument.
 
     Raises
     ------
-    ValueError
-        If ``workers`` is below 1.
     TypeError
-        If ``workers > 1`` and a bidder cannot be pickled with cloudpickle, a
-        callback is not a `Callback` instance, or ``profiler`` is not a bool.
-
-    Examples
-    --------
-    >>> import bidlab as bl
-    >>> config = bl.SimConfig(
-    ...     campaigns=[
-    ...         bl.Campaign(
-    ...             "a",
-    ...             bl.Stack(bl.OracleValue(), bl.Linear()),
-    ...             budget=10,
-    ...             base_value=5,
-    ...         ),
-    ...         bl.Campaign(
-    ...             "b",
-    ...             bl.Stack(bl.OracleValue(), bl.PidPacing()),
-    ...             budget=10,
-    ...             base_value=5,
-    ...         ),
-    ...     ],
-    ...     episodes=2,
-    ...     steps=50,
-    ... )
-    >>> results = bl.run_many(config, seeds=[0, 1])
-    >>> [(row["seed"], row["campaign"]) for row in results.rows]
-    [(0, 'a'), (0, 'b'), (1, 'a'), (1, 'b')]
-    >>> profiled = bl.run_many(config, seeds=[0, 1], profiler=True)
-    >>> len(profiled.profile), profiled.equals(results)
-    (2, True)
+        If ``seeds`` is not an iterable of ints, or as in `run`.
+    ValueError
+        If ``seeds`` is empty.
     """
-    if workers < 1:
-        raise ValueError(f"workers must be >= 1, got {workers}")
-
+    seed_list = _seed_list(seeds)
     check_profiler(profiler)
     checked = checked_callbacks(callbacks)
     if progress_bar:
         checked = with_progress_bar(checked)
 
-    seed_list = list(seeds)
     for callback in checked:
         callback.on_run_many_start(config, tuple(seed_list))
 
@@ -154,6 +92,28 @@ def run_many(
         callback.on_run_many_end(results)
 
     return results
+
+
+def _seed_list(seeds: object) -> list[int]:
+    # A str is iterable, but its characters are no seeds.
+    if isinstance(seeds, bool | str | bytes) or not isinstance(seeds, Iterable):
+        raise TypeError(
+            f"seed must be an int or an iterable of ints, got {type(seeds).__name__}"
+        )
+
+    seed_list: list[int] = []
+    for seed in seeds:
+        if isinstance(seed, bool) or not isinstance(seed, int | np.integer):
+            raise TypeError(
+                f"a seed list must hold only ints, got {type(seed).__name__}"
+            )
+
+        seed_list.append(int(seed))
+
+    if not seed_list:
+        raise ValueError("the seed list is empty; pass at least one seed")
+
+    return seed_list
 
 
 def _collect(

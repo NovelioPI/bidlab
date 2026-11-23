@@ -7,7 +7,6 @@ from bidlab import simulator
 from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
 from bidlab.config import Campaign, SimConfig
 from bidlab.markets import LogisticMarket
-from bidlab.runner import run_many
 from bidlab.simulator import run
 from bidlab.types import MarketTruth
 
@@ -198,16 +197,16 @@ def test_stack_defines_only_init_and_forward():
 def test_each_run_starts_fresh():
     Counter.reports.clear()
     campaign = Campaign("counted", Counter(), budget=1e6, base_value=5.0)
-    run_many(config(campaign, other()), seeds=range(3))
+    run(config(campaign, other()), seed=range(3))
     assert Counter.reports == [50, 100] * 3
 
 
 def test_user_stage_object_unchanged():
     model = {"weights": [1.0, 2.0]}
     bidder = Holds(model)
-    run_many(
+    run(
         config(Campaign("m", Stack(bidder), budget=1e6, base_value=5.0), other()),
-        seeds=range(2),
+        seed=range(2),
     )
     assert bidder.forwards == 0
     assert bidder.model is model and model == {"weights": [1.0, 2.0]}
@@ -258,8 +257,8 @@ def test_stage_class_rejected():
 
 def test_stack_parallel_equals_serial():
     campaign = Campaign("j", Stack(Jitter(), PidPacing()), budget=5.0, base_value=5.0)
-    serial = run_many(config(campaign, other()), seeds=range(3))
-    parallel = run_many(config(campaign, other()), seeds=range(3), workers=2)
+    serial = run(config(campaign, other()), seed=range(3))
+    parallel = run(config(campaign, other()), seed=range(3), workers=2)
     assert parallel.equals(serial)
 
 

@@ -327,9 +327,9 @@ def test_feedback_results_repeat():
         horizon_hours=1,
         feedback=bl.Feedback(interval=360, report_delay=100, conversion_delay=900),
     )
-    first = bl.run_many(config, seeds=range(2))
-    assert first.equals(bl.run_many(config, seeds=range(2)))
-    assert first.equals(bl.run_many(config, seeds=range(2), workers=2))
+    first = bl.run(config, seed=range(2))
+    assert first.equals(bl.run(config, seed=range(2)))
+    assert first.equals(bl.run(config, seed=range(2), workers=2))
 
 
 def converted_steps(log, episode):

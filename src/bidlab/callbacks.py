@@ -18,9 +18,9 @@ class Callback:
 
     Hooks run in the main process, in the order the callbacks are given, and
     cannot change the run. `run` calls `on_run_start`, `on_step_end`,
-    `on_episode_end` and `on_run_end`; `run_many` calls only
-    `on_run_many_start`, `on_seed_end` and `on_run_many_end`, also with
-    ``workers > 1``. An error raised in a hook reaches the caller.
+    `on_episode_end` and `on_run_end` for an int seed; for a seed list it
+    calls only `on_run_many_start`, `on_seed_end` and `on_run_many_end`, also
+    with ``workers > 1``. An error raised in a hook reaches the caller.
 
     Examples
     --------
@@ -82,18 +82,18 @@ class Callback:
         """
 
     def on_seed_end(self, seed: int, results: Results) -> None:
-        """Run in `run_many` after each seed, in the order the seeds were given.
+        """Run after each seed of a seed list, in the order the seeds were given.
 
         Parameters
         ----------
         seed : int
             The seed that finished.
         results : Results
-            That seed's rows and logs, as `run_many` with that seed alone.
+            That seed's rows and logs, as `run` with ``seed=[seed]``.
         """
 
     def on_run_many_start(self, config: SimConfig, seeds: Sequence[int]) -> None:
-        """Run once in `run_many`, before the first seed.
+        """Run once for a seed list, before the first seed.
 
         Parameters
         ----------
@@ -104,7 +104,7 @@ class Callback:
         """
 
     def on_run_many_end(self, results: Results) -> None:
-        """Run once with the `Results` that `run_many` returns.
+        """Run once with the `Results` that `run` returns for a seed list.
 
         Parameters
         ----------
@@ -114,9 +114,9 @@ class Callback:
 
 
 class ProgressBar(Callback):
-    """Show a tqdm progress bar on stderr: steps in `run`, seeds in `run_many`.
+    """Show a tqdm progress bar on stderr: steps for one seed, seeds for a list.
 
-    `run` and `run_many` add one by default; pass ``progress_bar=False`` to
+    `run` adds one by default; pass ``progress_bar=False`` to
     hide it. Passing an instance in ``callbacks`` adds no second bar. In
     `run`, one line counts the current episode's steps under an ``episode
     2/5`` label and starts again at each episode. In a notebook it shows
@@ -131,7 +131,7 @@ class ProgressBar(Callback):
     ... )
     >>> config = bl.SimConfig(campaigns=[campaign], episodes=2, steps=50)
     >>> log = bl.run(config, callbacks=[bl.ProgressBar()])
-    >>> results = bl.run_many(config, seeds=range(3), callbacks=[bl.ProgressBar()])
+    >>> results = bl.run(config, seed=range(3), callbacks=[bl.ProgressBar()])
     """
 
     def __init__(self) -> None:

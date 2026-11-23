@@ -9,7 +9,6 @@ from bidlab.bidders import Bidder, Linear, OracleValue, PidPacing, Stack
 from bidlab.callbacks import Callback, ProgressBar
 from bidlab.config import Campaign, SimConfig
 from bidlab.results import Results
-from bidlab.runner import run_many
 from bidlab.simulator import RunLog, run
 from bidlab.types import EpisodeReport
 
@@ -141,17 +140,17 @@ def test_callbacks_in_list_order():
 def test_seed_end_in_seed_order(workers: int):
     callback = Record()
     settings = config(*two())
-    run_many(settings, seeds=[4, 1, 7], workers=workers, callbacks=[callback])
+    run(settings, seed=[4, 1, 7], workers=workers, callbacks=[callback])
     seeds = [args[0] for _, _, args in callback.calls]
     assert seeds == [4, 1, 7]
     assert {args[2] for _, _, args in callback.calls} == {os.getpid()}
     for _, _, (seed, results, _) in callback.calls:
-        assert results.equals(run_many(settings, seeds=[seed]))
+        assert results.equals(run(settings, seed=[seed]))
 
 
 def test_run_many_skips_run_hooks():
     callback = Record()
-    run_many(config(*two()), seeds=range(2), callbacks=[callback])
+    run(config(*two()), seed=range(2), callbacks=[callback])
     assert {hook for _, hook, _ in callback.calls} == {"seed_end"}
 
 
@@ -190,7 +189,7 @@ def test_callback_error_reaches_caller(hook: str):
         run(config(*two()), callbacks=[Fails(hook)], seed=SEED)
 
     with pytest.raises(RuntimeError, match="stop in on_seed_end"):
-        run_many(config(*two()), seeds=[0], callbacks=[Fails("on_seed_end")])
+        run(config(*two()), seed=[0], callbacks=[Fails("on_seed_end")])
 
 
 @pytest.mark.parametrize(
@@ -200,10 +199,10 @@ def test_callback_type_checked(bad: object):
     instances = f"Callback instances, got {type(bad).__name__}"
     match = "pass an instance" if isinstance(bad, type) else instances
     with pytest.raises(TypeError, match=match):
-        run(config(*two()), callbacks=[bad], seed=SEED)  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
+        run(config(*two()), callbacks=[bad], seed=SEED)  # pyright: ignore[reportArgumentType, reportCallIssue]  Reason: the test checks the runtime error for a wrong type.
 
     with pytest.raises(TypeError, match=match):
-        run_many(config(*two()), seeds=[0], callbacks=[bad])  # pyright: ignore[reportArgumentType]  Reason: the test checks the runtime error for a wrong type.
+        run(config(*two()), seed=[0], callbacks=[bad])  # pyright: ignore[reportArgumentType, reportCallIssue]  Reason: the test checks the runtime error for a wrong type.
 
 
 class OnlyEnd(Callback):
@@ -220,7 +219,7 @@ class OnlyEnd(Callback):
 def test_partial_callback():
     callback = OnlyEnd()
     log = run(config(*two()), callbacks=[callback], seed=SEED)
-    run_many(config(*two()), seeds=[0, 1], callbacks=[callback])
+    run(config(*two()), seed=[0, 1], callbacks=[callback])
     assert len(callback.logged) == 1 and callback.logged[0] is log
 
 
@@ -247,9 +246,7 @@ class RecordMany(Record):
 def test_run_many_hook_order(workers: int):
     callback = RecordMany()
     settings = config(*two())
-    results = run_many(
-        settings, seeds=iter([4, 1, 7]), workers=workers, callbacks=[callback]
-    )
+    results = run(settings, seed=iter([4, 1, 7]), workers=workers, callbacks=[callback])
     hooks = [hook for _, hook, _ in callback.calls]
     assert hooks == [
         "run_many_start",
@@ -306,18 +303,18 @@ def test_step_end_order():
 
 def test_run_many_skips_step_end():
     callback = Steps()
-    run_many(config(*two()), seeds=range(2), workers=1, callbacks=[callback])
+    run(config(*two()), seed=range(2), workers=1, callbacks=[callback])
     assert "step_end" not in {hook for _, hook, _ in callback.calls}
 
 
 def test_progress_bar_counts_seeds(capsys: pytest.CaptureFixture[str]):
     bar = ProgressBar()
-    results = run_many(config(*two()), seeds=[4, 1], callbacks=[bar])
+    results = run(config(*two()), seed=[4, 1], callbacks=[bar])
     out, err = capsys.readouterr()
     assert out == ""
     assert re.search(r"\brun_many: 100%\|.*\| 2/2 \[.*(\bs/seed|[\d.]seed/s)\]\n$", err)
     assert "episode" not in err
-    assert results.equals(run_many(config(*two()), seeds=[4, 1]))
+    assert results.equals(run(config(*two()), seed=[4, 1]))
 
 
 def test_run_shows_a_bar_by_default(capsys: pytest.CaptureFixture[str]):
@@ -327,7 +324,7 @@ def test_run_shows_a_bar_by_default(capsys: pytest.CaptureFixture[str]):
 
 def test_run_without_progress_bar_prints_nothing(capsys: pytest.CaptureFixture[str]):
     run(config(*two()), progress_bar=False, seed=SEED)
-    run_many(config(*two()), seeds=range(2), progress_bar=False)
+    run(config(*two()), seed=range(2), progress_bar=False)
     assert capsys.readouterr() == ("", "")
 
 
@@ -340,7 +337,7 @@ def test_given_progress_bar_is_not_doubled(capsys: pytest.CaptureFixture[str]):
 def test_run_many_shows_only_the_seed_bar_by_default(
     capsys: pytest.CaptureFixture[str],
 ):
-    run_many(config(*two()), seeds=[4, 1])
+    run(config(*two()), seed=[4, 1])
     err = capsys.readouterr().err
     assert re.search(r"\brun_many: 100%\|.*\| 2/2 ", err)
     assert "episode" not in err
