@@ -188,10 +188,10 @@ print((priced_log.winner == -1).mean())  # share of auctions sold outside
 
 ## Write a market
 
-Subclass `bl.markets.Market`. Its `draws` generator yields one `MarketDraw(features, pctr=..., pcvr=..., segment=...)` per step for the whole run; every argument after `features` is keyword-only. Leave `pctr` out for a market without a click stage. Pass `market_price=` and `floor=` for outside competition and a floor. Use only the `rng` it receives, so runs repeat with the seed.
+Subclass `bl.Market`. Its `draws` generator yields one `MarketDraw(features, pctr=..., pcvr=..., segment=...)` per step for the whole run; every argument after `features` is keyword-only. Leave `pctr` out for a market without a click stage. Pass `market_price=` and `floor=` for outside competition and a floor. Use only the `rng` it receives, so runs repeat with the seed.
 
 ```python
-class Daytime(bl.markets.Market):
+class Daytime(bl.Market):
     def draws(self, count, rng):
         step = 0
         while True:
