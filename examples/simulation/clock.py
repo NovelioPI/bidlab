@@ -5,8 +5,6 @@ surplus in `update`, one result at a time. It bids the value only while its spen
 day, which it reads from its `time` and `horizon` inputs.
 """
 
-import dataclasses
-
 import numpy as np
 
 import bidlab as bl
@@ -62,7 +60,7 @@ def hour_out_of_budget(log, bidder, hours):
 if __name__ == "__main__":
     still_bidding = []
     for seed in range(5):
-        log = bl.run(dataclasses.replace(config, seed=seed))
+        log = bl.run(config, seed=seed)
         hours = log.logged["bidders.1.hour"]["even"]
         paused = (log.logged["bidders.1.bid"]["even"] == 0).mean()
         reward = log.logged["bidders.1.reward"]["even"].sum(axis=1).mean()

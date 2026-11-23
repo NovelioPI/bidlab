@@ -31,8 +31,8 @@ def mean(results, bidder, column):
 
 
 if __name__ == "__main__":
-    exact = bl.run_many(config(0.0), seeds=range(5))
-    noisy = bl.run_many(config(NOISE), seeds=range(5))
+    exact = bl.run(config(0.0), seed=range(5))
+    noisy = bl.run(config(NOISE), seed=range(5))
     print(noisy.summary())
     with_noise = mean(noisy, "truthful", "surplus")
     without = mean(exact, "truthful", "surplus")

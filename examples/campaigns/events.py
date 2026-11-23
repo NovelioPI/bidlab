@@ -39,7 +39,7 @@ def mean(results, campaign, column):
 
 
 if __name__ == "__main__":
-    results = bl.run_many(config, seeds=range(5))
+    results = bl.run(config, seed=range(5))
     for campaign in ("click", "conversion"):
         clicks = mean(results, campaign, "clicks")
         cpc = mean(results, campaign, "cpc")

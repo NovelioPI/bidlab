@@ -97,7 +97,7 @@ segmented = bl.SimConfig(
     episodes=2,
     steps=200,
 )
-segment_results = bl.run_many(segmented, seeds=range(2))
+segment_results = bl.run(segmented, seed=range(2))
 print(len(segment_results.segment_rows))  # 8 rows: seeds × bidders × segments
 ```
 

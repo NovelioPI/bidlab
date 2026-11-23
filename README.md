@@ -35,7 +35,7 @@ config = bl.SimConfig(
     steps=500,
 )
 
-results = bl.run_many(config, seeds=range(3))
+results = bl.run(config, seed=range(3))
 print(results.summary())
 ```
 
@@ -73,7 +73,7 @@ flat = bl.SimConfig(
     episodes=2,
     steps=200,
 )
-print(bl.run_many(flat, seeds=range(2)).summary())
+print(bl.run(flat, seed=range(2)).summary())
 ```
 
 [Bidders](https://github.com/NovelioPI/bidlab/blob/main/docs/guides/bidders.md) covers every input, the other hooks, learning from results, and stacking bidders with `bl.Stack`.

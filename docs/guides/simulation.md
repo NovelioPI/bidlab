@@ -84,25 +84,25 @@ Delays draw no random numbers: a run whose bidders ignore feedback gives the sam
 
 ## Parallel runs
 
-`run_many(config, seeds, workers=4)` runs seeds in 4 processes and gives the same rows as `workers=1`. Lambdas and closures work.
+`run(config, seed=range(8), workers=4)` runs the seeds in 4 processes and gives the same rows as `workers=1`. `workers` needs a seed list: with an int seed it raises `ValueError`. Lambdas and closures work.
 
 Workers start with `spawn`, which imports your script again. Put the call under a `__main__` guard:
 
 ```python
 if __name__ == "__main__":
-    parallel = bl.run_many(office, seeds=range(4), workers=2)
+    parallel = bl.run(office, seed=range(4), workers=2)
     print(len(parallel))  # 4 rows: one per seed and campaign
 ```
 
 A bidder that holds a large object, such as a model, is copied to each worker and once per run.
 
-To see where a run spends its time, pass `profiler=True` to `run` or `run_many`. [Profiling](profiling.md) explains the table it gives.
+To see where a run spends its time, pass `profiler=True` to `run`. [Profiling](profiling.md) explains the table it gives.
 
 ## Reproducibility
 
 Each source of randomness has its own seeded stream: the market, tie-breaking, conversions, and each bidder. A `Stack` splits its bidder's stream, so each inner bidder gets its own.
 
-On one OS and CPU type, the same seed gives a bit-identical log. Other platforms round some floats differently, so the last bits can differ. Adding a bidder does not change the impressions the others see.
+`run(config, seed=7)` seeds every stream from 7; the seed defaults to 0 and is not part of `SimConfig`, so one config runs under any seed. `RunLog.seed` records it. On one OS and CPU type, the same seed gives a bit-identical log. Other platforms round some floats differently, so the last bits can differ. Adding a bidder does not change the impressions the others see.
 
 ## Examples
 

@@ -53,7 +53,7 @@ config = bl.SimConfig(
 )
 
 if __name__ == "__main__":
-    results = bl.run_many(config, seeds=range(5))
+    results = bl.run(config, seed=range(5))
     assert results.segment_rows is not None
     print(results.segment_rows.summary())
     spend = {"day": 0.0, "night": 0.0}

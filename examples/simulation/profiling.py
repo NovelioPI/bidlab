@@ -36,7 +36,7 @@ def mean_update(profile, campaign):
 
 
 if __name__ == "__main__":
-    results = bl.run_many(config, seeds=range(3), profiler=True)
+    results = bl.run(config, seed=range(3), profiler=True)
     # profiler=True always fills it; the assert tells type checkers so.
     assert results.profile is not None
     print(results.profile[0].summary())

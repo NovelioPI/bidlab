@@ -47,7 +47,7 @@ goals = bl.SimConfig(
     episodes=2,
     steps=200,
 )
-for row in bl.run_many(goals, seeds=[0]).rows:
+for row in bl.run(goals, seed=[0]).rows:
     print(row["campaign"], row["ctr"], row["cpc"])
 ```
 
@@ -99,7 +99,7 @@ The run finds the market cost by replaying its own market draws once, before the
 |---|---|
 | Set `budget` | The budget is `budget_fraction` × `budget`, with no replay |
 | What bidders see | `campaign.budget` in `on_episode_start` is the scaled budget, and `campaign.budget_fraction` is 1 |
-| Where to read it | `RunLog.budgets`, `EpisodeReport.budget`, and the `budget` column of `run_many` results. `config.campaigns[i].budget` stays None |
+| Where to read it | `RunLog.budgets`, `EpisodeReport.budget`, and the `budget` column of a seed list's `Results`. `config.campaigns[i].budget` stays None |
 | Market cost 0 | `ValueError`: a market with no market price and reserve 0, segments the run never draws, or a value below every cost |
 | `FirstPrice` | A bid equal to the market price loses, so the cost is a lower limit there |
 | `competing=True` | The cost counts the market only, not other campaigns' bids, since those bids depend on the budgets |
@@ -128,7 +128,7 @@ benchmark = bl.SimConfig(
     episodes=2,
     steps=200,
 )
-print(bl.run_many(benchmark, seeds=range(3)).summary())
+print(bl.run(benchmark, seed=range(3)).summary())
 ```
 
 With `competing=False`, the run changes in these ways:

@@ -1,10 +1,10 @@
 # Results
 
-This guide shows what `run` and `run_many` return, and how to read and compare the metrics.
+This guide shows what `run` returns, and how to read and compare the metrics.
 
-## Results from `run_many`
+## Results from a seed list
 
-`run_many` returns a `Results` object with one row per seed and campaign. Each row holds every metric, averaged over episodes. [Metrics](../metrics.md) defines each one.
+`run(config, seed=[...])` returns a `Results` object with one row per seed and campaign, in the order the seeds were given. Any iterable of ints works, such as `range(3)`; a list of one seed also returns `Results`. Each row holds every metric, averaged over episodes. [Metrics](../metrics.md) defines each one.
 
 | Method | Gives |
 |---|---|
@@ -36,14 +36,14 @@ config = bl.SimConfig(
     episodes=2,
     steps=200,
 )
-results = bl.run_many(config, seeds=range(3))
-print(results.equals(bl.run_many(config, seeds=range(3))))  # True
+results = bl.run(config, seed=range(3))
+print(results.equals(bl.run(config, seed=range(3))))  # True
 print(results.columns[:4])  # ('seed', 'campaign', 'spend', 'wins')
 ```
 
 ## The log from `run`
 
-`run` returns a `RunLog` for one seed. Its arrays are read-only.
+`run` returns a `RunLog` for an int seed, 0 by default. `log.seed` holds it. Its arrays are read-only.
 
 | Field | Shape | Holds |
 |---|---|---|
