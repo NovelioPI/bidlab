@@ -32,6 +32,7 @@ The code is in `src/bidlab/metrics.py`. Each metric is computed per episode, the
 | conversions | Realized conversions over Wᵢ | Only a click converts |
 | realized_value | nᵢ × wᵢ | Realized, so it includes luck |
 | surplus | realized_value − spend | |
+| budget | Bᵢ, from `RunLog.budgets` | `budget_fraction` × the set budget, or × the market cost when `budget=None` |
 | budget_used | spend / Bᵢ | Never above 1 |
 | ctr | clicks / wins | NaN when wins = 0 |
 | cpc | spend / clicks | NaN when clicks = 0. Billing is per impression, so this is impression spend per click |

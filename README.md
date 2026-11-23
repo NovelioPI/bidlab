@@ -102,6 +102,7 @@ Each script runs on its own, prints its results, and ends with the answer to its
 | [getting_started/basic.py](https://github.com/NovelioPI/bidlab/blob/main/examples/getting_started/basic.py) | When the budget is tight, does PID pacing earn more surplus than truthful bidding? |
 | [campaigns/events.py](https://github.com/NovelioPI/bidlab/blob/main/examples/campaigns/events.py) | With the same budget, does a click campaign pay less per click than a conversion campaign? |
 | [campaigns/benchmark.py](https://github.com/NovelioPI/bidlab/blob/main/examples/campaigns/benchmark.py) | On one shared market, does PID pacing earn more surplus than truthful bidding? |
+| [campaigns/market_budget.py](https://github.com/NovelioPI/bidlab/blob/main/examples/campaigns/market_budget.py) | With a budget at half the market's cost, does truthful bidding run out early while PID pacing lasts the day? |
 | [bidders/segment_rate.py](https://github.com/NovelioPI/bidlab/blob/main/examples/bidders/segment_rate.py) | Does a bidder that counts conversions per segment learn that sports converts better than news? |
 | [bidders/value_estimators.py](https://github.com/NovelioPI/bidlab/blob/main/examples/bidders/value_estimators.py) | Does a two-stage model on the public features estimate conversions better than counting? |
 | [bidders/oracle_noise.py](https://github.com/NovelioPI/bidlab/blob/main/examples/bidders/oracle_noise.py) | Does noise in the value estimate cost a truthful bidder surplus? |

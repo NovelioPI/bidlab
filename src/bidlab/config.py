@@ -3,7 +3,7 @@
 import copy
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 
 import numpy as np
 
@@ -17,6 +17,8 @@ from bidlab.types import HOURS_PER_DAY, Event, EventName
 class Campaign:
     """One advertiser's campaign: its bidder, budget and goals.
 
+    Every parameter after ``bidder`` is keyword-only.
+
     Parameters
     ----------
     name : str
@@ -25,12 +27,23 @@ class Campaign:
         A bidder instance, such as ``bl.Stack(bl.OracleValue(), bl.PidPacing())``. The
         simulator deep-copies it once per run, so the object you pass never
         changes and every run starts from it.
-    budget : float
-        Budget per episode. Must be > 0.
     base_value : float
         What one event is worth to the advertiser; the event is ``event``. A
         bidder may use it as is or change it. Must be > 0. `OracleValue`
         multiplies it by the true chance of the event.
+    budget : float or None, optional
+        Budget per episode, before ``budget_fraction``. Must be > 0. None, the
+        default, sizes it from the market: the mean cost per episode of every
+        request in the campaign's segments that is worth its cost, which is
+        what a truthful bidder spends with no budget limit. A request costs
+        the highest of its market price, the auction's reserve and its floor,
+        and is worth its `RunLog.true_values` entry. The run replays its own
+        market draws once before the first episode to find it, and raises if
+        that cost is 0, as in a market with no market price and no reserve.
+    budget_fraction : float, optional
+        Scales the budget, set or sized from the market; 1 by default. Must
+        be finite and > 0. Bidders get the scaled budget as
+        ``campaign.budget``, with ``budget_fraction`` 1.
     event : Event or {"impression", "click", "conversion"}, optional
         What the campaign pays for; ``"conversion"`` by default. Stored as an
         `Event`. Billing stays per impression for every event.
@@ -62,12 +75,17 @@ class Campaign:
     ... )
     >>> campaign.budget
     15.0
+    >>> sized = bl.Campaign("sized", bl.Stack(bl.OracleValue(), bl.PidPacing()), base_value=5)
+    >>> sized.budget is None, sized.budget_fraction
+    (True, 1.0)
     """
 
     name: str
     bidder: Bidder
-    budget: float
+    _: KW_ONLY
     base_value: float
+    budget: float | None = None
+    budget_fraction: float = 1.0
     event: EventName = Event.CONVERSION
     cpa_target: float | None = None
     segments: Sequence[str] | None = None
@@ -100,6 +118,13 @@ class Campaign:
 
             object.__setattr__(self, field_name, float(number))
 
+        if not (math.isfinite(self.budget_fraction) and self.budget_fraction > 0):
+            raise ValueError(
+                f"campaign {self.name!r}: budget_fraction must be finite and > 0, "
+                f"got {self.budget_fraction}"
+            )
+
+        object.__setattr__(self, "budget_fraction", float(self.budget_fraction))
         self._check_event()
         self._check_segments()
 

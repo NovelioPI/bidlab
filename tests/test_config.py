@@ -111,7 +111,9 @@ def test_string_bidder_rejected():
 
 
 def test_numbers_stored_as_float():
-    campaign = Campaign("a", Stack(OracleValue(), Linear()), 3, 5, cpa_target=2)
+    campaign = Campaign(
+        "a", Stack(OracleValue(), Linear()), budget=3, base_value=5, cpa_target=2
+    )
     assert all(
         type(value) is float
         for value in (campaign.budget, campaign.base_value, campaign.cpa_target)
@@ -253,7 +255,7 @@ def test_unknown_segment_rejected():
 
 def test_segments_list_stored_as_tuple():
     assert Campaign(
-        "a", Stack(OracleValue(), Linear()), 1, 1, segments=["news"]
+        "a", Stack(OracleValue(), Linear()), budget=1, base_value=1, segments=["news"]
     ).segments == ("news",)
 
 
@@ -276,4 +278,10 @@ def test_campaign_rejects_bad_values(kwargs, field_name):
 
 def test_campaign_rejects_string_segments():
     with pytest.raises(TypeError, match="campaign 'a': segments"):
-        Campaign("a", Stack(OracleValue(), Linear()), 10, 5, segments="news")
+        Campaign(
+            "a",
+            Stack(OracleValue(), Linear()),
+            budget=10,
+            base_value=5,
+            segments="news",
+        )
