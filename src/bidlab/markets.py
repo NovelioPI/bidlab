@@ -24,6 +24,8 @@ BISECTION_STEPS = 60
 
 type FeatureValue = str | float | npt.NDArray[np.float64]
 NUMBER_KINDS = "biuf"
+# The largest float below 1, so a quantile never maps to an infinite price.
+BELOW_ONE = float(np.nextafter(1.0, 0.0))
 
 
 class Distribution(Protocol):
@@ -592,6 +594,18 @@ class IndependentValues(Market):
                 yield MarketDraw({}, pcvr=pcvr, market_price=price, floor=floor)
 
 
+class TruncatableDistribution(Protocol):
+    """A distribution with ``cdf`` and ``ppf``, such as `scipy.stats.lognorm`."""
+
+    def cdf(self, x: npt.NDArray[np.float64], /) -> Any:
+        """Return the probability of a value at most ``x``."""
+        ...
+
+    def ppf(self, q: npt.NDArray[np.float64], /) -> Any:
+        """Return the value whose cdf is ``q``."""
+        ...
+
+
 class ColumnTable(Protocol):
     """A table read by column name: a polars or pandas DataFrame, or a dict."""
 
@@ -630,6 +644,15 @@ class ReplayMarket(Market):
         Feature columns. Each reaches a bidder under its column name: a
         number column as a float, a text column as a str, and a 2-D number
         column as a read-only vector.
+    price_low, price_high : str, optional
+        Columns that bound an unknown market price, for a log that never sees
+        it: in a first-price log, (floor, own bid) on a win and (own bid, inf)
+        on a loss. ``price_high`` may be infinite. Give both with
+        ``price_distribution``, in place of ``market_price``.
+    price_distribution : TruncatableDistribution, optional
+        Each row's price is a draw from it, cut to the row's bounds, from the
+        market's random stream; a row whose bounds are equal keeps that price.
+        So filled prices change with the run's seed.
     time : str, optional
         The time column: seconds from the start of each row's episode. Within
         an episode the times must not go down, and each lies in
@@ -641,11 +664,15 @@ class ReplayMarket(Market):
         If a named column is not in the table.
     TypeError
         If a column holds neither numbers nor text, such as text with a null,
-        or a rate, price or floor column holds text.
+        a rate, price or floor column holds text, or ``price_distribution``
+        lacks ``cdf`` or ``ppf``.
     ValueError
         If the columns differ in length, the table has no rows, a rate is
         outside [0, 1], a price or floor is negative or not finite, or the
-        ``pctr`` and ``pcvr`` lists name different numbers of columns.
+        ``pctr`` and ``pcvr`` lists name different numbers of columns. Also if
+        ``market_price`` is given with bounds, the bounds come without all
+        three arguments, a lower bound is negative, infinite or above its
+        upper bound, or the distribution has no probability between them.
         `SimConfig` raises it too when the rows are not ``episodes * steps``,
         a rate list does not have one column per campaign, or a time is
         out of order or outside the horizon.
@@ -677,10 +704,23 @@ class ReplayMarket(Market):
         segment: str | None = None,
         features: Sequence[str] = (),
         time: str | None = None,
+        price_low: str | None = None,
+        price_high: str | None = None,
+        price_distribution: TruncatableDistribution | None = None,
     ) -> None:
         reader = _TableReader(table)
         self._pcvr = reader.rates(pcvr)
         self._pctr = None if pctr is None else reader.rates(pctr)
+        filling = (price_low, price_high, price_distribution)
+        self._bounds = None
+        if any(argument is not None for argument in filling):
+            if market_price is not None:
+                raise ValueError(
+                    "give market_price, or price_low, price_high and "
+                    "price_distribution to fill unknown prices, not both"
+                )
+
+            self._bounds = reader.bounds(*filling)
         self._market_price = (
             None if market_price is None else reader.money(market_price)
         )
@@ -737,7 +777,7 @@ class ReplayMarket(Market):
         """Yield row i as the draw of step i; see `Market.draws`."""
         pcvr = _per_campaign(self._pcvr, count)
         pctr = None if self._pctr is None else _per_campaign(self._pctr, count)
-        prices = self._market_price
+        prices = self._market_price if self._bounds is None else self._bounds.draw(rng)
         floors = np.zeros(self._rows) if self._floor is None else self._floor
         times = self._times
         for row in range(self._rows):
@@ -801,6 +841,45 @@ class _TableReader:
         )
         return values
 
+    def bounds(
+        self,
+        low_name: str | None,
+        high_name: str | None,
+        distribution: TruncatableDistribution | None,
+    ) -> "_PriceBounds":
+        given = {
+            "price_low": low_name,
+            "price_high": high_name,
+            "price_distribution": distribution,
+        }
+        missing = [argument for argument, value in given.items() if value is None]
+        if low_name is None or high_name is None or distribution is None:
+            raise ValueError(
+                "filling unknown prices needs price_low, price_high and "
+                f"price_distribution; missing {missing}"
+            )
+
+        for method in ("cdf", "ppf"):
+            if not callable(getattr(distribution, method, None)):
+                raise TypeError(
+                    "price_distribution must have cdf and ppf methods, such as "
+                    f"scipy.stats.lognorm(1.0); got {type(distribution).__name__}"
+                )
+
+        low = self.numbers(low_name)
+        high = self.numbers(high_name)
+        _check_rows(low_name, ~(np.isfinite(low) & (low >= 0.0)), "be finite and >= 0")
+        # The negated check also fails a NaN upper bound.
+        _check_rows(high_name, ~(high >= low), f"be >= column {low_name!r}")
+        cdf_low = np.asarray(distribution.cdf(low), dtype=np.float64)
+        cdf_high = np.asarray(distribution.cdf(high), dtype=np.float64)
+        _check_rows(
+            low_name,
+            (low < high) & ~(cdf_high > cdf_low),
+            f"leave probability under price_distribution up to column {high_name!r}",
+        )
+        return _PriceBounds(low, high, cdf_low, cdf_high, distribution)
+
     def text(self, name: str) -> npt.NDArray[np.str_]:
         values = self.column(name)
         if values.dtype.kind in NUMBER_KINDS:
@@ -824,6 +903,27 @@ class _TableReader:
             raise ValueError("the table has no rows")
 
         return rows
+
+
+@dataclass(frozen=True, eq=False)
+class _PriceBounds:
+    low: npt.NDArray[np.float64]
+    high: npt.NDArray[np.float64]
+    cdf_low: npt.NDArray[np.float64]
+    cdf_high: npt.NDArray[np.float64]
+    distribution: TruncatableDistribution
+
+    def draw(self, rng: np.random.Generator) -> npt.NDArray[np.float64]:
+        # One uniform per row, whatever the bounds, so the draw count never changes.
+        uniforms = rng.random(len(self.low))
+        quantiles = self.cdf_low + uniforms * (self.cdf_high - self.cdf_low)
+        prices = np.asarray(
+            self.distribution.ppf(np.minimum(quantiles, BELOW_ONE)), dtype=np.float64
+        )
+        # Rounding in ppf can step just outside the bounds.
+        return np.where(
+            self.low == self.high, self.low, np.clip(prices, self.low, self.high)
+        )
 
 
 def _text(name: str, values: npt.NDArray[Any]) -> npt.NDArray[np.str_]:

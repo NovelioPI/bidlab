@@ -5,6 +5,7 @@ import cloudpickle
 import numpy as np
 import polars as pl
 import pytest
+from scipy import stats
 
 import bidlab as bl
 from bidlab.markets import ReplayMarket
@@ -476,3 +477,118 @@ def test_time_starts_again_each_episode():
 
     times = [request["time"] for request in Spy.instances[0].requests]
     assert times == table["time"].to_list()
+
+
+LOGNORMAL = stats.lognorm(s=1.0, scale=1.0)
+
+
+def bounded_table():
+    """Wins (floor, bid), losses (bid, inf), and one exact row, as in a first-price log."""
+    table = log_table()
+    low = np.array([0.1, 0.5, 0.2, 2.0, 0.0, 1.5] * 2)
+    high = np.array([0.4, np.inf, 0.2, np.inf, 0.3, 1.6] * 2)
+    return table.with_columns(low=pl.Series(low), high=pl.Series(high)).drop("price")
+
+
+def bounded_market(table=None, **overrides):
+    columns: dict[str, Any] = {
+        "pcvr": "pcvr",
+        "price_low": "low",
+        "price_high": "high",
+        "price_distribution": LOGNORMAL,
+    }
+    columns.update(overrides)
+    return ReplayMarket(bounded_table() if table is None else table, **columns)
+
+
+def test_filled_prices_lie_in_bounds():
+    table = bounded_table()
+    log = replay(bounded_market(table), Spy())
+    prices = log.market_price.ravel()
+    low, high = table["low"].to_numpy(), table["high"].to_numpy()
+
+    assert np.isfinite(prices).all()
+    assert ((prices >= low) & (prices <= high)).all()
+    exact = low == high
+    np.testing.assert_array_equal(prices[exact], low[exact])
+
+
+def test_filled_prices_follow_the_cut_distribution():
+    rows = 20_000
+    table = {
+        "pcvr": np.full(rows, 0.1),
+        "low": np.ones(rows),
+        "high": np.full(rows, 3.0),
+    }
+    log = replay(bounded_market(table), Spy(0.0), episodes=1, steps=rows)
+    prices = log.market_price.ravel()
+    cut = LOGNORMAL.cdf(1.0), LOGNORMAL.cdf(3.0)
+
+    def cut_cdf(x):
+        return (LOGNORMAL.cdf(x) - cut[0]) / (cut[1] - cut[0])
+
+    assert stats.kstest(prices, cut_cdf).pvalue > 0.01
+    assert stats.kstest(prices, LOGNORMAL.cdf).pvalue < 0.01
+
+
+def test_filled_prices_follow_the_seed():
+    market = bounded_market()
+    first, again, other = (replay(market, Spy(), seed=seed) for seed in (0, 0, 1))
+    np.testing.assert_array_equal(first.market_price, again.market_price)
+    table = bounded_table()
+    open_rows = (table["low"] < table["high"]).to_numpy().reshape(EPISODES, STEPS)
+    assert (first.market_price[open_rows] != other.market_price[open_rows]).any()
+    for field in ("floor", "segment", "true_values"):
+        np.testing.assert_array_equal(getattr(first, field), getattr(other, field))
+
+
+def test_market_budget_with_filled_prices():
+    campaign = bl.Campaign(
+        "c", bl.Stack(bl.OracleValue(), bl.Linear()), base_value=50.0
+    )
+    config = bl.SimConfig(
+        campaigns=[campaign], market=bounded_market(), episodes=EPISODES, steps=STEPS
+    )
+    assert bl.run(config, progress_bar=False).budgets[0] > 0
+
+
+class NoCdf:
+    def ppf(self, q):
+        return q
+
+
+@pytest.mark.parametrize(
+    ("change", "error", "message"),
+    [
+        ({"row": 1, "low": 3.0, "high": 2.0}, ValueError, "low.*row 1"),
+        ({"row": 2, "low": -1.0}, ValueError, "low.*row 2"),
+        ({"row": 3, "low": float("nan")}, ValueError, "low.*row 3"),
+        ({"row": 4, "low": float("inf")}, ValueError, "low.*row 4"),
+        ({"row": 5, "high": float("nan")}, ValueError, "high.*row 5"),
+        ({"market_price": "low"}, ValueError, "market_price.*price_low"),
+        ({"price_distribution": None}, ValueError, "price_distribution"),
+        ({"price_high": None}, ValueError, "price_high"),
+        ({"price_distribution": NoCdf()}, TypeError, "cdf"),
+    ],
+)
+def test_bad_bounds_raise(change, error, message):
+    table = bounded_table()
+    row = change.pop("row", None)
+    for column in ("low", "high"):
+        if column in change:
+            values = table[column].to_numpy().copy()
+            values[row] = change.pop(column)
+            table = table.with_columns(pl.Series(column, values))
+
+    with pytest.raises(error, match=message):
+        bounded_market(table, **change)
+
+
+def test_bounds_without_probability_raise():
+    table = bounded_table()
+    low = table["low"].to_numpy().copy()
+    high = table["high"].to_numpy().copy()
+    low[7], high[7] = 1e6, 2e6
+    table = table.with_columns(pl.Series("low", low), pl.Series("high", high))
+    with pytest.raises(ValueError, match="row 7"):
+        bounded_market(table)
