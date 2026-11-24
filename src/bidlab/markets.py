@@ -847,13 +847,13 @@ class _TableReader:
         high_name: str | None,
         distribution: TruncatableDistribution | None,
     ) -> "_PriceBounds":
-        given = {
-            "price_low": low_name,
-            "price_high": high_name,
-            "price_distribution": distribution,
-        }
-        missing = [argument for argument, value in given.items() if value is None]
         if low_name is None or high_name is None or distribution is None:
+            given = {
+                "price_low": low_name,
+                "price_high": high_name,
+                "price_distribution": distribution,
+            }
+            missing = [argument for argument, value in given.items() if value is None]
             raise ValueError(
                 "filling unknown prices needs price_low, price_high and "
                 f"price_distribution; missing {missing}"
@@ -946,11 +946,13 @@ def _check_times(
     by_episode = times.reshape(config.episodes, config.steps)
     bad = ~(np.isfinite(by_episode) & (by_episode >= 0.0) & (by_episode < horizon))
     bad[:, 1:] |= by_episode[:, 1:] < by_episode[:, :-1]
-    _check_rows(
-        name,
-        bad.ravel(),
-        f"be finite, in [0, {horizon}), and not go down within an episode",
-    )
+    if bad.any():
+        episode, step = (int(index) for index in np.argwhere(bad)[0])
+        raise ValueError(
+            f"column {name!r} must be finite, in [0, {horizon}), and not go down "
+            f"within an episode; row {episode * config.steps + step} "
+            f"(episode {episode}, step {step}) does not"
+        )
 
 
 def _check_rows(name: str, bad: npt.NDArray[np.bool_], rule: str) -> None:

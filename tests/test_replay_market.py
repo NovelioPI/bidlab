@@ -444,7 +444,9 @@ def test_interval_follows_row_times():
 def test_bad_row_times_raise(row, value):
     times = timed_table()["time"].to_numpy().copy()
     times[row] = value
-    with pytest.raises(ValueError, match=rf"time.*row {row}"):
+    with pytest.raises(
+        ValueError, match=rf"time.*not go down.*row {row} \(episode 0, step {row}\)"
+    ):
         replay(full_market(timed_table(times), time="time"), Spy())
 
 
@@ -572,6 +574,8 @@ class NoCdf:
     ],
 )
 def test_bad_bounds_raise(change, error, message):
+    # A copy, since pytest reuses the parametrize dict when a test runs twice.
+    change = dict(change)
     table = bounded_table()
     row = change.pop("row", None)
     for column in ("low", "high"):
