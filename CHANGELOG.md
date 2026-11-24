@@ -4,6 +4,14 @@ This file lists the changes in each bidlab release, newest first.
 
 bidlab follows [semantic versioning](https://semver.org/). Before 1.0, a minor version may break the API; each break is listed under **Breaking**.
 
+## Unreleased
+
+### Markets
+
+- `bl.markets.ReplayMarket(table, ...)` replays a log: row i of a polars or pandas DataFrame, or a dict of arrays, is the draw of step i. Arguments name the columns for rates (one shared, or one per campaign), market price, floor, segment, features and time. `SimConfig` raises when the rows are not `episodes × steps`.
+- `price_low`, `price_high` and `price_distribution` fill unknown market prices, as in a first-price log: each run draws them from the distribution, cut to each row's bounds.
+- `MarketDraw(time=...)` sets a step's time in seconds from the episode start. The `time`, `time_left` and `hour_of_day` inputs, `BidResult.time` and feedback delivery follow it. Runs without it are unchanged, bit for bit.
+
 ## 0.5.0 (2026-11-23)
 
 ### Breaking

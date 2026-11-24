@@ -17,7 +17,7 @@ Budgets reset at the start of each episode, and each episode starts with `on_epi
 
 ## The clock
 
-Auctions are spaced evenly over `SimConfig.horizon_hours`, 24 by default, from `SimConfig.start_hour`, 0 by default.
+Auctions are spaced evenly over `SimConfig.horizon_hours`, 24 by default, from `SimConfig.start_hour`, 0 by default. A market can set each step's time instead, as `ReplayMarket` does from a log's time column.
 
 Set the clock on `SimConfig`. A bidder reads it through the `forward` inputs it names:
 

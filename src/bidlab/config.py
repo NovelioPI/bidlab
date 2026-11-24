@@ -9,7 +9,7 @@ import numpy as np
 
 from bidlab.auctions import Auction, FirstPrice, SecondPrice
 from bidlab.bidders.base import Bidder, bind_tree
-from bidlab.markets import LogisticMarket, Market
+from bidlab.markets import LogisticMarket, Market, ReplayMarket
 from bidlab.types import HOURS_PER_DAY, Event, EventName
 
 
@@ -365,6 +365,9 @@ class SimConfig:
         if not isinstance(competing, bool):
             raise TypeError(f"competing must be True or False, got {competing!r}")
 
+        self._check_market_fit()
+
+    def _check_market_fit(self) -> None:
         known = set(self.market.segment_names)
         for campaign in self.campaigns:
             unknown = sorted(set(campaign.segments or ()) - known)
@@ -373,3 +376,6 @@ class SimConfig:
                     f"campaign {campaign.name!r}: segments {unknown} are not in the "
                     f"market's segment_names {self.market.segment_names}"
                 )
+
+        if isinstance(self.market, ReplayMarket):
+            self.market.check_config(self)
