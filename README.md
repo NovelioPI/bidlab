@@ -111,6 +111,7 @@ Each script runs on its own, prints its results, and ends with the answer to its
 | [markets/segments.py](https://github.com/NovelioPI/bidlab/blob/main/examples/markets/segments.py) | Does a sports-only bidder win any auction outside sports? |
 | [markets/custom_market.py](https://github.com/NovelioPI/bidlab/blob/main/examples/markets/custom_market.py) | Does the all-day bidder pay more per win at night, when the night-only bidder joins? |
 | [markets/independent_values.py](https://github.com/NovelioPI/bidlab/blob/main/examples/markets/independent_values.py) | In a first-price auction with uniform values, does shading to (n-1)/n beat truthful bidding? |
+| [markets/replay_log.py](https://github.com/NovelioPI/bidlab/blob/main/examples/markets/replay_log.py) | On a replayed first-price log, does PID pacing win more conversions than a fixed bid? |
 | [rewards/cpa_target.py](https://github.com/NovelioPI/bidlab/blob/main/examples/rewards/cpa_target.py) | Does bidding target/value of the value meet a CPA target that truthful bidding misses? |
 | [rewards/custom_reward.py](https://github.com/NovelioPI/bidlab/blob/main/examples/rewards/custom_reward.py) | Does a bandit rewarded for conversions pick a higher multiplier than one rewarded for surplus? |
 | [logging/pid_trace.py](https://github.com/NovelioPI/bidlab/blob/main/examples/logging/pid_trace.py) | Does PID pacing spend its whole budget in each episode? |

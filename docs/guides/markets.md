@@ -188,7 +188,7 @@ print((~priced_log.won.any(axis=2)).mean())  # share of auctions sold outside
 
 ## Write a market
 
-Subclass `bl.Market`. Its `draws` generator yields one `MarketDraw(features, pctr=..., pcvr=..., segment=...)` per step for the whole run; every argument after `features` is keyword-only. Leave `pctr` out for a market without a click stage. Pass `market_price=` and `floor=` for outside competition and a floor. Use only the `rng` it receives, so runs repeat with the seed.
+Subclass `bl.Market`. Its `draws` generator yields one `MarketDraw(features, pctr=..., pcvr=..., segment=...)` per step for the whole run; every argument after `features` is keyword-only. Leave `pctr` out for a market without a click stage. Pass `market_price=` and `floor=` for outside competition and a floor. Pass `time=` to set the step's time in seconds from the episode start; times must not go down within an episode. Use only the `rng` it receives, so runs repeat with the seed.
 
 ```python
 class Daytime(bl.Market):
@@ -218,6 +218,70 @@ print(bl.run(daytime).true_values.shape)  # (2, 96, 1)
 
 A custom market can define its own segments. Override the `segment_names` property, and pass `segment=` to each `MarketDraw`. Targeting and `results.segment_rows` then work as they do for `Segmented`.
 
+## Replay a log
+
+`bl.markets.ReplayMarket(table, ...)` replays your own log: row i of the table is the draw of step i. The table is a polars or pandas DataFrame, or a dict of arrays. Each argument names the column for one draw field.
+
+| Argument | Column |
+|---|---|
+| `pcvr` (`"pcvr"`) | Conversion probability; a list of names gives one column per campaign, in campaign order |
+| `pctr` (None) | Click probability, or a list as for `pcvr`; None means no click stage |
+| `market_price` (None) | The highest outside bid, finite and ≥ 0 |
+| `price_low`, `price_high`, `price_distribution` (None) | Bounds of an unknown market price, and the distribution to fill it from |
+| `floor` (None) | The publisher's floor |
+| `segment` (None) | The segment; its values become `segment_names` |
+| `features` (()) | Columns each bidder gets by name: a number as a float, text as a str, a 2-D column as a vector |
+| `time` (None) | Seconds from the start of the row's episode |
+
+Rows run in order, one episode after another, so a run needs `episodes × steps` rows. Real days differ in size, so sample each day to `steps` rows first. A uniform sample keeps the day's traffic shape.
+
+```python
+import polars as pl
+
+by_day = log.with_columns(day=pl.col("ts").dt.date()).group_by("day")
+table = (
+    pl.concat(rows.sample(4_000, seed=0) for _, rows in by_day)
+    .sort("ts")
+    .with_columns(
+        time=(pl.col("ts") - pl.col("ts").dt.truncate("1d")).dt.total_seconds()
+    )
+)
+market = bl.markets.ReplayMarket(table, floor="floor", segment="site", time="time")
+```
+
+The market copies each column once, as a read-only numpy array, and keeps no reference to the table. With `workers > 1`, each seed task gets its own copy: 10 million rows of 5 columns is about 400 MB per task.
+
+### Time
+
+With a `time` column, each step runs at its row's time. The `time`, `time_left` and `hour_of_day` inputs, `BidResult.time` and feedback delivery all follow it. Times must not go down within an episode, and each must lie in [0, `horizon_hours` × 3600). For one-day episodes, measure from midnight in the log's time zone and keep `start_hour=0`, so `hour_of_day` is the real hour.
+
+### Unknown market prices
+
+A first-price exchange never reports the market price. A win shows only that it lay between the floor and the own bid. A loss shows only that it was at least the own bid.
+
+Give those bounds as `price_low` and `price_high`, and a distribution with `cdf` and `ppf`, such as `scipy.stats.lognorm`. Each run draws every row's price from it, cut to the row's bounds, from the market's stream. A row whose bounds are equal keeps that price.
+
+```python
+from scipy import stats
+
+table = table.with_columns(
+    low=pl.when("won").then("floor").otherwise("bid"),
+    high=pl.when("won").then("bid").otherwise(float("inf")),
+)
+market = bl.markets.ReplayMarket(
+    table,
+    price_low="low",
+    price_high="high",
+    price_distribution=stats.lognorm(s=0.6, scale=0.15),
+)
+```
+
+Filled prices change with the seed, so seeds now vary the market too. The replay is only as good as the distribution. One fitted to won prices alone runs low, since the dear auctions were lost.
+
+### Rates
+
+A log has outcomes, not probabilities. Use your own model's predictions as `pctr` and `pcvr`, so each seed draws new clicks and conversions. Or pass the logged outcomes as rates of 0 and 1 to replay them exactly. Then the `market` input and `OracleValue` know every outcome in advance, so a fair bidder must not read them.
+
 ## Examples
 
 | Script | Question |
@@ -226,3 +290,4 @@ A custom market can define its own segments. Override the `segment_names` proper
 | [markets/custom_market.py](../../examples/markets/custom_market.py) | Does the all-day bidder pay more per win at night, when the night-only bidder joins? |
 | [markets/independent_values.py](../../examples/markets/independent_values.py) | In a first-price auction with uniform values, does shading to (n-1)/n beat truthful bidding? |
 | [markets/market_price.py](../../examples/markets/market_price.py) | Does a lone campaign pay more per conversion when the market price follows its value? |
+| [markets/replay_log.py](../../examples/markets/replay_log.py) | On a replayed first-price log, does PID pacing win more conversions than a fixed bid? |
