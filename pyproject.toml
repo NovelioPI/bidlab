@@ -42,6 +42,7 @@ Changelog = "https://github.com/NovelioPI/bidlab/blob/main/CHANGELOG.md"
 dev = [
     "hypothesis>=6.170.15",
     "mutmut>=3.8.1",
+    "polars>=1.0",
     "pyright>=1.1.414",
     "pytest>=8.0",
     "ruff>=0.17.5",

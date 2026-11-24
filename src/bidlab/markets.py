@@ -4,11 +4,16 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass
 from types import MappingProxyType
-from typing import NamedTuple, Protocol
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, cast
 
 import numpy as np
 import numpy.typing as npt
 from scipy.special import expit, logit
+
+from bidlab.types import SECONDS_PER_HOUR
+
+if TYPE_CHECKING:
+    from bidlab.config import SimConfig
 
 ALL_SEGMENTS = "all"
 SHARE_TOLERANCE = 1e-9
@@ -18,6 +23,9 @@ QUADRATURE_NODES, QUADRATURE_WEIGHTS = np.polynomial.hermite.hermgauss(200)
 BISECTION_STEPS = 60
 
 type FeatureValue = str | float | npt.NDArray[np.float64]
+NUMBER_KINDS = "biuf"
+# The largest float below 1, so a quantile never maps to an infinite price.
+BELOW_ONE = float(np.nextafter(1.0, 0.0))
 
 
 class Distribution(Protocol):
@@ -91,6 +99,10 @@ class MarketDraw:
     floor : float, optional
         The publisher's floor for this auction, >= 0. The lowest bid that can
         win is the higher of this and the auction's ``reserve``.
+    time : float, optional
+        Seconds from the episode start, in [0, horizon), never lower than the
+        previous draw's time in the episode. None, the default, spaces steps
+        evenly over ``SimConfig.horizon_hours``.
 
     Notes
     -----
@@ -106,6 +118,7 @@ class MarketDraw:
     segment: str = ALL_SEGMENTS
     market_price: float | None = None
     floor: float = 0.0
+    time: float | None = None
 
     def __post_init__(self) -> None:
         features = {name: _read_only(value) for name, value in self.features.items()}
@@ -116,6 +129,8 @@ class MarketDraw:
         if self.market_price is not None:
             object.__setattr__(self, "market_price", float(self.market_price))
         object.__setattr__(self, "floor", float(self.floor))
+        if self.time is not None:
+            object.__setattr__(self, "time", float(self.time))
 
 
 class Market(ABC):
@@ -577,6 +592,400 @@ class IndependentValues(Market):
             rows = zip(np.clip(block, 0.0, 1.0), prices, floors, strict=True)
             for pcvr, price, floor in rows:
                 yield MarketDraw({}, pcvr=pcvr, market_price=price, floor=floor)
+
+
+class TruncatableDistribution(Protocol):
+    """A distribution with ``cdf`` and ``ppf``, such as `scipy.stats.lognorm`."""
+
+    def cdf(self, x: npt.NDArray[np.float64], /) -> Any:
+        """Return the probability of a value at most ``x``."""
+        ...
+
+    def ppf(self, q: npt.NDArray[np.float64], /) -> Any:
+        """Return the value whose cdf is ``q``."""
+        ...
+
+
+class ColumnTable(Protocol):
+    """A table read by column name: a polars or pandas DataFrame, or a dict."""
+
+    def __getitem__(self, name: str, /) -> Any:
+        """Return the column named ``name``."""
+        ...
+
+
+class ReplayMarket(Market):
+    """Replays a log: row i of a table is the draw of step i.
+
+    Rows run in order, one episode after another, so row ``e * steps + s`` is
+    step ``s`` of episode ``e``; the run's ``episodes * steps`` must equal the
+    row count. Each argument after ``table`` names the column for one
+    `MarketDraw` field. The market copies each named column once, as a
+    read-only numpy array, and keeps no reference to the table.
+
+    Parameters
+    ----------
+    table : ColumnTable
+        A polars or pandas DataFrame, or a dict of 1-D arrays.
+    pcvr : str or Sequence[str], optional
+        The conversion probability column, ``"pcvr"`` by default. A list of
+        names gives one column per campaign, in campaign order.
+    pctr : str or Sequence[str], optional
+        The click probability column, or a list as for ``pcvr``. None, the
+        default, means no click stage: every won impression is clicked.
+    market_price : str, optional
+        The market price column, finite and >= 0 on every row. None means no
+        outside competition.
+    floor : str, optional
+        The floor column, finite and >= 0. None means a floor of 0.
+    segment : str, optional
+        The segment column. Its values, as text, become `segment_names`.
+    features : Sequence[str], optional
+        Feature columns. Each reaches a bidder under its column name: a
+        number column as a float, a text column as a str, and a 2-D number
+        column as a read-only vector.
+    price_low, price_high : str, optional
+        Columns that bound an unknown market price, for a log that never sees
+        it: in a first-price log, (floor, own bid) on a win and (own bid, inf)
+        on a loss. ``price_high`` may be infinite. Give both with
+        ``price_distribution``, in place of ``market_price``.
+    price_distribution : TruncatableDistribution, optional
+        Each row's price is a draw from it, cut to the row's bounds, from the
+        market's random stream; a row whose bounds are equal keeps that price.
+        So filled prices change with the run's seed.
+    time : str, optional
+        The time column: seconds from the start of each row's episode. Within
+        an episode the times must not go down, and each lies in
+        [0, ``horizon_hours * 3600``). None spaces steps evenly.
+
+    Raises
+    ------
+    KeyError
+        If a named column is not in the table.
+    TypeError
+        If a column holds neither numbers nor text, such as text with a null,
+        a rate, price or floor column holds text, or ``price_distribution``
+        lacks ``cdf`` or ``ppf``.
+    ValueError
+        If the columns differ in length, the table has no rows, a rate is
+        outside [0, 1], a price or floor is negative or not finite, or the
+        ``pctr`` and ``pcvr`` lists name different numbers of columns. Also if
+        ``market_price`` is given with bounds, the bounds come without all
+        three arguments, a lower bound is negative, infinite or above its
+        upper bound, or the distribution has no probability between them.
+        `SimConfig` raises it too when the rows are not ``episodes * steps``,
+        a rate list does not have one column per campaign, or a time is
+        out of order or outside the horizon.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import bidlab as bl
+    >>> table = {
+    ...     "pcvr": np.array([0.1, 0.2, 0.3, 0.4]),
+    ...     "price": np.array([0.5, 0.6, 0.7, 0.8]),
+    ... }
+    >>> market = bl.markets.ReplayMarket(table, market_price="price")
+    >>> bidder = bl.Stack(bl.OracleValue(), bl.Linear())
+    >>> campaign = bl.Campaign("c", bidder, budget=10, base_value=5)
+    >>> config = bl.SimConfig(campaigns=[campaign], market=market, episodes=2, steps=2)
+    >>> bl.run(config, progress_bar=False).market_price.tolist()
+    [[0.5, 0.6], [0.7, 0.8]]
+    """
+
+    def __init__(
+        self,
+        table: ColumnTable,
+        *,
+        pcvr: str | Sequence[str] = "pcvr",
+        pctr: str | Sequence[str] | None = None,
+        market_price: str | None = None,
+        floor: str | None = None,
+        segment: str | None = None,
+        features: Sequence[str] = (),
+        time: str | None = None,
+        price_low: str | None = None,
+        price_high: str | None = None,
+        price_distribution: TruncatableDistribution | None = None,
+    ) -> None:
+        reader = _TableReader(table)
+        self._pcvr = reader.rates(pcvr)
+        self._pctr = None if pctr is None else reader.rates(pctr)
+        filling = (price_low, price_high, price_distribution)
+        self._bounds = None
+        if any(argument is not None for argument in filling):
+            if market_price is not None:
+                raise ValueError(
+                    "give market_price, or price_low, price_high and "
+                    "price_distribution to fill unknown prices, not both"
+                )
+
+            self._bounds = reader.bounds(*filling)
+        self._market_price = (
+            None if market_price is None else reader.money(market_price)
+        )
+        self._floor = None if floor is None else reader.money(floor)
+        self._segments = None if segment is None else reader.text(segment)
+        self._features = {name: reader.feature(name) for name in features}
+        self._times = None if time is None else reader.numbers(time)
+        self._time_column = time or ""
+        self._rows = reader.rows()
+        self._campaigns = _rate_campaigns(self._pctr, self._pcvr)
+
+    @property
+    def rows(self) -> int:
+        """The number of rows, which must equal ``episodes * steps``."""
+        return self._rows
+
+    @property
+    def segment_names(self) -> tuple[str, ...]:
+        """The segment column's values, sorted; ``("all",)`` without one."""
+        if self._segments is None:
+            return (ALL_SEGMENTS,)
+
+        return tuple(str(name) for name in np.unique(self._segments))
+
+    def check_config(self, config: "SimConfig") -> None:
+        """Raise ValueError if this log does not fit ``config``."""
+        steps = config.episodes * config.steps
+        if self._rows != steps:
+            raise ValueError(
+                f"ReplayMarket has {self._rows} rows, but episodes * steps is "
+                f"{config.episodes} * {config.steps} = {steps}; sample or trim the "
+                "log so each episode has steps rows"
+            )
+
+        if self._times is not None:
+            _check_times(self._time_column, self._times, config)
+
+        if self._campaigns is None:
+            return
+
+        if not config.competing:
+            raise ValueError(
+                "ReplayMarket has one rate column per campaign, but competing=False "
+                "gives every campaign one shared draw; name one rate column"
+            )
+
+        if self._campaigns != len(config.campaigns):
+            raise ValueError(
+                f"ReplayMarket has {self._campaigns} rate columns, but the config has "
+                f"{len(config.campaigns)} campaigns; name one column per campaign"
+            )
+
+    def draws(self, count: int, rng: np.random.Generator) -> Iterator[MarketDraw]:
+        """Yield row i as the draw of step i; see `Market.draws`."""
+        pcvr = _per_campaign(self._pcvr, count)
+        pctr = None if self._pctr is None else _per_campaign(self._pctr, count)
+        prices = self._market_price if self._bounds is None else self._bounds.draw(rng)
+        floors = np.zeros(self._rows) if self._floor is None else self._floor
+        times = self._times
+        for row in range(self._rows):
+            yield MarketDraw(
+                {name: values[row] for name, values in self._features.items()},
+                pctr=None if pctr is None else pctr[row],
+                pcvr=pcvr[row],
+                segment=ALL_SEGMENTS
+                if self._segments is None
+                else str(self._segments[row]),
+                market_price=None if prices is None else float(prices[row]),
+                floor=float(floors[row]),
+                time=None if times is None else float(times[row]),
+            )
+
+
+class _TableReader:
+    def __init__(self, table: ColumnTable) -> None:
+        self.table = table
+        # polars raises its own error for a missing column, not a KeyError, so names are checked first.
+        names = table.keys() if isinstance(table, Mapping) else cast(Any, table).columns
+        self.names = [str(name) for name in names]
+        self.lengths: dict[str, int] = {}
+
+    def column(self, name: str) -> npt.NDArray[Any]:
+        if name not in self.names:
+            raise KeyError(
+                f"column {name!r} is not in the table; its columns are {self.names}"
+            )
+
+        values = np.asarray(self.table[name])
+        self.lengths[name] = len(values)
+        return values
+
+    def numbers(self, name: str) -> npt.NDArray[np.float64]:
+        values = self.column(name)
+        if values.dtype.kind not in NUMBER_KINDS or values.ndim != 1:
+            raise TypeError(
+                f"column {name!r} must be a 1-D column of numbers, got {values.dtype} "
+                f"with {values.ndim} dimensions"
+            )
+
+        return _frozen(values.astype(np.float64))
+
+    def rates(self, columns: str | Sequence[str]) -> npt.NDArray[np.float64]:
+        names = [columns] if isinstance(columns, str) else list(columns)
+        rates = [self.numbers(name) for name in names]
+        for name, values in zip(names, rates, strict=True):
+            # The negated check also catches NaN, which fails every comparison.
+            _check_rows(name, ~((values >= 0.0) & (values <= 1.0)), "lie in [0, 1]")
+
+        if isinstance(columns, str):
+            return rates[0]
+
+        return _frozen(np.column_stack(rates))
+
+    def money(self, name: str) -> npt.NDArray[np.float64]:
+        values = self.numbers(name)
+        _check_rows(
+            name, ~(np.isfinite(values) & (values >= 0.0)), "be finite and >= 0"
+        )
+        return values
+
+    def bounds(
+        self,
+        low_name: str | None,
+        high_name: str | None,
+        distribution: TruncatableDistribution | None,
+    ) -> "_PriceBounds":
+        if low_name is None or high_name is None or distribution is None:
+            given = {
+                "price_low": low_name,
+                "price_high": high_name,
+                "price_distribution": distribution,
+            }
+            missing = [argument for argument, value in given.items() if value is None]
+            raise ValueError(
+                "filling unknown prices needs price_low, price_high and "
+                f"price_distribution; missing {missing}"
+            )
+
+        for method in ("cdf", "ppf"):
+            if not callable(getattr(distribution, method, None)):
+                raise TypeError(
+                    "price_distribution must have cdf and ppf methods, such as "
+                    f"scipy.stats.lognorm(1.0); got {type(distribution).__name__}"
+                )
+
+        low = self.numbers(low_name)
+        high = self.numbers(high_name)
+        _check_rows(low_name, ~(np.isfinite(low) & (low >= 0.0)), "be finite and >= 0")
+        # The negated check also fails a NaN upper bound.
+        _check_rows(high_name, ~(high >= low), f"be >= column {low_name!r}")
+        cdf_low = np.asarray(distribution.cdf(low), dtype=np.float64)
+        cdf_high = np.asarray(distribution.cdf(high), dtype=np.float64)
+        _check_rows(
+            low_name,
+            (low < high) & ~(cdf_high > cdf_low),
+            f"leave probability under price_distribution up to column {high_name!r}",
+        )
+        return _PriceBounds(low, high, cdf_low, cdf_high, distribution)
+
+    def text(self, name: str) -> npt.NDArray[np.str_]:
+        values = self.column(name)
+        if values.dtype.kind in NUMBER_KINDS:
+            return _frozen(values.astype(str))
+
+        return _text(name, values)
+
+    def feature(self, name: str) -> npt.NDArray[Any]:
+        values = self.column(name)
+        if values.dtype.kind in NUMBER_KINDS and values.ndim in (1, 2):
+            return _frozen(values.astype(np.float64))
+
+        return _text(name, values)
+
+    def rows(self) -> int:
+        if len(set(self.lengths.values())) > 1:
+            raise ValueError(f"columns must have one length, got {self.lengths}")
+
+        rows = next(iter(self.lengths.values()))
+        if rows == 0:
+            raise ValueError("the table has no rows")
+
+        return rows
+
+
+@dataclass(frozen=True, eq=False)
+class _PriceBounds:
+    low: npt.NDArray[np.float64]
+    high: npt.NDArray[np.float64]
+    cdf_low: npt.NDArray[np.float64]
+    cdf_high: npt.NDArray[np.float64]
+    distribution: TruncatableDistribution
+
+    def draw(self, rng: np.random.Generator) -> npt.NDArray[np.float64]:
+        # One uniform per row, whatever the bounds, so the draw count never changes.
+        uniforms = rng.random(len(self.low))
+        quantiles = self.cdf_low + uniforms * (self.cdf_high - self.cdf_low)
+        prices = np.asarray(
+            self.distribution.ppf(np.minimum(quantiles, BELOW_ONE)), dtype=np.float64
+        )
+        # Rounding in ppf can step just outside the bounds.
+        return np.where(
+            self.low == self.high, self.low, np.clip(prices, self.low, self.high)
+        )
+
+
+def _text(name: str, values: npt.NDArray[Any]) -> npt.NDArray[np.str_]:
+    # pandas keeps text as Python objects; a null among them is not text.
+    is_text = values.dtype.kind == "U" or (
+        values.dtype.kind == "O" and all(isinstance(value, str) for value in values)
+    )
+    if not is_text or values.ndim != 1:
+        raise TypeError(
+            f"column {name!r} must hold numbers or text without nulls, got {values.dtype}"
+        )
+
+    return _frozen(values.astype(str))
+
+
+def _check_times(
+    name: str, times: npt.NDArray[np.float64], config: "SimConfig"
+) -> None:
+    horizon = config.horizon_hours * SECONDS_PER_HOUR
+    by_episode = times.reshape(config.episodes, config.steps)
+    bad = ~(np.isfinite(by_episode) & (by_episode >= 0.0) & (by_episode < horizon))
+    bad[:, 1:] |= by_episode[:, 1:] < by_episode[:, :-1]
+    if bad.any():
+        episode, step = (int(index) for index in np.argwhere(bad)[0])
+        raise ValueError(
+            f"column {name!r} must be finite, in [0, {horizon}), and not go down "
+            f"within an episode; row {episode * config.steps + step} "
+            f"(episode {episode}, step {step}) does not"
+        )
+
+
+def _check_rows(name: str, bad: npt.NDArray[np.bool_], rule: str) -> None:
+    if bad.any():
+        row = int(np.flatnonzero(bad)[0])
+        raise ValueError(f"column {name!r} must {rule}; row {row} does not")
+
+
+def _frozen[T: np.generic](values: npt.NDArray[T]) -> npt.NDArray[T]:
+    values.flags.writeable = False
+    return values
+
+
+def _rate_campaigns(*rates: npt.NDArray[np.float64] | None) -> int | None:
+    counts = {
+        values.shape[1] for values in rates if values is not None and values.ndim == 2
+    }
+    if len(counts) > 1:
+        raise ValueError(
+            f"the pctr and pcvr lists must name one column per campaign each, got {sorted(counts)}"
+        )
+
+    return counts.pop() if counts else None
+
+
+def _per_campaign(
+    rates: npt.NDArray[np.float64], count: int
+) -> npt.NDArray[np.float64]:
+    if rates.ndim == 2:
+        return rates
+
+    # A view, so a shared rate costs no copy per step.
+    return np.broadcast_to(rates[:, np.newaxis], (len(rates), count))
 
 
 class _Step(NamedTuple):

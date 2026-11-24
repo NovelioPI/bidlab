@@ -544,6 +544,7 @@ class _Simulation:
 
             participant.check_tree()
 
+        self.last_time = -math.inf
         for step in range(self.config.steps):
             self._run_step(episode, step, budget_left, reported_left)
             for callback in self.callbacks:
@@ -565,7 +566,14 @@ class _Simulation:
         self.book.at_step(episode, step)
         pctr, pcvr = self._rates(draw)
         values = self._event_values(pctr, pcvr)
-        time = step * self.seconds_per_step
+        time = step * self.seconds_per_step if draw.time is None else draw.time
+        if time < self.last_time:
+            raise ValueError(
+                f"{type(self.config.market).__name__} at episode {episode}, step "
+                f"{step}: time {time} is before the previous step's {self.last_time}; "
+                "times must not go down within an episode"
+            )
+
         # Bidders outside their segments are not asked to bid, so they cannot learn from it.
         active = [
             i
@@ -617,8 +625,10 @@ class _Simulation:
                 i in converted,
             )
 
-        if self._delivers_at(step):
+        if self._delivers_at(step, time):
             self._deliver_due(time, reported_left)
+
+        self.last_time = time
 
         self.log.bids[episode, step] = bids
         self.log.true_values[episode, step] = values
@@ -699,7 +709,7 @@ class _Simulation:
             delay = max(feedback.conversion_delay, feedback.report_delay)
             inbox.conversions.append((time + delay, Conversion(time, value)))
 
-    def _delivers_at(self, step: int) -> bool:
+    def _delivers_at(self, step: int, time: float) -> bool:
         interval = self.config.feedback.interval
         if interval == 0:
             return True
@@ -708,9 +718,7 @@ class _Simulation:
             return False
 
         # The first step at or after each multiple of the interval delivers.
-        time = step * self.seconds_per_step
-        before = (step - 1) * self.seconds_per_step
-        return math.floor(time / interval) > math.floor(before / interval)
+        return math.floor(time / interval) > math.floor(self.last_time / interval)
 
     def _deliver_due(self, time: float, reported_left: npt.NDArray[np.float64]) -> None:
         # A campaign outside this step's segment can still have feedback due.
@@ -835,6 +843,12 @@ class _Simulation:
 
         if draw.floor:
             _check_money(where, "floor", draw.floor)
+
+        if draw.time is not None and not 0.0 <= draw.time < self.horizon:
+            raise ValueError(
+                f"{where}: time {draw.time} must lie in [0, {self.horizon}), "
+                "seconds from the episode start"
+            )
 
         clashes = draw.features.keys() & RESERVED_NAMES
         if clashes:
